@@ -1,0 +1,67 @@
+# The Tango palette on a pure black background. The Light and Dark sections are identical, so the terminal
+# colours stay the same whichever way the system theme is set.
+#
+# Highlight and HighlightForeground need patches/ptyxis/palette-highlight-colours.patch. Without it Ptyxis
+# ignores both keys and selected text uses the toolkit default.
+#
+# The titlebar colours are set rather than left to Ptyxis, which derives them by multiplying the background's
+# HSL lightness by 1.25. That leaves a pure black background unchanged, giving a headerbar indistinguishable
+# from the terminal.
+
+[Palette]
+Name=Tango Black
+Primary=true
+
+[Light]
+Foreground=#eeeeec
+Background=#000000
+Cursor=#555753
+CursorForeground=#555753
+CursorBackground=#555753
+Highlight=#a40000
+HighlightForeground=#ffffff
+TitlebarBackground=#2e3436
+TitlebarForeground=#eeeeec
+Color0=#2e3436
+Color1=#cc0000
+Color2=#4e9a06
+Color3=#c4a000
+Color4=#3465a4
+Color5=#75507b
+Color6=#06989a
+Color7=#d3d7cf
+Color8=#555753
+Color9=#ef2929
+Color10=#8ae234
+Color11=#fce94f
+Color12=#729fcf
+Color13=#ad7fa8
+Color14=#34e2e2
+Color15=#eeeeec
+
+[Dark]
+Foreground=#eeeeec
+Background=#000000
+Cursor=#555753
+CursorForeground=#555753
+CursorBackground=#555753
+Highlight=#a40000
+HighlightForeground=#ffffff
+TitlebarBackground=#2e3436
+TitlebarForeground=#eeeeec
+Color0=#2e3436
+Color1=#cc0000
+Color2=#4e9a06
+Color3=#c4a000
+Color4=#3465a4
+Color5=#75507b
+Color6=#06989a
+Color7=#d3d7cf
+Color8=#555753
+Color9=#ef2929
+Color10=#8ae234
+Color11=#fce94f
+Color12=#729fcf
+Color13=#ad7fa8
+Color14=#34e2e2
+Color15=#eeeeec

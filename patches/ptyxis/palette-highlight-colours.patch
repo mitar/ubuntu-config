@@ -1,0 +1,61 @@
+Description: Let a palette set the selection highlight colours.
+ Ptyxis palettes can set the foreground, background, cursor and the sixteen indexed colours but
+ not the selection highlight, so selected text uses the toolkit default. vte exposes the colours
+ through vte_terminal_set_color_highlight and vte_terminal_set_color_highlight_foreground.
+ .
+ Highlight and HighlightForeground are read exactly as the cursor colours are, with
+ HighlightBackground accepted as a synonym for Highlight in the same way CursorBackground is for
+ Cursor. Both are optional: a palette that omits them leaves the alpha at zero, which is the
+ same "not set" test the cursor handling uses, so every existing palette is unaffected.
+Author: Mitar
+Forwarded: not-needed
+Last-Update: 2026-09-20
+--- a/src/ptyxis-palette.h
++++ b/src/ptyxis-palette.h
+@@ -46,6 +46,8 @@
+   GdkRGBA titlebar_foreground;
+   GdkRGBA cursor_bg;
+   GdkRGBA cursor_fg;
++  GdkRGBA highlight_bg;
++  GdkRGBA highlight_fg;
+   GdkRGBA indexed[16];
+   union {
+     PtyxisPaletteScarf scarves[PTYXIS_PALETTE_N_SCARVES];
+--- a/src/ptyxis-palette.c
++++ b/src/ptyxis-palette.c
+@@ -318,6 +318,11 @@
+ 
+   ptyxis_palette_load_color (path, &face->cursor_fg, key_file, scheme, "CursorForeground", NULL);
+ 
++  if (!ptyxis_palette_load_color (path, &face->highlight_bg, key_file, scheme, "HighlightBackground", NULL))
++    ptyxis_palette_load_color (path, &face->highlight_bg, key_file, scheme, "Highlight", NULL);
++
++  ptyxis_palette_load_color (path, &face->highlight_fg, key_file, scheme, "HighlightForeground", NULL);
++
+   if (FALSE ||
+       !ptyxis_palette_load_color (path, &face->foreground, key_file, scheme, "Foreground", error) ||
+       !ptyxis_palette_load_color (path, &face->background, key_file, scheme, "Background", error) ||
+--- a/src/ptyxis-terminal.c
++++ b/src/ptyxis-terminal.c
+@@ -145,6 +145,21 @@
+       vte_terminal_set_color_cursor (VTE_TERMINAL (self), NULL);
+       vte_terminal_set_color_cursor_foreground (VTE_TERMINAL (self), NULL);
+     }
++
++  if (face->highlight_bg.alpha > 0)
++    {
++      vte_terminal_set_color_highlight (VTE_TERMINAL (self), &face->highlight_bg);
++
++      if (face->highlight_fg.alpha)
++        vte_terminal_set_color_highlight_foreground (VTE_TERMINAL (self), &face->highlight_fg);
++      else
++        vte_terminal_set_color_highlight_foreground (VTE_TERMINAL (self), NULL);
++    }
++  else
++    {
++      vte_terminal_set_color_highlight (VTE_TERMINAL (self), NULL);
++      vte_terminal_set_color_highlight_foreground (VTE_TERMINAL (self), NULL);
++    }
+ }
+ 
+ static void

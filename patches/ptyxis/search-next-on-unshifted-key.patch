@@ -1,0 +1,41 @@
+Description: Make the unshifted search key move to the next match.
+ Ptyxis binds Ctrl+G and Return to search.up, which is the previous match, and the shifted
+ variants to search.down, which is the next one. That is the opposite of the usual convention,
+ where the unshifted key moves forward and Shift moves back.
+ .
+ Only the two keyboard bindings are swapped. The up and down arrow buttons in the find bar keep
+ their own actions, since their icons and tooltips state their direction.
+Author: Mitar
+Forwarded: not-needed
+Last-Update: 2026-09-20
+--- a/src/ptyxis-find-bar.c
++++ b/src/ptyxis-find-bar.c
+@@ -237,8 +237,8 @@
+   gtk_widget_class_install_action (widget_class, "search.up", NULL, ptyxis_find_bar_previous);
+ 
+   gtk_widget_class_add_binding_action (widget_class, GDK_KEY_Escape, 0, "search.dismiss", NULL);
+-  gtk_widget_class_add_binding_action (widget_class, GDK_KEY_g, GDK_CONTROL_MASK, "search.up", NULL);
+-  gtk_widget_class_add_binding_action (widget_class, GDK_KEY_g, GDK_CONTROL_MASK|GDK_SHIFT_MASK, "search.down", NULL);
++  gtk_widget_class_add_binding_action (widget_class, GDK_KEY_g, GDK_CONTROL_MASK, "search.down", NULL);
++  gtk_widget_class_add_binding_action (widget_class, GDK_KEY_g, GDK_CONTROL_MASK|GDK_SHIFT_MASK, "search.up", NULL);
+ }
+ 
+ static void
+--- a/src/ptyxis-find-bar.ui
++++ b/src/ptyxis-find-bar.ui
+@@ -44,13 +44,13 @@
+                     <child>
+                       <object class="GtkShortcut">
+                         <property name="trigger">&lt;shift&gt;Return</property>
+-                        <property name="action">action(search.down)</property>
++                        <property name="action">action(search.up)</property>
+                       </object>
+                     </child>
+                     <child>
+                       <object class="GtkShortcut">
+                         <property name="trigger">Return</property>
+-                        <property name="action">action(search.up)</property>
++                        <property name="action">action(search.down)</property>
+                       </object>
+                     </child>
+                   </object>

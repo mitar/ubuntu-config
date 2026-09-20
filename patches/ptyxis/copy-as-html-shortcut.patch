@@ -1,0 +1,67 @@
+Description: Make Copy as HTML bindable to a keyboard shortcut.
+ The clipboard.copy-as-html action is offered in the terminal context menu but, unlike every
+ other action, has no entry in org.gnome.Ptyxis.Shortcuts, so only the mouse reaches it.
+ .
+ A shortcut is spread across four places, so four things are added: a key in the Shortcuts
+ schema, a property definition so the key becomes a GObject property, a GtkShortcut in the
+ terminal template whose trigger is looked up from that property, and an id attribute on the
+ menu item so ptyxis_shortcuts_update_menu can find the property and show the accelerator next
+ to Copy as HTML.
+ .
+ The schema default is empty, leaving the action unbound. The binding is chosen in
+ configuration rather than here.
+Author: Mitar
+Forwarded: not-needed
+Last-Update: 2026-09-20
+--- a/src/org.gnome.Ptyxis.gschema.xml.in
++++ b/src/org.gnome.Ptyxis.gschema.xml.in
+@@ -407,6 +407,12 @@
+       <description>The shortcut to copy to clipboard</description>
+     </key>
+ 
++    <key name="copy-html" type="s">
++      <default>''</default>
++      <summary>Copy to Clipboard as HTML</summary>
++      <description>The shortcut to copy to clipboard with HTML formatting</description>
++    </key>
++
+     <key name="paste-clipboard" type="s">
+       <default>'&lt;ctrl&gt;&lt;shift&gt;v'</default>
+       <summary>Paste from Clipboard</summary>
+--- a/src/ptyxis-shortcuts.defs
++++ b/src/ptyxis-shortcuts.defs
+@@ -2,6 +2,7 @@
+ PTYXIS_SHORTCUT_DEFINE(CLOSE_TAB, "close-tab")
+ PTYXIS_SHORTCUT_DEFINE(CLOSE_WINDOW, "close-window")
+ PTYXIS_SHORTCUT_DEFINE(COPY_CLIPBOARD, "copy-clipboard")
++PTYXIS_SHORTCUT_DEFINE(COPY_HTML, "copy-html")
+ PTYXIS_SHORTCUT_DEFINE(DETACTH_TAB, "detach-tab")
+ PTYXIS_SHORTCUT_DEFINE(FOCUS_TAB_1, "focus-tab-1")
+ PTYXIS_SHORTCUT_DEFINE(FOCUS_TAB_10, "focus-tab-10")
+--- a/src/ptyxis-terminal.ui
++++ b/src/ptyxis-terminal.ui
+@@ -56,6 +56,16 @@
+         <child>
+           <object class="GtkShortcut">
+             <binding name="trigger">
++              <lookup name="copy-html" type="PtyxisShortcuts">
++                <lookup name="shortcuts">PtyxisTerminal</lookup>
++              </lookup>
++            </binding>
++            <property name="action">action(clipboard.copy-as-html)</property>
++          </object>
++        </child>
++        <child>
++          <object class="GtkShortcut">
++            <binding name="trigger">
+               <lookup name="paste-clipboard" type="PtyxisShortcuts">
+                 <lookup name="shortcuts">PtyxisTerminal</lookup>
+               </lookup>
+@@ -191,6 +201,7 @@
+         <attribute name="action">clipboard.copy</attribute>
+       </item>
+       <item>
++        <attribute name="id">copy-html</attribute>
+         <attribute name="label" translatable="yes">Copy as _HTML</attribute>
+         <attribute name="description" translatable="yes">Copy selection from terminal to clipboard with HTML formatting</attribute>
+         <attribute name="action">clipboard.copy-as-html</attribute>

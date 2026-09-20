@@ -1,0 +1,37 @@
+Source package: ptyxis
+
+search-next-on-unshifted-key.patch
+    The unshifted search key moves to the next match and the shifted one to the previous.
+    Upstream names its actions after screen direction rather than search order, so search.up runs
+    ptyxis_find_bar_previous, and it binds Ctrl+G and Return to search.up.
+
+copy-as-html-shortcut.patch
+    Makes Copy as HTML reachable from the keyboard. The clipboard.copy-as-html action is offered
+    in the context menu but has no entry in org.gnome.Ptyxis.Shortcuts, so only the mouse reaches
+    it. The patch adds the schema key and leaves it empty, so the binding is chosen by
+    configure-ptyxis.sh.
+
+palette-highlight-colours.patch
+    Lets a palette set the selection highlight colours, which Ptyxis otherwise leaves to the
+    toolkit. Both keys are optional and read exactly as the cursor colours are, so palettes that
+    omit them are unaffected.
+
+None of this is reachable through settings, which is why the patches exist. A shortcut in Ptyxis
+is spread across four places, and only the first is visible from outside:
+
+  the Shortcuts schema        the key, and its default
+  ptyxis-shortcuts.defs       a macro turning that key into a GObject property
+  a GtkShortcut in a .ui      the binding, with its trigger looked up from that property
+  an id on the menu item      what ptyxis_shortcuts_update_menu matches to show the accelerator
+
+Some bindings skip the schema entirely and are registered in code with
+gtk_widget_class_add_binding_action, which is the case for Ctrl+G. Those are invisible to
+gsettings, to the preferences window, and to the conflict check in configure-ptyxis.sh.
+
+Ptyxis ships no test suite, so there is nothing to add tests to. A build failure is the only
+automated check, and for changes like these it is a weak one: all three patches could apply,
+compile, and still behave wrongly. Check by hand after a rebuild.
+
+  Ctrl+F then Ctrl+G           should move down the scrollback, towards newer output
+  select text, Ctrl+Shift+C    should copy as HTML, and the context menu should show that accel
+  select text                  should highlight dark red (#a40000) with white text

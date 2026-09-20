@@ -1,0 +1,14 @@
+#!/bin/sh
+#
+# Install as /etc/cron.daily/rebuild-patched-packages, by symlink or copy. run-parts ignores any name containing
+# a dot, so the name must stay extensionless.
+#
+# The rebuild is silent while everything is current, so mail arrives only when a package was rebuilt or when
+# something failed.
+#
+# Where that mail goes depends on what runs cron.daily. With anacron installed, which is the default, the entries
+# in /etc/crontab are skipped by their own test -x /usr/sbin/anacron guard and anacron runs these jobs instead.
+# It mails output to the user it runs as, root, or to MAILTO if that is assigned in /etc/anacrontab. Setting
+# MAILTO in /etc/crontab has no effect on these jobs while anacron is installed.
+
+exec /home/mitar/Projects/ubuntu-config/rebuild-patched-packages.sh --build

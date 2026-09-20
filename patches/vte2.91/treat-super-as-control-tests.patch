@@ -1,0 +1,117 @@
+Description: Unit tests for treating Super as Control.
+ Covers the pure functions in src/super-as-control.hh that treat-super-as-control.patch adds, so
+ that an upstream change leaving the patch applied but inert fails the build rather than
+ producing a library where Super does nothing. They run as part of the ordinary build, alongside
+ the tests the package already has.
+ .
+ Only the decisions are covered, not the event plumbing, since the plumbing needs a display.
+Author: Mitar
+Forwarded: not-needed
+Last-Update: 2026-09-20
+--- a/src/super-as-control-test.cc
++++ b/src/super-as-control-test.cc
+@@ -0,0 +1,73 @@
++/*
++ * Tests for treating Super as Control.
++ *
++ * These guard the local Super and Control swap against an upstream refactor silently making it inert. They test
++ * the decisions, not the plumbing: that Super and Hyper count as Control, that Control is added and not
++ * substituted, that unrelated modifiers and key values are left alone, and that the bare Super keys map onto the
++ * bare Control keys.
++ */
++
++#include "config.h"
++
++#include "super-as-control.hh"
++
++#include <glib.h>
++
++using namespace vte::super_as_control;
++
++static void
++test_super_as_control_held(void)
++{
++        g_assert_false(held(0));
++        g_assert_false(held(unsigned(GDK_SHIFT_MASK)));
++        g_assert_false(held(unsigned(GDK_CONTROL_MASK)));
++        g_assert_true(held(unsigned(GDK_SUPER_MASK)));
++        g_assert_true(held(unsigned(GDK_HYPER_MASK)));
++        g_assert_true(held(unsigned(GDK_SUPER_MASK) | unsigned(GDK_SHIFT_MASK)));
++}
++
++static void
++test_super_as_control_add_control(void)
++{
++        /* Super alone has to read as Control, which is what makes Super+C send an interrupt. */
++        g_assert_cmpuint(add_control(unsigned(GDK_SUPER_MASK)) & unsigned(GDK_CONTROL_MASK), !=, 0);
++        g_assert_cmpuint(add_control(unsigned(GDK_HYPER_MASK)) & unsigned(GDK_CONTROL_MASK), !=, 0);
++
++        /* Added, not substituted. */
++        g_assert_cmpuint(add_control(unsigned(GDK_SUPER_MASK)) & unsigned(GDK_SUPER_MASK), !=, 0);
++
++        /* Other modifiers survive alongside. */
++        auto const shifted = add_control(unsigned(GDK_SUPER_MASK) | unsigned(GDK_SHIFT_MASK));
++        g_assert_cmpuint(shifted & unsigned(GDK_SHIFT_MASK), !=, 0);
++        g_assert_cmpuint(shifted & unsigned(GDK_CONTROL_MASK), !=, 0);
++
++        /* Without Super or Hyper nothing changes, so plain Ctrl+C is not disturbed. */
++        g_assert_cmpuint(add_control(0), ==, 0);
++        g_assert_cmpuint(add_control(unsigned(GDK_SHIFT_MASK)), ==, unsigned(GDK_SHIFT_MASK));
++        g_assert_cmpuint(add_control(unsigned(GDK_CONTROL_MASK)), ==, unsigned(GDK_CONTROL_MASK));
++}
++
++static void
++test_super_as_control_map_keyval(void)
++{
++        g_assert_cmpuint(map_keyval(GDK_KEY_Super_L), ==, unsigned(GDK_KEY_Control_L));
++        g_assert_cmpuint(map_keyval(GDK_KEY_Super_R), ==, unsigned(GDK_KEY_Control_R));
++
++        /* Everything else is passed through, including the Control keys themselves. */
++        g_assert_cmpuint(map_keyval(GDK_KEY_Control_L), ==, unsigned(GDK_KEY_Control_L));
++        g_assert_cmpuint(map_keyval(GDK_KEY_c), ==, unsigned(GDK_KEY_c));
++        g_assert_cmpuint(map_keyval(GDK_KEY_Shift_L), ==, unsigned(GDK_KEY_Shift_L));
++}
++
++int
++main(int argc,
++     char** argv)
++{
++        g_test_init(&argc, &argv, nullptr);
++
++        g_test_add_func("/vte/super-as-control/held", test_super_as_control_held);
++        g_test_add_func("/vte/super-as-control/add-control", test_super_as_control_add_control);
++        g_test_add_func("/vte/super-as-control/map-keyval", test_super_as_control_map_keyval);
++
++        return g_test_run();
++}
+--- a/src/meson.build
++++ b/src/meson.build
+@@ -1033,6 +1033,28 @@
+   test_units += [test_vtetypes,]
+ endif
+ 
++test_super_as_control_sources = config_sources + files(
++  'super-as-control-test.cc',
++  'super-as-control.hh',
++)
++
++test_super_as_control_deps = [
++  glib_dep,
++  gtk3_dep,
++]
++
++if get_option('gtk3')
++  test_super_as_control = executable(
++    'test-super-as-control',
++    sources: test_super_as_control_sources,
++    dependencies: test_super_as_control_deps,
++    include_directories: top_inc,
++    install: false,
++  )
++
++  test_units += [test_super_as_control,]
++endif
++
+ # Run unit tests
+ 
+ test_env = [

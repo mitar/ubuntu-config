@@ -1,0 +1,27 @@
+Source package: vte2.91
+
+Treats Super as Control inside the terminal, so that Super+C sends an interrupt. Control+C is
+then free for the terminal application to bind to a copy action, which is done in the terminal's
+own configuration rather than here.
+
+treat-super-as-control.patch
+    The feature. The decisions live in src/super-as-control.hh as pure functions, called from the
+    modifier reading, the keypress stealing and the key value mapping.
+
+treat-super-as-control-tests.patch
+    Unit tests for those functions, registered with the package's own test suite so they run
+    during every build.
+
+The decisions are pure functions so that they can be tested without a display or a synthesised
+GdkEvent, which is what makes the tests cheap enough to run on every rebuild. Do not put nocheck
+in build-options for this package: the tests are what catch a patch that still applies and has
+quietly stopped working.
+
+Where each piece has to be, since a hunk that lands elsewhere can still apply and compile:
+
+  src/vte.cc     map_keyval() and held() are called from Terminal::widget_key_press. The key
+                 value switch in Terminal::key_event_action is the wrong place, because keyval
+                 is a const local there.
+  src/widget.cc  add_control() is called from Widget::read_modifiers_from_gdk.
+  src/widget.hh  read_modifiers_from_gdk() is declared for both GTK 3 and GTK 4, so both
+                 libraries get the behaviour.

@@ -1,0 +1,204 @@
+Description: Treat Super as Control inside the terminal.
+ Super+C sends an interrupt, which leaves Ctrl+C free for the clipboard copy action of the
+ surrounding terminal application. Three things are needed: reading a Super or Hyper modifier as
+ Control, stealing keypresses carrying those modifiers so they reach the terminal rather than
+ the application, and mapping the bare Super keys onto the bare Control keys.
+ .
+ The decisions live in src/super-as-control.hh as pure functions so that they can be unit tested
+ without a display or a GdkEvent. The tests are added by treat-super-as-control-tests.patch.
+ .
+ read_modifiers_from_gdk() is declared outside the GTK 3 only guard so that the GTK 4 build
+ shares the same modifier handling, since upstream reads the modifier state directly there.
+Author: Mitar
+Forwarded: not-needed
+Last-Update: 2026-09-20
+--- a/src/super-as-control.hh
++++ b/src/super-as-control.hh
+@@ -0,0 +1,44 @@
++/*
++ * Treating Super as Control inside the terminal.
++ *
++ * Swapping the two lets Super+C send an interrupt while Ctrl+C stays free for the clipboard copy action of the
++ * surrounding terminal application. The decisions are kept here as pure functions rather than inline in the
++ * event handlers, so that they can be unit tested without a display or a GdkEvent.
++ */
++
++#pragma once
++
++#include <gdk/gdk.h>
++#include <gdk/gdkkeysyms.h>
++
++namespace vte::super_as_control {
++
++/* Hyper is included alongside Super because a keyboard layout may map the physical Super key to either. */
++inline constexpr unsigned modifiers = unsigned(GDK_SUPER_MASK) | unsigned(GDK_HYPER_MASK);
++
++inline constexpr bool
++held(unsigned mods) noexcept
++{
++        return (mods & modifiers) != 0;
++}
++
++/* Control is added rather than substituted, so code that still wants to know whether Super itself was held can
++ * see it. Without Super or Hyper the mask is returned untouched. */
++inline constexpr unsigned
++add_control(unsigned mods) noexcept
++{
++        return held(mods) ? (mods | unsigned(GDK_CONTROL_MASK)) : mods;
++}
++
++/* Maps the bare Super keys onto the bare Control keys. Every other key value is returned unchanged. */
++inline constexpr unsigned
++map_keyval(unsigned keyval) noexcept
++{
++        switch (keyval) {
++        case GDK_KEY_Super_L: return GDK_KEY_Control_L;
++        case GDK_KEY_Super_R: return GDK_KEY_Control_R;
++        default:              return keyval;
++        }
++}
++
++} /* namespace vte::super_as_control */
+--- a/src/vte.cc
++++ b/src/vte.cc
+@@ -49,6 +49,7 @@
+ #include "ringview.hh"
+ #include "caps.hh"
+ #include "widget.hh"
++#include "super-as-control.hh"
+ #include "cairo-glue.hh"
+ #include "scheduler.h"
+ 
+@@ -5267,6 +5268,11 @@
+                 keyval = event.keyval();
+                 m_modifiers = event.modifiers();
+ 
++                /* Treat SUPER as CTRL. Map the bare Super keys onto Control so that a Super press reaches
++                 * the terminal as a Control press. This has to happen on the mutable local keyval, which is
++                 * what _vte_keymap_map() later turns into the bytes written to the pty. */
++                keyval = vte::super_as_control::map_keyval(keyval);
++
+                 // FIXMEchpe?
+ 		if (m_cursor_blink_timer) {
+ 			remove_cursor_timeout();
+@@ -5297,6 +5303,9 @@
+ 			if (m_modifiers & VTE_ALT_MASK) {
+ 				steal = TRUE;
+ 			}
++			if (vte::super_as_control::held(m_modifiers)) {
++				steal = TRUE;
++			}
+ 			switch (keyval) {
+                         case GDK_KEY_ISO_Lock:
+                         case GDK_KEY_ISO_Level2_Latch:
+--- a/src/widget.cc
++++ b/src/widget.cc
+@@ -19,6 +19,7 @@
+ #include "config.h"
+ 
+ #include "widget.hh"
++#include "super-as-control.hh"
+ 
+ #include <sys/wait.h> // for W_EXITCODE
+ 
+@@ -1280,7 +1281,7 @@
+         terminal()->widget_mouse_enter({nullptr, // event
+                                         EventBase::Type::eMOUSE_MOTION,
+                                         1, // press count,
+-                                        0, // gdk_event_get_modifier_state(event),
++                                        0, // read_modifiers_from_gdk(event),
+                                         MouseEvent::Button::eNONE,
+                                         x, y});
+ }
+@@ -1302,7 +1303,7 @@
+         terminal()->widget_mouse_leave({nullptr, // event
+                                         EventBase::Type::eMOUSE_MOTION,
+                                         1, // press count,
+-                                        0, // gdk_event_get_modifier_state(event),
++                                        0, // read_modifiers_from_gdk(event),
+                                         MouseEvent::Button::eNONE,
+                                         -1, -1 /* FIXMEgtk4 bogus!!! */});
+ }
+@@ -1322,7 +1323,7 @@
+         terminal()->widget_mouse_motion({nullptr, // event
+                                          EventBase::Type::eMOUSE_MOTION,
+                                          1, // press count
+-                                         gdk_event_get_modifier_state(event),
++                                         read_modifiers_from_gdk(event),
+                                          MouseEvent::Button::eNONE,
+                                          x, y});
+ }
+@@ -1363,7 +1364,7 @@
+         if (!event)
+                 return false;
+ 
+-        return terminal()->widget_mouse_scroll({gdk_event_get_modifier_state(event),
++        return terminal()->widget_mouse_scroll({read_modifiers_from_gdk(event),
+                                                 dx, dy});
+ }
+ 
+@@ -1515,11 +1516,10 @@
+ #endif
+ }
+ 
+-#if VTE_GTK == 3
+-
+ unsigned
+ Widget::read_modifiers_from_gdk(GdkEvent* event) const noexcept
+ {
++#if VTE_GTK == 3
+         /* Read the modifiers. See bug #663779 for more information on why we do this. */
+         auto mods = GdkModifierType{};
+         if (!gdk_event_get_state(event, &mods))
+@@ -1533,12 +1533,16 @@
+         auto display = gdk_window_get_display(gdk_event_get_window(event));
+         auto keymap = gdk_keymap_get_for_display(display);
+         gdk_keymap_add_virtual_modifiers(keymap, &mods);
++#else
++        auto mods = gdk_event_get_modifier_state(event);
++#endif
++
++        /* Treat SUPER as CTRL. */
++        mods = GdkModifierType(vte::super_as_control::add_control(unsigned(mods)));
+ 
+         return unsigned(mods);
+ }
+ 
+-#endif /* VTE_GTK == 3 */
+-
+ unsigned
+ Widget::key_event_translate_ctrlkey(KeyEvent const& event) const noexcept
+ {
+@@ -1623,11 +1627,7 @@
+ 
+         return {event,
+                 type,
+-#if VTE_GTK == 3
+                 read_modifiers_from_gdk(event),
+-#elif VTE_GTK == 4
+-                gdk_event_get_modifier_state(event),
+-#endif
+                 keyval,
+                 scancode,
+                 group,
+@@ -1896,7 +1896,7 @@
+         return {event,
+                 type,
+                 press_count,
+-                gdk_event_get_modifier_state(event),
++                read_modifiers_from_gdk(event),
+                 MouseEvent::Button(button),
+                 x,
+                 y};
+--- a/src/widget.hh
++++ b/src/widget.hh
+@@ -773,8 +773,8 @@
+ 
+ private:
+         KeyEvent key_event_from_gdk(GdkEvent* event) const;
+-#if VTE_GTK == 3
+         unsigned read_modifiers_from_gdk(GdkEvent* event) const noexcept;
++#if VTE_GTK == 3
+         MouseEvent mouse_event_from_gdk(GdkEvent* event) const /* throws */;
+         std::optional<ScrollEvent> scroll_event_from_gdk(GdkEvent* event) const;
+ #elif VTE_GTK == 4
