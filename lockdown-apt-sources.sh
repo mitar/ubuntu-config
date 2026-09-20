@@ -11,7 +11,7 @@
 # Usage
 # -----
 #   ./lockdown-apt-sources.sh               show what would change and verify it, write nothing (default)
-#   sudo ./lockdown-apt-sources.sh --apply  write the config, refresh apt, verify, audit
+#   sudo ./lockdown-apt-sources.sh --apply  verify, then write the config, refresh apt and audit
 #   ./lockdown-apt-sources.sh --audit       report what the allowlist does not cover
 #
 #
@@ -361,6 +361,16 @@ scan_conflicts() {
   return 0
 }
 
+# Populate a directory with the preferences.d an apply would leave behind: everything currently there, minus the
+# files an apply disables, plus the generated config. Both modes verify against this rather than against the live
+# directory, so a dry-run and an apply reach the same verdict.
+build_candidate() {
+  cp /etc/apt/preferences.d/* "$1/" 2>/dev/null || true
+  local f
+  for f in $SUPERSEDED; do rm -f "$1/$f"; done
+  generate > "$1/$PREF_NAME"
+}
+
 # Report anything the allowlist does not cover, so the config can be kept current after installing something new.
 audit() {
   python3 <<'PY_EOF'
@@ -416,9 +426,7 @@ case "$MODE" in
 
   dry-run)
     tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
-    cp /etc/apt/preferences.d/* "$tmp/" 2>/dev/null || true
-    for f in $SUPERSEDED; do rm -f "$tmp/$f"; done
-    generate > "$tmp/$PREF_NAME"
+    build_candidate "$tmp"
 
     echo "=== would write $PREF_DEST ($(grep -c '^Package:' "$tmp/$PREF_NAME") rules) ==="
     if [ -e "$PREF_DEST" ]; then
@@ -443,6 +451,18 @@ case "$MODE" in
 
   apply)
     [ "$(id -u)" -eq 0 ] || { echo "--apply needs root, re-run with sudo" >&2; exit 1; }
+
+    tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
+    build_candidate "$tmp"
+    if ! gate=$(verify "$tmp" 2>&1); then
+      echo "$gate"
+      echo
+      echo "refusing to write: the generated config does not satisfy CHECKS." >&2
+      echo "Either the allowlist needs the package adding, or CHECKS needs updating to match it." >&2
+      exit 1
+    fi
+    echo "candidate configuration verified, applying"
+    echo
 
     mkdir -p "$BACKUP"
     cp -a /etc/apt/preferences.d "$BACKUP/" 2>/dev/null || true
