@@ -86,7 +86,11 @@ set_key() {
     echo "  skip $key, no such key in this GNOME version"
     return 0
   fi
-  case " $KEYBINDING_SCHEMAS " in *" $schema "*) printf '%s\t%s\t%s\n' "$schema" "$key" "$want" >> "$EFFECTIVE" ;; esac
+  # The schema list spans lines, so it is collapsed to single spaces before matching. Without that, the schemas
+  # sitting at the end of a line are followed by a newline rather than a space and never match.
+  case " $(echo $KEYBINDING_SCHEMAS) " in
+    *" $schema "*) printf '%s\t%s\t%s\n' "$schema" "$key" "$want" >> "$EFFECTIVE" ;;
+  esac
   [ "$now" = "$want" ] && return 0
   printf '  %-34s %-38s -> %s\n' "$key" "$now" "$want"
   [ "$MODE" = apply ] && gsettings set "$schema" "$key" "$want"
@@ -195,6 +199,14 @@ set_key org.gnome.shell.keybindings toggle-quick-settings       "['<Primary><Sup
 set_key org.gnome.shell.keybindings toggle-application-view        "['<Primary><Super>a']"
 set_key org.gnome.shell.keybindings toggle-message-tray            "['<Primary><Super>n']"
 
+# The function row sends two keys whose icons do not match what they do by default. The one with a cog sends
+# XF86AudioMedia, and the one with a monitor sends XF86Display, so they are routed here: the cog opens Settings,
+# and the monitor key launches the media player. The -static entries carrying their default actions are cleared,
+# or both keys would keep doing two things at once.
+set_key org.gnome.settings-daemon.plugins.media-keys control-center "['XF86AudioMedia']"
+set_key org.gnome.settings-daemon.plugins.media-keys media          "['XF86Display']"
+set_key org.gnome.settings-daemon.plugins.media-keys media-static   "['']"
+
 # volume-down, volume-up, volume-mute and play are not set here. The hardware keys are bound through the
 # matching -static entries, so setting these would bind the same physical key to the same action twice.
 echo "=== org.gnome.settings-daemon.plugins.media-keys ==="
@@ -209,7 +221,9 @@ set_key org.gnome.settings-daemon.plugins.media-keys screensaver                
 set_key org.gnome.settings-daemon.plugins.media-keys terminal                       "@as []"
 
 echo "=== org.gnome.mutter.keybindings ==="
-set_key org.gnome.mutter.keybindings switch-monitor            "['XF86Display']"
+# Unbound. Its cycle builds display layouts rather than restoring the stored ones, choosing its own primary
+# output and writing the result over monitors.xml, so there is no way back to a saved arrangement through it.
+set_key org.gnome.mutter.keybindings switch-monitor            "@as []"
 set_key org.gnome.mutter.keybindings toggle-tiled-left              "['<Primary><Alt>Left']"
 set_key org.gnome.mutter.keybindings toggle-tiled-right             "['<Primary><Alt>Right']"
 
