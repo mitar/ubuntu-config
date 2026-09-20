@@ -63,6 +63,13 @@ set_key() {
   fi
   [ "$schema" = "org.gnome.Ptyxis.Shortcuts" ] && EFFECTIVE[$key]=$want
   [ "$now" = "$want" ] && return 0
+  # gsettings prints a double as the shortest string for the value actually stored, so 0.85 reads back as
+  # 0.84999999999999998 and never matches as text. Both sides have to look like plain numbers before comparing
+  # that way, since otherwise awk would read true and false as zero and call them equal.
+  if awk -v a="$now" -v b="$want" \
+     'BEGIN { exit !(a ~ /^-?[0-9]+(\.[0-9]+)?$/ && b ~ /^-?[0-9]+(\.[0-9]+)?$/ && a+0 == b+0) }'; then
+    return 0
+  fi
   printf '  %-24s %-24s -> %s\n' "$key" "$now" "$want"
   [ "$MODE" = apply ] && gsettings set "$schema" "$key" "$want"
   CHANGED=$((CHANGED+1))
