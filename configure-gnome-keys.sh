@@ -199,12 +199,14 @@ set_key org.gnome.shell.keybindings toggle-quick-settings       "['<Primary><Sup
 set_key org.gnome.shell.keybindings toggle-application-view        "['<Primary><Super>a']"
 set_key org.gnome.shell.keybindings toggle-message-tray            "['<Primary><Super>n']"
 
-# The function row sends two keys whose icons do not match what they do by default. The one with a cog sends
-# XF86AudioMedia, and the one with a monitor sends XF86Display, so they are routed here: the cog opens Settings,
-# and the monitor key launches the media player. The -static entries carrying their default actions are cleared,
-# or both keys would keep doing two things at once.
+# The key with a cog on the function row sends XF86AudioMedia, so it is routed to Settings, and the -static
+# entry carrying its default action is cleared or it would keep doing two things at once.
+#
+# The key with a monitor sends the Windows projector chord, Super and P, which the rotation turns into Alt and P.
+# It is left unbound: both events come from the ordinary keyboard on the ordinary scancodes, so binding it would
+# reserve Alt and P system wide and take that combination away from applications.
 set_key org.gnome.settings-daemon.plugins.media-keys control-center "['XF86AudioMedia']"
-set_key org.gnome.settings-daemon.plugins.media-keys media          "['XF86Display']"
+set_key org.gnome.settings-daemon.plugins.media-keys media          "['']"
 set_key org.gnome.settings-daemon.plugins.media-keys media-static   "['']"
 
 # volume-down, volume-up, volume-mute and play are not set here. The hardware keys are bound through the
@@ -223,6 +225,7 @@ set_key org.gnome.settings-daemon.plugins.media-keys terminal                   
 echo "=== org.gnome.mutter.keybindings ==="
 # Unbound. Its cycle builds display layouts rather than restoring the stored ones, choosing its own primary
 # output and writing the result over monitors.xml, so there is no way back to a saved arrangement through it.
+# Its <Super>p accelerator is also the chord the monitor key on the function row sends.
 set_key org.gnome.mutter.keybindings switch-monitor            "@as []"
 set_key org.gnome.mutter.keybindings toggle-tiled-left              "['<Primary><Alt>Left']"
 set_key org.gnome.mutter.keybindings toggle-tiled-right             "['<Primary><Alt>Right']"
