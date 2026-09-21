@@ -28,8 +28,8 @@
 #   ./configure-gnome-desktop.sh --apply   apply the configuration
 #
 # Runs as your own user, because these settings live in your dconf and would land in root's under sudo. Installing
-# packages, the console's boot-time unit, and the login screen settings need root, so those parts call sudo
-# themselves and will ask for a password.
+# packages, the console's boot-time unit, the touchscreen rule, and the login screen settings need root, so those
+# parts call sudo themselves and will ask for a password.
 
 set -euo pipefail
 
@@ -279,6 +279,21 @@ install_unit() {
   return 0
 }
 
+# Installs a udev rule from udev/ in this repository into the root-owned /etc/udev/rules.d through sudo, then has
+# udev reload its rules and apply them to input devices again. A program that already has a device open sees the
+# change only when it opens the device again.
+install_udev_rule() {
+  local name=$1 src=$REPO_DIR/udev/$1 dst=/etc/udev/rules.d/$1
+  cmp -s "$src" "$dst" && return 0
+  echo "  install $dst"
+  CHANGED=$((CHANGED+1))
+  [ "$MODE" = apply ] || return 0
+  sudo install -m 644 "$src" "$dst"
+  sudo udevadm control --reload
+  sudo udevadm trigger --subsystem-match=input
+  return 0
+}
+
 GREETER=/etc/gdm3/greeter.dconf-defaults
 
 # Sets a key in GDM's greeter settings through sudo, since the file is root owned. The key goes directly under its
@@ -313,6 +328,11 @@ echo "=== touchpad ==="
 set_key org.gnome.desktop.peripherals.touchpad speed                            "0.36964980544747084"
 set_key org.gnome.desktop.peripherals.touchpad tap-and-drag                     "false"
 set_key org.gnome.desktop.peripherals.touchpad click-method                     "'fingers'"
+
+echo "=== touchscreen ==="
+# The rule makes libinput ignore every touchscreen. GNOME Shell checks for that only when a device appears, so it
+# takes effect at the next login.
+install_udev_rule 90-ignore-touchscreens.rules
 
 echo "=== bell and sound ==="
 set_key org.gnome.desktop.wm.preferences audible-bell                     "false"

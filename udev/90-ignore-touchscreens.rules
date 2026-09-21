@@ -1,0 +1,4 @@
+# Installed by configure-gnome-desktop.sh, which overwrites edits made here.
+#
+# libinput, and with it the whole desktop session, ignores every touchscreen. The kernel still drives the device.
+ACTION!="remove", SUBSYSTEM=="input", ENV{ID_INPUT_TOUCHSCREEN}=="1", ENV{LIBINPUT_IGNORE_DEVICE}="1"
