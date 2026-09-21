@@ -1,0 +1,25 @@
+Source package: mutter
+
+tap-key.patch
+    Lets a modifier tapped on its own send a key combination, configured with tap-key and
+    tap-key-sends in org.gnome.mutter. Mutter already gives a lone tap of a modifier a meaning for
+    two keys, the overlay key and the locate-pointer key, and this adds a third one that sends
+    whatever tap-key-sends names. Held together with other keys it stays an ordinary modifier.
+
+    The combination goes through a virtual keyboard, so it reaches keybindings and global shortcuts
+    the same way a key pressed by hand does. configure-gnome-keys.sh has the right Super send
+    XF86Launch9, which no physical key sends, for Claude Desktop's Quick Entry shortcut.
+
+    The test is added to src/tests/keybindings.c, which runs during the build. It holds the tap key
+    together with another key, which must send nothing, and then taps it on its own, which must
+    trigger a keybinding bound to the combination it sends.
+
+The tap is detected by process_special_modifier_key in src/core/keybindings.c, shared by all three
+keys, and the settings are read in src/core/prefs.c next to the other two. After a version bump,
+check that both still handle the overlay and locate-pointer keys this way, since the patch follows
+them.
+
+Check by hand after a rebuild and a new login:
+
+  tap the right Super on its own     should send XF86Launch9, which opens Claude Quick Entry
+  right Super with another key       should act as Super, for example Ctrl+Super+L locks

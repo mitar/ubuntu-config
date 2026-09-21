@@ -22,16 +22,15 @@
 # Physical layout
 # ---------------
 # The keycaps are arranged to match a Mac, so the Alt and Super caps sit swapped relative to the hardware beneath
-# them. A Super cap therefore marks the key in the Command position, which is the one that copies and pastes, and
-# on the right there is no Copilot cap to be had, so the Ctrl cap stays where it is.
+# them. A Super cap therefore marks the key in the Command position, which is the one that copies and pastes.
 #
-#   cap     hardware  emits    note
-#   Ctrl    LCTL      Super    acts as Control inside the terminal, through the patched vte
-#   Fn      -         -        handled in firmware, never reaches xkb. The BIOS can move it, this does not.
+#   cap     hardware  emits          note
+#   Ctrl    LCTL      Super          acts as Control inside the terminal, through the patched vte
+#   Fn      -         -              handled in firmware, never reaches xkb. The BIOS can move it, this does not.
 #   Alt     LWIN      Alt
-#   Super   LALT      Control  the Command position, and what copies and pastes
+#   Super   LALT      Control        the Command position, and what copies and pastes
 #   Super   RALT      Control
-#   Ctrl    RCTL      Copilot  the firmware sends Shift+Super+F23, whatever the cap says
+#   Ctrl    RCTL      Super          the firmware setup has to send it as Right Ctrl
 #
 #
 # Usage
@@ -99,23 +98,27 @@ set_key() {
 }
 
 echo "=== keyboard ==="
-# swap_lalt_lctl_lwin rotates the three keys left of the space bar, and ralt_rctrl puts Control on the key right
-# of it.
-#
-# <RCTL> is left alone, because that position is the Copilot key and the firmware sends it as Shift+Super+F23.
-# The options that would touch it rewrite <RWIN> to Control as well, which would turn that chord into
-# Shift+Control+F23 if the firmware sends the right hand Super rather than the left.
+# swap_lalt_lctl_lwin rotates the three keys left of the space bar. On the right, ralt_rctrl puts Control on the
+# key next to the space bar and swap_rwin_rctl puts Super on the one after it, mirroring the left hand.
 #
 # terminate:ctrl_alt_bksp makes Ctrl+Alt+Backspace end the session, which after the rotation is pressed with the
 # thumb and the key left of it.
 set_key org.gnome.desktop.input-sources xkb-options \
-  "['ctrl:swap_lalt_lctl_lwin', 'ctrl:ralt_rctrl', 'terminate:ctrl_alt_bksp']"
+  "['ctrl:swap_lalt_lctl_lwin', 'ctrl:ralt_rctrl', 'ctrl:swap_rwin_rctl', 'terminate:ctrl_alt_bksp']"
 
 # The second layout is Slovenian on a US keyboard, reached with the switcher bound under wm.keybindings below.
 set_key org.gnome.desktop.input-sources sources "[('xkb', 'us'), ('xkb', 'si+us')]"
 
-# Which key opens the overview when tapped on its own. Either Super, which is the pinky key on both hands.
-set_key org.gnome.mutter overlay-key "'Super'"
+# A Super key tapped on its own: the left one opens the overview, and the right one sends XF86Launch9, which no
+# physical key sends, for Claude Desktop's Quick Entry shortcut. The tap-key settings come from patches/mutter, and
+# without the patched mutter they are skipped.
+set_key org.gnome.mutter overlay-key   "'Super_L'"
+set_key org.gnome.mutter tap-key       "'Super_R'"
+set_key org.gnome.mutter tap-key-sends "'XF86Launch9'"
+
+# Tapping the left Control on its own, the thumb key left of the space bar, shows where the pointer is.
+set_key org.gnome.desktop.interface locate-pointer "true"
+set_key org.gnome.mutter locate-pointer-key        "'Control_L'"
 
 echo "=== workspaces ==="
 # The twelve switch-to-workspace and twelve move-to-workspace bindings below address fixed workspaces by number,
@@ -287,10 +290,10 @@ echo "=== console ==="
 # The TTY reads its layout from /etc/default/keyboard, which is root owned, so this part goes through sudo and
 # will ask for a password.
 #
-# Its options are not the ones above. Only alt and win are swapped, which leaves Control physically where it is
-# printed, so the console needs no patched terminal to send control characters. It also leaves the right Alt as
-# AltGr, which matters for the second layout: ckbcomp folds the second group onto AltGr rather than giving it a
-# toggle, so Slovenian is reached there by holding AltGr instead of switching layout as in the session.
+# The console has the US layout only, without a second layout to switch to. Its options are not the ones above,
+# and Control stays physically where it is printed, so the console needs no patched terminal to send control
+# characters. altwin:swap_alt_win swaps Alt and Win for the login screen, which reads this file too. The console
+# itself has no Super and turns both Win keys into Alt anyway.
 KEYBOARD=/etc/default/keyboard
 
 console_set() {
@@ -313,8 +316,8 @@ CONSOLE_TOUCHED=no
 if [ "$MODE" = apply ] && [ ! -f "$KEYBOARD.bak" ]; then
   sudo cp -a "$KEYBOARD" "$KEYBOARD.bak" 2>/dev/null || true
 fi
-console_set XKBLAYOUT  "us,si"
-console_set XKBVARIANT ",us"
+console_set XKBLAYOUT  "us"
+console_set XKBVARIANT ""
 console_set XKBOPTIONS "altwin:swap_alt_win"
 if [ "$CONSOLE_TOUCHED" = yes ]; then
   echo "  reloading the console keymap"
