@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="868" height="308" viewBox="0 0 868 308" font-family="system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, sans-serif">
+<style>
+  .heading { fill: #1f2328; font-size: 14px; font-weight: 600; }
+  .key { fill: #2d2f33; stroke: #16171a; stroke-width: 1; }
+  .legend { fill: #f2f2f2; font-size: 14px; }
+  .moved { stroke: #e8a33a; stroke-width: 3; }
+  .sent { fill: none; stroke: #8c959f; stroke-width: 1; stroke-dasharray: 4 3; }
+  .sent-text { fill: #1f2328; font-size: 13px; }
+  .changed { fill: #c2410c; font-weight: 700; }
+  @media (prefers-color-scheme: dark) {
+    .heading, .sent-text { fill: #e6edf3; }
+    .changed { fill: #f0a35e; }
+    .sent { stroke: #6e7681; }
+  }
+</style>
+<text x="16.0" y="22.0" class="heading" text-anchor="start" dominant-baseline="central">Keycaps as they come</text>
+<rect class="key" x="16.0" y="40" width="66.5" height="52" rx="6"/>
+<text x="49.2" y="66.0" class="legend" text-anchor="middle" dominant-baseline="central">Ctrl</text>
+<rect class="key" x="88.5" y="40" width="52.0" height="52" rx="6"/>
+<text x="114.5" y="66.0" class="legend" text-anchor="middle" dominant-baseline="central">Fn</text>
+<rect class="key" x="146.5" y="40" width="52.0" height="52" rx="6"/>
+<text x="172.5" y="66.0" class="legend" text-anchor="middle" dominant-baseline="central">Super</text>
+<rect class="key" x="204.5" y="40" width="66.5" height="52" rx="6"/>
+<text x="237.8" y="66.0" class="legend" text-anchor="middle" dominant-baseline="central">Alt</text>
+<rect class="key" x="277.0" y="40" width="284.0" height="52" rx="6"/>
+<rect class="key" x="567.0" y="40" width="52.0" height="52" rx="6"/>
+<text x="593.0" y="66.0" class="legend" text-anchor="middle" dominant-baseline="central">Alt</text>
+<rect class="key" x="625.0" y="40" width="52.0" height="52" rx="6"/>
+<text x="651.0" y="66.0" class="legend" text-anchor="middle" dominant-baseline="central">Ctrl</text>
+<rect class="key" x="683.0" y="67.5" width="52.0" height="24.5" rx="6"/>
+<path d="M 713.0 73.8 L 713.0 85.8 L 705.0 79.8 Z" fill="#f2f2f2"/>
+<rect class="key" x="741.0" y="40" width="52.0" height="24.5" rx="6"/>
+<rect class="key" x="741.0" y="67.5" width="52.0" height="24.5" rx="6"/>
+<path d="M 761.0 55.2 L 773.0 55.2 L 767.0 48.2 Z" fill="#f2f2f2"/>
+<path d="M 761.0 76.8 L 773.0 76.8 L 767.0 83.8 Z" fill="#f2f2f2"/>
+<rect class="key" x="799.0" y="67.5" width="52.0" height="24.5" rx="6"/>
+<path d="M 821.0 73.8 L 821.0 85.8 L 829.0 79.8 Z" fill="#f2f2f2"/>
+<text x="16.0" y="122.0" class="heading" text-anchor="start" dominant-baseline="central">Keycaps rearranged as on a Mac (moved ones outlined)</text>
+<rect class="key" x="16.0" y="140" width="66.5" height="52" rx="6"/>
+<text x="49.2" y="166.0" class="legend" text-anchor="middle" dominant-baseline="central">Ctrl</text>
+<rect class="key" x="88.5" y="140" width="52.0" height="52" rx="6"/>
+<text x="114.5" y="166.0" class="legend" text-anchor="middle" dominant-baseline="central">Fn</text>
+<rect class="key moved" x="146.5" y="140" width="52.0" height="52" rx="6"/>
+<text x="172.5" y="166.0" class="legend" text-anchor="middle" dominant-baseline="central">Alt</text>
+<rect class="key moved" x="204.5" y="140" width="66.5" height="52" rx="6"/>
+<text x="237.8" y="166.0" class="legend" text-anchor="middle" dominant-baseline="central">Super</text>
+<rect class="key" x="277.0" y="140" width="284.0" height="52" rx="6"/>
+<rect class="key moved" x="567.0" y="140" width="52.0" height="52" rx="6"/>
+<text x="593.0" y="166.0" class="legend" text-anchor="middle" dominant-baseline="central">Super</text>
+<rect class="key" x="625.0" y="140" width="52.0" height="52" rx="6"/>
+<text x="651.0" y="166.0" class="legend" text-anchor="middle" dominant-baseline="central">Ctrl</text>
+<rect class="key" x="683.0" y="167.5" width="52.0" height="24.5" rx="6"/>
+<path d="M 713.0 173.8 L 713.0 185.8 L 705.0 179.8 Z" fill="#f2f2f2"/>
+<rect class="key" x="741.0" y="140" width="52.0" height="24.5" rx="6"/>
+<rect class="key" x="741.0" y="167.5" width="52.0" height="24.5" rx="6"/>
+<path d="M 761.0 155.2 L 773.0 155.2 L 767.0 148.2 Z" fill="#f2f2f2"/>
+<path d="M 761.0 176.8 L 773.0 176.8 L 767.0 183.8 Z" fill="#f2f2f2"/>
+<rect class="key" x="799.0" y="167.5" width="52.0" height="24.5" rx="6"/>
+<path d="M 821.0 173.8 L 821.0 185.8 L 829.0 179.8 Z" fill="#f2f2f2"/>
+<text x="16.0" y="222.0" class="heading" text-anchor="start" dominant-baseline="central">What the keys send in GNOME (highlighted where it differs from the keycap)</text>
+<rect class="sent" x="16.0" y="240" width="66.5" height="52" rx="6"/>
+<text x="49.2" y="266.0" class="sent-text changed" text-anchor="middle" dominant-baseline="central">Super</text>
+<rect class="sent" x="88.5" y="240" width="52.0" height="52" rx="6"/>
+<text x="114.5" y="266.0" class="sent-text" text-anchor="middle" dominant-baseline="central">Fn</text>
+<rect class="sent" x="146.5" y="240" width="52.0" height="52" rx="6"/>
+<text x="172.5" y="266.0" class="sent-text" text-anchor="middle" dominant-baseline="central">Alt</text>
+<rect class="sent" x="204.5" y="240" width="66.5" height="52" rx="6"/>
+<text x="237.8" y="266.0" class="sent-text changed" text-anchor="middle" dominant-baseline="central">Control</text>
+<rect class="sent" x="277.0" y="240" width="284.0" height="52" rx="6"/>
+<text x="419.0" y="266.0" class="sent-text" text-anchor="middle" dominant-baseline="central">Space</text>
+<rect class="sent" x="567.0" y="240" width="52.0" height="52" rx="6"/>
+<text x="593.0" y="266.0" class="sent-text changed" text-anchor="middle" dominant-baseline="central">Control</text>
+<rect class="sent" x="625.0" y="240" width="52.0" height="52" rx="6"/>
+<text x="651.0" y="266.0" class="sent-text changed" text-anchor="middle" dominant-baseline="central">Super</text>
+</svg>
