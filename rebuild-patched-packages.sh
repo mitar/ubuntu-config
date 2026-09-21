@@ -2,10 +2,10 @@
 #
 # Rebuild locally patched packages when Ubuntu ships a newer version of them, or when their patches change.
 #
-# For each package under patches/, compare the version Ubuntu currently offers against the version last built
-# here, and the patches against the ones that build was made with. When either has moved on, fetch the source,
-# apply the local patches on top of the ones the package already carries, build it, and publish the result to the
-# local apt repository. Nothing is installed: the rebuilt package simply becomes the candidate, so the next
+# For each package in the patch directory, compare the version Ubuntu currently offers against the version last
+# built here, and the patches against the ones that build was made with. When either has moved on, fetch the
+# source, apply the local patches on top of the ones the package already carries, build it, and publish the result
+# to the local apt repository. Nothing is installed: the rebuilt package simply becomes the candidate, so the next
 # ordinary apt upgrade picks it up.
 #
 # This only works because the local repository outranks the archive (Pin-Priority 1001, see
@@ -33,6 +33,17 @@
 # say. It prints a summary when it rebuilds, so that a successful rebuild is still mailed as a notification.
 #
 #
+# Installing
+# ----------
+# Root runs this from cron, so everything it reads has to be as trusted as root itself. A patch can change anything
+# in the source, including debian/rules, and the build runs as root and its result is installed by apt as root, so
+# the patches are as sensitive as the script. Root therefore runs only root-owned copies installed from the
+# repository with install-rebuild-patched-packages.sh, never the repository itself, which your user can change.
+#
+# The script always reads the installed patches. Run from the repository, it also reports each installed copy
+# that differs from the repository, so that a change made there and not yet installed does not go unnoticed.
+#
+#
 # Adding a package
 # ----------------
 # Create patches/<source-package>/ containing the patch files and a "series" file naming them in the order they
@@ -40,7 +51,7 @@
 # add a "build-options" file whose contents are used as DEB_BUILD_OPTIONS. Do not put nocheck there: the tests
 # are how a stale patch is caught. Parallelism does not belong there either, it is passed as -j from BUILD_JOBS.
 # A README in that directory is a good place to record what the patch does and what to re-check after a version
-# bump.
+# bump. Then install the patches with install-rebuild-patched-packages.sh.
 #
 # A patch that applies is not a patch that works, and the build itself is what says so. Two things catch a patch
 # that has gone stale, and neither needs any machinery here:
@@ -76,8 +87,11 @@
 
 set -euo pipefail
 
-REPO_DIR=$(dirname "$(readlink -f "$0")")
-PATCH_DIR=$REPO_DIR/patches
+SCRIPT=$(readlink -f "$0")
+REPO_DIR=$(dirname "$SCRIPT")
+PATCH_DIR=/usr/local/share/patched-packages
+INSTALLED_SCRIPT=/usr/local/bin/rebuild-patched-packages
+CRON_JOB=/etc/cron.daily/rebuild-patched-packages
 LOCAL_REPO=/usr/local/lib/debs
 STATE_DIR=/var/lib/patched-packages
 SOURCES_DIR=/etc/apt/sources.list.d
@@ -156,6 +170,18 @@ check_prereqs() {
   fi
 
   [ -d "$LOCAL_REPO" ] || echo "  local repository $LOCAL_REPO does not exist"
+  [ -d "$PATCH_DIR" ] || echo "  patch directory $PATCH_DIR does not exist, install it with install-rebuild-patched-packages.sh"
+}
+
+# Reports each installed copy that differs from the repository this runs from. Prints nothing when run as an
+# installed copy, which has no repository next to it.
+report_install_drift() {
+  [ -d "$REPO_DIR/patches" ] || return 0
+  cmp -s "$SCRIPT" "$INSTALLED_SCRIPT" || echo "  $INSTALLED_SCRIPT differs from $SCRIPT"
+  diff -rq "$REPO_DIR/patches" "$PATCH_DIR" >/dev/null 2>&1 || echo "  $PATCH_DIR differs from $REPO_DIR/patches"
+  cmp -s "$REPO_DIR/cron.daily/rebuild-patched-packages" "$CRON_JOB" \
+    || echo "  $CRON_JOB differs from $REPO_DIR/cron.daily/rebuild-patched-packages"
+  return 0
 }
 
 # Build dependencies are installed per package by apt-get build-dep during a rebuild, so they never block. This
@@ -477,6 +503,9 @@ case "$MODE" in
 
   check)
     ensure_deb_src report
+    drift=$(report_install_drift)
+    [ -n "$drift" ] && { echo "=== installed copies differ from the repository, update them with install-rebuild-patched-packages.sh ==="; \
+      echo "$drift"; echo; }
     [ -n "$prereq_report" ] && { echo "=== prerequisites missing ==="; echo "$prereq_report"; \
       [ -n "$MISSING_PACKAGES" ] && echo "      sudo apt install$MISSING_PACKAGES"; echo; }
     n=0
@@ -510,6 +539,9 @@ case "$MODE" in
       fail "cannot rebuild until these are installed: sudo apt install$MISSING_PACKAGES"
     fi
     [ -d "$LOCAL_REPO" ] || fail "local repository $LOCAL_REPO does not exist"
+    [ -d "$PATCH_DIR" ] || fail "patch directory $PATCH_DIR does not exist, install it with install-rebuild-patched-packages.sh"
+    drift=$(report_install_drift)
+    [ -n "$drift" ] && { echo "installed copies differ from the repository, building from the installed ones:"; echo "$drift"; }
 
     built=0
     for src in $(selected_packages); do

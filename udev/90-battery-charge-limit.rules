@@ -1,0 +1,5 @@
+# Installed by configure-gnome-desktop.sh, which overwrites edits made here.
+#
+# The thresholds UPower applies while Preserve Battery Health is chosen in Settings, Power: charging starts when the
+# charge drops below the first percentage and stops at the second.
+ACTION!="remove", SUBSYSTEM=="power_supply", KERNEL=="BAT[0-9]*", ENV{CHARGE_LIMIT}="40,60"

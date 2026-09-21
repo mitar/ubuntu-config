@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 #
-# Configure the GNOME desktop: input devices, the power button light, bells, the login screen, workspaces, the look of
-# the interface, privacy, power, the dock, file management, and the settings of individual GNOME applications.
+# Configure the GNOME desktop: input devices, the power button light, battery charging, bells, the login screen,
+# workspaces, the look of the interface, privacy, power, the dock, file management, and the settings of individual
+# GNOME applications.
 #
 # Keyboard layout and shortcuts are configured by configure-gnome-keys.sh, and the terminal by
 # configure-ptyxis.sh. Workspaces are set in both this script and configure-gnome-keys.sh, because the workspace
@@ -28,8 +29,8 @@
 #   ./configure-gnome-desktop.sh --apply   apply the configuration
 #
 # Runs as your own user, because these settings live in your dconf and would land in root's under sudo. Installing
-# packages, the console's boot-time unit, the udev rules, and the login screen settings need root, so those parts
-# call sudo themselves and will ask for a password.
+# packages, the console's boot-time unit, the udev rules, the module option, and the login screen settings need
+# root, so those parts call sudo themselves and will ask for a password.
 
 set -euo pipefail
 
@@ -207,6 +208,7 @@ install_remote caffeine@patapon.info
 install_remote custom-hot-corners-extended@G-dH.github.com
 install_remote just-perfection-desktop@just-perfection
 install_remote vertical-workspaces@G-dH.github.com
+install_remote preserve-battery-health@marcosdalvarez.org
 
 want_extension auto-move-windows@gnome-shell-extensions.gcampax.github.com enabled
 want_extension drive-menu@gnome-shell-extensions.gcampax.github.com enabled
@@ -220,6 +222,7 @@ extension_settings caffeine
 extension_settings custom-hot-corners-extended
 extension_settings just-perfection
 extension_settings vertical-workspaces
+extension_settings preserve-battery-health
 
 WHOOPSIE=(--system com.ubuntu.WhoopsiePreferences /com/ubuntu/WhoopsiePreferences com.ubuntu.WhoopsiePreferences)
 
@@ -294,6 +297,22 @@ install_udev_rule() {
   return 0
 }
 
+# Installs a module option file from modprobe.d/ in this repository into the root-owned /etc/modprobe.d through
+# sudo. A module that is already loaded is loaded again, so that the options take effect without a reboot.
+install_modprobe_conf() {
+  local name=$1 module=$2 src=$REPO_DIR/modprobe.d/$1 dst=/etc/modprobe.d/$1
+  cmp -s "$src" "$dst" && return 0
+  echo "  install $dst"
+  CHANGED=$((CHANGED+1))
+  [ "$MODE" = apply ] || return 0
+  sudo install -m 644 "$src" "$dst"
+  if [ -d "/sys/module/$module" ]; then
+    sudo modprobe -r "$module"
+    sudo modprobe "$module"
+  fi
+  return 0
+}
+
 GREETER=/etc/gdm3/greeter.dconf-defaults
 
 # Sets a key in GDM's greeter settings through sudo, since the file is root owned. The key goes directly under its
@@ -336,6 +355,18 @@ install_udev_rule 90-ignore-touchscreens.rules input
 
 echo "=== power button light ==="
 install_udev_rule 90-power-button-light-off.rules leds
+
+echo "=== battery charging ==="
+# Settings, Power offers Maximize Charge and Preserve Battery Health once UPower finds charge thresholds on the
+# battery. The kernel exposes them only with the module option, and the udev rule gives UPower the thresholds for
+# Preserve Battery Health. Which of the two applies is chosen in Settings and remembered by UPower.
+BATTERY_CHANGED=$CHANGED
+install_modprobe_conf cros-charge-control.conf cros_charge_control
+install_udev_rule 90-battery-charge-limit.rules power_supply
+# UPower reads both only when it adds the battery.
+if [ "$MODE" = apply ] && [ "$CHANGED" -gt "$BATTERY_CHANGED" ]; then
+  sudo systemctl restart upower
+fi
 
 echo "=== bell and sound ==="
 set_key org.gnome.desktop.wm.preferences audible-bell                     "false"
