@@ -131,8 +131,9 @@ settings in `gnome-extensions/`. Custom extensions are installed from the reposi
   Everything else the scripts use comes with Ubuntu's desktop installation, and the packages the configuration
   itself needs, such as GNOME Shell extensions, are installed by the scripts.
 
-- Optionally a mail transport, such as `msmtp-mta`, with `MAILTO` set in `/etc/anacrontab`, so that the daily
-  rebuild can mail its reports. Without one, its failures are logged to syslog only.
+- Optionally a mail transport, such as `nullmailer`, which relays through your mail provider and queues mail
+  while offline, with `MAILTO` set in `/etc/anacrontab`, so that the daily rebuild can mail its reports. Without
+  one, its failures are logged to syslog only.
 
 ## Applying everything
 

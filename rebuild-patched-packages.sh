@@ -84,7 +84,7 @@
 #   (deb-src is not listed here any more. A build enables it on the Ubuntu sources itself and runs apt update,
 #    because ubuntu-pro-client rewrites its sources without it and a manual fix does not survive that.)
 #   a mail transport  cron mails output through it. Without one, failures still reach syslog, but no mail is
-#                     sent. Set MAILTO in the crontab to choose the recipient.
+#                     sent. Set MAILTO in /etc/anacrontab, which runs cron.daily, to choose the recipient.
 #   devscripts        provides dch, used to append the local version suffix.
 #   sbuild, mmdebstrap and uidmap
 #                     build in a throwaway chroot as an unprivileged user, see Building above.
@@ -187,7 +187,7 @@ check_prereqs() {
   # Not fatal. Failures still reach syslog, they just will not reach an inbox.
   if ! command -v sendmail >/dev/null 2>&1 && [ ! -x /usr/sbin/sendmail ]; then
     echo "  no mail transport, so cron cannot mail anything and failures reach syslog only"
-    echo "      install one, for example msmtp-mta for relaying or postfix for a local setup,"
+    echo "      install one, for example nullmailer, which relays through a mail server and queues mail while offline,"
     echo "      and assign MAILTO in /etc/anacrontab to choose the recipient, since anacron runs cron.daily"
   fi
 
