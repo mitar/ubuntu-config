@@ -21,7 +21,7 @@
 #   sudo ./rebuild-patched-packages.sh --build [package...]           rebuild whatever is out of date
 #   sudo ./rebuild-patched-packages.sh --build --force [package...]   rebuild regardless
 #   ./rebuild-patched-packages.sh --status [package...]               show recorded state for each package
-#   ./rebuild-patched-packages.sh --prereqs [package...]              list everything still to be installed, including build dependencies
+#   ./rebuild-patched-packages.sh --prereqs [package...]              list everything still to be installed, and the build chroot
 #
 # A package is named by its directory under patches/, which is its source package name. Naming packages limits
 # the run to them, and without names every package there is included.
@@ -36,12 +36,28 @@
 # Installing
 # ----------
 # Root runs this from cron, so everything it reads has to be as trusted as root itself. A patch can change anything
-# in the source, including debian/rules, and the build runs as root and its result is installed by apt as root, so
-# the patches are as sensitive as the script. Root therefore runs only root-owned copies installed from the
-# repository with install-rebuild-patched-packages.sh, never the repository itself, which your user can change.
+# in the source, including debian/rules, and the result is installed by apt as root, so the patches are as
+# sensitive as the script. Root therefore runs only root-owned copies installed from the repository with
+# install-rebuild-patched-packages.sh, never the repository itself, which your user can change.
+#
+# The build itself runs unprivileged, see Building below.
 #
 # The script always reads the installed patches. Run from the repository, it also reports each installed copy
 # that differs from the repository, so that a change made there and not yet installed does not go unnoticed.
+#
+#
+# Building
+# --------
+# Packages are built with sbuild in its unshare mode, which needs no root: as the unprivileged sbuild system user
+# the sbuild package creates, in a throwaway chroot unpacked from a tarball, without network access. The build
+# dependencies are installed only inside that chroot, so nothing is installed on the system for a build, and the
+# package's own build scripts and test suite can change neither the system nor anything outside the chroot. Root
+# only fetches the source, applies the patches and publishes the result, none of which runs code from the package.
+#
+# The chroot tarball is created with mmdebstrap from the system's own Ubuntu sources, so it follows the same
+# mirror, release and pockets, and it is created again once it is older than a week. sbuild also updates the
+# chroot before every build. It is kept in /var/cache/patched-packages, owned by the build user, which
+# install-rebuild-patched-packages.sh gives the subordinate ids unshare mode needs.
 #
 #
 # Adding a package
@@ -70,8 +86,8 @@
 #   a mail transport  cron mails output through it. Without one, failures still reach syslog, but no mail is
 #                     sent. Set MAILTO in the crontab to choose the recipient.
 #   devscripts        provides dch, used to append the local version suffix.
-#
-# Build dependencies are installed automatically per package by apt-get build-dep, since they change over time.
+#   sbuild, mmdebstrap and uidmap
+#                     build in a throwaway chroot as an unprivileged user, see Building above.
 #
 #
 # Versioning
@@ -95,10 +111,12 @@ CRON_JOB=/etc/cron.daily/rebuild-patched-packages
 LOCAL_REPO=/usr/local/lib/debs
 STATE_DIR=/var/lib/patched-packages
 SOURCES_DIR=/etc/apt/sources.list.d
-# Apport reports a crash of any executable it guesses to be packaged, and it guesses so for anything under /var
-# outside /var/lib. Test suites run binaries that abort on purpose, and built under /var/tmp each of those would
-# become a crash report and a desktop notification. Under /tmp Apport leaves them alone.
+BUILD_USER=sbuild
 BUILD_ROOT=/tmp
+CODENAME=$(. /etc/os-release && echo "$VERSION_CODENAME")
+CHROOT_DIR=/var/cache/patched-packages
+CHROOT_TARBALL=$CHROOT_DIR/$CODENAME-$(dpkg --print-architecture).tar.zst
+CHROOT_MAX_AGE_DAYS=7
 VERSION_SUFFIX=+patched
 # Parallelism has to be passed as -j. Setting parallel= in DEB_BUILD_OPTIONS does not survive, because
 # dpkg-buildpackage rewrites that variable from its own -j handling, and debhelper then falls back to ninja -j1.
@@ -107,7 +125,8 @@ BUILD_JOBS=$(nproc 2>/dev/null || echo 1)
 # Commands the rebuild needs, each with the package providing it. Everything missing is reported in one go, so a
 # failure mail names the whole install rather than whichever thing was noticed first.
 REQUIRED_COMMANDS="apt-get:apt apt-cache:apt patch:patch gzip:gzip dpkg-deb:dpkg dpkg-scanpackages:dpkg-dev
-                   dpkg-buildpackage:dpkg-dev dch:devscripts fakeroot:fakeroot g++:build-essential"
+                   dpkg-source:dpkg-dev dch:devscripts sbuild:sbuild mmdebstrap:mmdebstrap newuidmap:uidmap
+                   zstd:zstd setpriv:util-linux"
 
 MODE=check
 FORCE=no
@@ -174,6 +193,12 @@ check_prereqs() {
 
   [ -d "$LOCAL_REPO" ] || echo "  local repository $LOCAL_REPO does not exist"
   [ -d "$PATCH_DIR" ] || echo "  patch directory $PATCH_DIR does not exist, install it with install-rebuild-patched-packages.sh"
+  if ! getent passwd "$BUILD_USER" >/dev/null; then
+    echo "  build user $BUILD_USER does not exist, it comes with the sbuild package"
+  elif ! grep -q "^$BUILD_USER:" /etc/subuid || ! grep -q "^$BUILD_USER:" /etc/subgid; then
+    echo "  build user $BUILD_USER has no subordinate ids, add them with install-rebuild-patched-packages.sh"
+  fi
+  [ -r "$SOURCES_DIR/ubuntu.sources" ] || echo "  $SOURCES_DIR/ubuntu.sources does not exist, so no build chroot can be made"
 }
 
 # Reports each installed copy that differs from the repository this runs from. Prints nothing when run as an
@@ -185,21 +210,6 @@ report_install_drift() {
   cmp -s "$REPO_DIR/cron.daily/rebuild-patched-packages" "$CRON_JOB" \
     || echo "  $CRON_JOB differs from $REPO_DIR/cron.daily/rebuild-patched-packages"
   return 0
-}
-
-# Build dependencies are installed per package by apt-get build-dep during a rebuild, so they never block. This
-# reports them anyway, because the first rebuild of a package can pull in a great deal and it is better to know
-# that in advance than to discover it from a cron job at three in the morning.
-report_build_deps() {
-  local src=$1 version=$2 sim count
-  sim=$(apt-get build-dep --simulate --only-source "$src=$version" 2>/dev/null | awk '/^Inst /{print $2}' | sort -u)
-  count=$(printf '%s' "$sim" | grep -c . || true)
-  if [ "$count" -eq 0 ]; then
-    echo "  $src: build dependencies already satisfied"
-  else
-    echo "  $src: $count package(s) would be installed by apt-get build-dep"
-    printf '%s\n' "$sim" | tr '\n' ' ' | fold -s -w 110 | sed 's/^/      /'
-  fi
 }
 
 # Every Ubuntu source has to offer deb-src, or a rebuild cannot fetch what it is rebuilding. Enabling it once by
@@ -414,6 +424,30 @@ prune_old_debs() {
   done
 }
 
+# Runs a command as the unprivileged build user in a clean environment. Builds and test suites expect a writable
+# home, so it gets one inside the work directory. no_new_privs is not set, because unshare mode relies on the
+# setuid newuidmap and newgidmap to map the chroot's users onto the build user's subordinate ids.
+as_builder() {
+  local work=$1
+  shift
+  setpriv --reuid="$BUILD_USER" --regid="$BUILD_USER" --init-groups --inh-caps=-all \
+    env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME="$work/home" LANG=C.UTF-8 "$@"
+}
+
+# Creates the chroot tarball the builds run in when there is none or it is older than CHROOT_MAX_AGE_DAYS. It is
+# written under a temporary name and renamed into place, so an interrupted run never leaves a partial tarball.
+ensure_chroot() {
+  local work=$1
+  install -d -o "$BUILD_USER" -g "$BUILD_USER" -m 755 "$CHROOT_DIR"
+  if [ -f "$CHROOT_TARBALL" ] && [ -z "$(find "$CHROOT_TARBALL" -mtime +"$CHROOT_MAX_AGE_DAYS")" ]; then
+    return 0
+  fi
+  as_builder "$work" mmdebstrap --mode=unshare --variant=buildd "$CODENAME" "$CHROOT_TARBALL.new.tar.zst" \
+    "$SOURCES_DIR/ubuntu.sources" >"$work/mmdebstrap.log" 2>&1 \
+    || { tail -20 "$work/mmdebstrap.log" >&2; fail "could not create the build chroot $CHROOT_TARBALL"; }
+  as_builder "$work" mv "$CHROOT_TARBALL.new.tar.zst" "$CHROOT_TARBALL"
+}
+
 rebuild() {
   local src=$1 version=$2 reason=$3
   local work digest local_version
@@ -431,32 +465,54 @@ rebuild() {
 
   stage_patches "$src" "$tree"
 
-  apt-get build-dep -y --only-source "$src=$version" >/dev/null 2>&1 \
-    || fail "$src: apt-get build-dep failed for $version"
-
-  local opts=""
+  local opts="" email status=0
   [ -r "$PATCH_DIR/$src/build-options" ] && opts=$(cat "$PATCH_DIR/$src/build-options")
+  email=${DEBEMAIL:-root@$(hostname -f 2>/dev/null || hostname)}
+
+  mkdir "$work/home"
+  # sbuild would otherwise create a tarball it considers outdated again by itself, with its own default mmdebstrap
+  # arguments, which do not follow the system's Ubuntu sources.
+  printf '$unshare_mmdebstrap_auto_create = 0;\n1;\n' > "$work/sbuild.conf"
+  chown -R "$BUILD_USER:$BUILD_USER" "$work"
+  ensure_chroot "$work"
 
   ( cd "$tree" \
-      && DEBEMAIL="${DEBEMAIL:-root@$(hostname -f 2>/dev/null || hostname)}" \
-         DEBFULLNAME="${DEBFULLNAME:-Local patched build}" \
-         dch --newversion "$local_version" "Rebuilt with local patches from $PATCH_DIR/$src." \
-      && DEB_BUILD_OPTIONS="$opts" dpkg-buildpackage -b --no-sign -j"$BUILD_JOBS" ) >"$work/build.log" 2>&1 \
-    || { echo "--- last 40 lines of the build log ---" >&2; tail -40 "$work/build.log" >&2; \
-         fail "$src: build failed for $version"; }
+      && as_builder "$work" DEBEMAIL="$email" DEBFULLNAME="${DEBFULLNAME:-Local patched build}" \
+           dch --newversion "$local_version" "Rebuilt with local patches from $PATCH_DIR/$src." \
+      && cd "$work" \
+      && as_builder "$work" SBUILD_CONFIG="$work/sbuild.conf" DEB_BUILD_OPTIONS="$opts" \
+           sbuild --chroot-mode=unshare --chroot="$CHROOT_TARBALL" --dist="$CODENAME" --arch-all --arch-any \
+             --apt-update --apt-distupgrade --no-run-lintian --no-run-piuparts --no-run-autopkgtest \
+             --jobs="$BUILD_JOBS" --build-dir="$work" "$tree" \
+  ) >"$work/build.log" 2>&1 || status=$?
 
-  local produced="$work/produced" 
+  # A test suite can start processes, such as a daemon, which would otherwise outlive the build.
+  pkill -KILL -u "$BUILD_USER" 2>/dev/null || true
+
+  if [ "$status" -ne 0 ]; then
+    # sbuild writes the full build log to its own file in the work directory, and build.log only holds what it
+    # prints. That directory belongs to the build user, so only a regular file is read, never a symlink.
+    local log
+    log=$(find "$work" -maxdepth 1 -name '*.build' -type f -printf '%T@ %p\n' | sort -n | tail -1 | cut -d' ' -f2-)
+    echo "--- last 40 lines of the build log ---" >&2
+    tail -40 "${log:-$work/build.log}" >&2
+    fail "$src: build failed for $version"
+  fi
+
+  # The work directory belongs to the build user from here on, so only regular files are taken from it. A symlink
+  # named like a package would otherwise have root copy whatever it points to into the repository.
+  local produced="$work/produced" debs=() f
   : > "$produced"; : > "$produced.files"
-  local f
   for f in "$work"/*.deb; do
-    [ -e "$f" ] || continue
+    [ -f "$f" ] && [ ! -L "$f" ] || continue
+    debs+=("$f")
     dpkg-deb -f "$f" Package >> "$produced"
     echo "$LOCAL_REPO/$(basename "$f")" >> "$produced.files"
   done
   [ -s "$produced" ] || fail "$src: build produced no .deb files"
 
   prune_old_debs "$produced"
-  cp "$work"/*.deb "$LOCAL_REPO/"
+  cp "${debs[@]}" "$LOCAL_REPO/"
 
   mkdir -p "$STATE_DIR"
   echo "$version" > "$STATE_DIR/$src.built"
@@ -485,12 +541,12 @@ case "$MODE" in
       echo "  everything needed is present"
     fi
     echo
-    echo "=== build dependencies ==="
-    for src in $(selected_packages); do
-      off=$(official_version "$src")
-      if [ -z "$off" ]; then echo "  $src: unknown, the Ubuntu version cannot be determined"
-      else report_build_deps "$src" "$off"; fi
-    done
+    echo "=== build chroot ==="
+    if [ -f "$CHROOT_TARBALL" ]; then
+      echo "  $CHROOT_TARBALL, created $(date -r "$CHROOT_TARBALL" '+%Y-%m-%d %H:%M')"
+    else
+      echo "  $CHROOT_TARBALL does not exist yet, the next build creates it"
+    fi
     ;;
 
   status)
@@ -543,6 +599,8 @@ case "$MODE" in
     fi
     [ -d "$LOCAL_REPO" ] || fail "local repository $LOCAL_REPO does not exist"
     [ -d "$PATCH_DIR" ] || fail "patch directory $PATCH_DIR does not exist, install it with install-rebuild-patched-packages.sh"
+    getent passwd "$BUILD_USER" >/dev/null \
+      || fail "build user $BUILD_USER does not exist, it comes with the sbuild package"
     drift=$(report_install_drift)
     [ -n "$drift" ] && { echo "installed copies differ from the repository, building from the installed ones:"; echo "$drift"; }
 

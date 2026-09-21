@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 #
 # Install rebuild-patched-packages.sh, its patches and its daily cron job from this repository as the root-owned
-# copies that root runs. Only what differs from the installed copy is replaced.
+# copies that root runs, and give the sbuild user its builds run as the subordinate ids building in unshare mode
+# needs. Only what differs from the installed copy is replaced.
 #
 #   rebuild-patched-packages.sh           ->  /usr/local/bin/rebuild-patched-packages
 #   patches/                              ->  /usr/local/share/patched-packages
@@ -62,6 +63,22 @@ install_dir() {
 }
 
 echo "=== rebuild-patched-packages ==="
+# The unshare mode of sbuild and mmdebstrap maps the users inside the build chroot onto subordinate ids of the
+# build user. A range is taken above every range already given out.
+if ! getent passwd sbuild >/dev/null; then
+  echo "install-rebuild-patched-packages: the sbuild user does not exist, install the sbuild package first" >&2
+  exit 1
+fi
+if ! grep -q '^sbuild:' /etc/subuid || ! grep -q '^sbuild:' /etc/subgid; then
+  first=$(awk -F: '{ end = $2 + $3; if (end > last) last = end } END { print (last < 100000 ? 100000 : last) }' \
+    /etc/subuid /etc/subgid)
+  range="$first-$((first + 65535))"
+  echo "  add subordinate ids $range for sbuild"
+  CHANGED=$((CHANGED+1))
+  if [ "$MODE" = apply ]; then
+    sudo usermod --add-subuids "$range" --add-subgids "$range" sbuild
+  fi
+fi
 install_dir  "$REPO_DIR/patches"                             /usr/local/share/patched-packages
 install_file "$REPO_DIR/rebuild-patched-packages.sh"         /usr/local/bin/rebuild-patched-packages  755
 install_file "$REPO_DIR/cron.daily/rebuild-patched-packages" /etc/cron.daily/rebuild-patched-packages 755
