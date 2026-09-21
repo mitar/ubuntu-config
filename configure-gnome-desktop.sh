@@ -422,6 +422,8 @@ set_key org.gnome.desktop.privacy report-technical-problems  "false"
 whoopsie_want ReportCrashes              SetReportCrashes              false
 whoopsie_want AutomaticallyReportCrashes SetAutomaticallyReportCrashes false
 whoopsie_want ReportMetrics              SetReportMetrics              false
+# Apport still records crashes in /var/crash, but without a dialog offering to report each of them.
+set_key com.ubuntu.update-notifier show-apport-crashes "false"
 set_key org.gnome.desktop.privacy recent-files-max-age             "30"
 set_key org.gnome.desktop.privacy remove-old-temp-files            "true"
 set_key org.gnome.desktop.screensaver lock-delay                       "uint32 30"
