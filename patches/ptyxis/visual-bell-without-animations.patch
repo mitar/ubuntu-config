@@ -3,7 +3,7 @@ Description: Show the visual bell when animations are disabled.
  while gtk-enable-animations is off, so with animations disabled a bell shows nothing at all.
  .
  In that case a visual-bell-static class is set instead, which gives the header the bell colours
- for as long as Ptyxis keeps the class on, 500 ms. With animations enabled nothing changes.
+ for 150 ms. With animations enabled nothing changes.
 Author: Mitar
 Forwarded: not-needed
 Last-Update: 2026-09-21
@@ -39,7 +39,7 @@ Last-Update: 2026-09-21
  
    g_return_if_fail (PTYXIS_IS_WINDOW (self));
  
-@@ -2535,7 +2537,18 @@
+@@ -2535,13 +2537,24 @@
    if (!ptyxis_settings_get_visual_bell (settings))
      return;
  
@@ -50,7 +50,7 @@ Last-Update: 2026-09-21
 +
 +  /* The visual-bell class flashes through CSS keyframes, which GTK does not run
 +   * with animations disabled. The visual-bell-static class then shows the bell
-+   * colour for as long as the class is set instead.
++   * colour for as long as the class is set instead, which is 150 ms.
 +   */
 +  if (gtk_enable_animations)
 +    gtk_widget_add_css_class (GTK_WIDGET (self->visual_bell), "visual-bell");
@@ -59,3 +59,10 @@ Last-Update: 2026-09-21
  
    g_clear_handle_id (&self->visual_bell_source, g_source_remove);
  
+   self->visual_bell_source = g_timeout_add_full (G_PRIORITY_HIGH_IDLE,
+                                                  /* Sync duration with style.css */
+-                                                 500,
++                                                 gtk_enable_animations ? 500 : 150,
+                                                  ptyxis_window_remove_visual_bell,
+                                                  g_object_ref (self),
+                                                  g_object_unref);

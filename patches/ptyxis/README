@@ -19,7 +19,7 @@ palette-highlight-colours.patch
 visual-bell-without-animations.patch
     Makes the visual bell visible with animations disabled. The header flash is a CSS animation,
     which GTK does not run while gtk-enable-animations is off, so the bell showed nothing. The
-    header then shows the bell colours for the 500 ms Ptyxis keeps the bell state on.
+    header then shows the bell colours for 150 ms.
 
 None of this is reachable through settings, which is why the patches exist. A shortcut in Ptyxis
 is spread across four places, and only the first is visible from outside:
@@ -40,4 +40,4 @@ compile, and still behave wrongly. Check by hand after a rebuild.
   Ctrl+F then Ctrl+G           should move down the scrollback, towards newer output
   select text, Ctrl+Shift+C    should copy as HTML, and the context menu should show that accel
   select text                  should highlight dark red (#a40000) with white text
-  printf '\a', animations off  should colour the header for half a second
+  printf '\a', animations off  should colour the header for 150 ms
