@@ -1,0 +1,17 @@
+# Installed by configure-gnome-desktop.sh, which overwrites edits made here.
+#
+# The console uses the kernel's key repeat, which does not persist across boots. The built-in keyboard repeats keys
+# in hardware and supports delays of at most 1000 ms. kbdrate always sets the rate too, 10.9 characters per second
+# unless given, so the kernel's default of 30 is passed along. The setting is global, so any console serves as
+# standard input for the ioctl kbdrate makes on it.
+
+[Unit]
+Description=Set the console keyboard repeat delay
+
+[Service]
+Type=oneshot
+StandardInput=file:/dev/tty0
+ExecStart=/usr/sbin/kbdrate -s -r 30 -d 1000
+
+[Install]
+WantedBy=multi-user.target

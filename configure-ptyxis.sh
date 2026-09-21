@@ -89,7 +89,7 @@ configure_profile() {
   set_key "$path" limit-scrollback    "false"
   set_key "$path" scroll-on-keystroke "false"
   # Whether a new tab or window inherits the working directory of the one it came from.
-  set_key "$path" preserve-directory  "'never'"
+  set_key "$path" preserve-directory  "'safe'"
   set_key "$path" opacity             "$opacity"
   set_key "$path" label               "'$label'"
 }
