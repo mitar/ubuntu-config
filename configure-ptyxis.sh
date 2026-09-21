@@ -129,8 +129,8 @@ else
 fi
 
 echo "=== application ==="
-set_key org.gnome.Ptyxis default-columns "uint32 120"
-set_key org.gnome.Ptyxis default-rows    "uint32 30"
+set_key org.gnome.Ptyxis default-columns "uint32 110"
+set_key org.gnome.Ptyxis default-rows    "uint32 27"
 # With this off, default-columns and default-rows above decide the size of every new window. With it on, Ptyxis
 # reopens at whatever size the last window was left at and ignores them.
 set_key org.gnome.Ptyxis restore-window-size "false"
