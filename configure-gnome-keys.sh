@@ -30,7 +30,7 @@
 #   Alt     LWIN      Alt
 #   Super   LALT      Control        the Command position, and what copies and pastes
 #   Super   RALT      Control
-#   Ctrl    RCTL      Super          the firmware setup has to send it as Right Ctrl
+#   Ctrl    RCTL      Super          the BIOS has to send it as Right Ctrl
 #
 #
 # Usage
