@@ -116,9 +116,7 @@ set_key org.gnome.mutter overlay-key   "'Super_L'"
 set_key org.gnome.mutter tap-key       "'Super_R'"
 set_key org.gnome.mutter tap-key-sends "'XF86Launch9'"
 
-# Tapping the left Control on its own, the thumb key left of the space bar, shows where the pointer is.
-set_key org.gnome.desktop.interface locate-pointer "true"
-set_key org.gnome.mutter locate-pointer-key        "'Control_L'"
+set_key org.gnome.desktop.interface locate-pointer "false"
 
 echo "=== workspaces ==="
 # The twelve switch-to-workspace and twelve move-to-workspace bindings below address fixed workspaces by number,
