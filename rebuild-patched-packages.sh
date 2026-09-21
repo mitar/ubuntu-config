@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 #
-# Rebuild locally patched packages when Ubuntu ships a newer version of them.
+# Rebuild locally patched packages when Ubuntu ships a newer version of them, or when their patches change.
 #
 # For each package under patches/, compare the version Ubuntu currently offers against the version last built
-# here. When Ubuntu has moved ahead, fetch that source, apply the local patches on top of the ones the package
-# already carries, build it, and publish the result to the local apt repository. Nothing is installed: the
-# rebuilt package simply becomes the candidate, so the next ordinary apt upgrade picks it up.
+# here, and the patches against the ones that build was made with. When either has moved on, fetch the source,
+# apply the local patches on top of the ones the package already carries, build it, and publish the result to the
+# local apt repository. Nothing is installed: the rebuilt package simply becomes the candidate, so the next
+# ordinary apt upgrade picks it up.
 #
 # This only works because the local repository outranks the archive (Pin-Priority 1001, see
 # lockdown-apt-sources.sh). That is what stops an unpatched Ubuntu build from replacing a patched one. The
@@ -16,11 +17,14 @@
 #
 # Usage
 # -----
-#   ./rebuild-patched-packages.sh            report what is out of date, change nothing (default)
-#   sudo ./rebuild-patched-packages.sh --build    rebuild whatever is out of date
-#   sudo ./rebuild-patched-packages.sh --build --force    rebuild everything regardless
-#   ./rebuild-patched-packages.sh --status   show recorded state for each package
-#   ./rebuild-patched-packages.sh --prereqs  list everything still to be installed, including build dependencies
+#   ./rebuild-patched-packages.sh [package...]                        report what is out of date, change nothing (default)
+#   sudo ./rebuild-patched-packages.sh --build [package...]           rebuild whatever is out of date
+#   sudo ./rebuild-patched-packages.sh --build --force [package...]   rebuild regardless
+#   ./rebuild-patched-packages.sh --status [package...]               show recorded state for each package
+#   ./rebuild-patched-packages.sh --prereqs [package...]              list everything still to be installed, including build dependencies
+#
+# A package is named by its directory under patches/, which is its source package name. Naming packages limits
+# the run to them, and without names every package there is included.
 #
 # Every mode reports missing prerequisites. Only --build treats them as fatal, and it names the whole install in
 # one message rather than stopping at the first gap, so that a cron mail is actionable on its own.
@@ -63,7 +67,12 @@
 # ----------
 # The rebuild carries a local suffix, so 0.84.0-2 becomes 0.84.0-2+patched1. That sorts above the Ubuntu version
 # it was built from and below Ubuntu's next revision, which is what makes a new Ubuntu release register as
-# "newer upstream" here and trigger a rebuild rather than being masked forever by the pin.
+# "newer upstream" here and trigger a rebuild rather than being masked forever by the pin. Rebuilding the same
+# Ubuntu version again, because its patches changed or with --force, counts the suffix up to +patched2 and so on,
+# so that apt sees the new build as an upgrade too.
+#
+# Patch changes are noticed through a fingerprint of the series, the patches it lists and build-options, recorded
+# with every build. The README is not part of it, so editing only the documentation does not cause a rebuild.
 
 set -euo pipefail
 
@@ -85,6 +94,7 @@ REQUIRED_COMMANDS="apt-get:apt apt-cache:apt patch:patch gzip:gzip dpkg-deb:dpkg
 
 MODE=check
 FORCE=no
+PACKAGES=()
 for arg in "$@"; do
   case "$arg" in
     --build)   MODE=build ;;
@@ -93,8 +103,12 @@ for arg in "$@"; do
     --check)   MODE=check ;;
     --force)   FORCE=yes ;;
     -h|--help) awk 'NR>1 && !/^#/{exit} NR>1{sub(/^# ?/, ""); print}' "$0"; exit 0 ;;
-    *)         echo "unknown option: $arg (try --help)" >&2; exit 2 ;;
+    -*)        echo "unknown option: $arg (try --help)" >&2; exit 2 ;;
+    *)         PACKAGES+=("$arg") ;;
   esac
+done
+for arg in "${PACKAGES[@]}"; do
+  [ -f "$PATCH_DIR/$arg/series" ] || { echo "unknown package: $arg, there is no $PATCH_DIR/$arg/series" >&2; exit 2; }
 done
 
 # Failures have to be impossible to miss, because the pin means a stale package is silently kept rather than
@@ -248,6 +262,15 @@ patched_packages() {
   done
 }
 
+# The packages this run is about: the ones named on the command line, or else every package with a patch directory.
+selected_packages() {
+  if [ "${#PACKAGES[@]}" -gt 0 ]; then
+    printf '%s\n' "${PACKAGES[@]}"
+  else
+    patched_packages
+  fi
+}
+
 # The version Ubuntu currently offers for a source package. Only archive origins are considered, so that our own
 # rebuild sitting in the local repository is not mistaken for the upstream version and cannot suppress a rebuild.
 official_version() {
@@ -260,6 +283,67 @@ official_version() {
 # The official version the last successful build was made from, or empty if this package has never been built.
 built_version() {
   cat "$STATE_DIR/$1.built" 2>/dev/null || true
+}
+
+# A fingerprint of what a build takes from patches/<source-package>/: the series, the patches it lists in order,
+# and build-options.
+patches_digest() {
+  local dir=$PATCH_DIR/$1 p
+  {
+    cat "$dir/series"
+    while read -r p; do
+      [ -n "$p" ] || continue
+      case "$p" in \#*) continue ;; esac
+      echo "=== $p"
+      cat "$dir/$p" 2>/dev/null || true
+    done < "$dir/series"
+    if [ -r "$dir/build-options" ]; then
+      echo "=== build-options"
+      cat "$dir/build-options"
+    fi
+  } | sha256sum | cut -d' ' -f1
+}
+
+# The fingerprint of the patches the last successful build was made with, or empty if none was recorded.
+built_digest() {
+  cat "$STATE_DIR/$1.patches" 2>/dev/null || true
+}
+
+# Why a package has to be rebuilt, or nothing when it is current. --force is not considered here, callers add it.
+rebuild_reason() {
+  local src=$1 off=$2 blt=$3 was
+  if [ -z "$blt" ]; then
+    echo "never built"
+  elif [ "$off" != "$blt" ]; then
+    echo "Ubuntu moved from $blt to $off"
+  else
+    was=$(built_digest "$src")
+    if [ -z "$was" ]; then
+      echo "no record of the patches it was built with"
+    elif [ "$(patches_digest "$src")" != "$was" ]; then
+      echo "patches changed since it was built"
+    fi
+  fi
+  return 0
+}
+
+# The highest local build number of an Ubuntu version among the packages in the local repository, or 0 when there
+# is none. 0.84.0-2+patched3 has build number 3.
+last_build_number() {
+  local src=$1 version=$2 f name ver n best=0
+  for f in "$LOCAL_REPO"/*.deb; do
+    [ -e "$f" ] || continue
+    # The Source field is left out when it equals the binary package name, and may carry a version after a space.
+    name=$(dpkg-deb -f "$f" Source 2>/dev/null | cut -d' ' -f1)
+    [ -n "$name" ] || name=$(dpkg-deb -f "$f" Package 2>/dev/null)
+    [ "$name" = "$src" ] || continue
+    ver=$(dpkg-deb -f "$f" Version 2>/dev/null) || continue
+    n=${ver#"$version$VERSION_SUFFIX"}
+    if [ "$n" != "$ver" ] && [[ $n =~ ^[0-9]+$ ]] && [ "$n" -gt "$best" ]; then
+      best=$n
+    fi
+  done
+  echo "$best"
 }
 
 # Add our patches to the package's own series and let dpkg-source apply them, which is exactly what the build
@@ -302,8 +386,10 @@ prune_old_debs() {
 }
 
 rebuild() {
-  local src=$1 version=$2
-  local work
+  local src=$1 version=$2 reason=$3
+  local work digest local_version
+  digest=$(patches_digest "$src")
+  local_version=$version$VERSION_SUFFIX$(( $(last_build_number "$src" "$version") + 1 ))
   work=$(mktemp -d "$BUILD_ROOT/rebuild-$src.XXXXXX")
   CLEANUP="$CLEANUP $work"
 
@@ -325,7 +411,7 @@ rebuild() {
   ( cd "$tree" \
       && DEBEMAIL="${DEBEMAIL:-root@$(hostname -f 2>/dev/null || hostname)}" \
          DEBFULLNAME="${DEBFULLNAME:-Local patched build}" \
-         dch --local "$VERSION_SUFFIX" "Rebuilt with local patches from $PATCH_DIR/$src." \
+         dch --newversion "$local_version" "Rebuilt with local patches from $PATCH_DIR/$src." \
       && DEB_BUILD_OPTIONS="$opts" dpkg-buildpackage -b --no-sign -j"$BUILD_JOBS" ) >"$work/build.log" 2>&1 \
     || { echo "--- last 40 lines of the build log ---" >&2; tail -40 "$work/build.log" >&2; \
          fail "$src: build failed for $version"; }
@@ -345,8 +431,9 @@ rebuild() {
 
   mkdir -p "$STATE_DIR"
   echo "$version" > "$STATE_DIR/$src.built"
+  echo "$digest" > "$STATE_DIR/$src.patches"
 
-  echo "$src: rebuilt $version with $(wc -l < "$produced") binary package(s)"
+  echo "$src: rebuilt as $local_version ($reason) with $(wc -l < "$produced") binary package(s)"
   sed 's/^/    /' "$produced"
 }
 
@@ -370,7 +457,7 @@ case "$MODE" in
     fi
     echo
     echo "=== build dependencies ==="
-    for src in $(patched_packages); do
+    for src in $(selected_packages); do
       off=$(official_version "$src")
       if [ -z "$off" ]; then echo "  $src: unknown, the Ubuntu version cannot be determined"
       else report_build_deps "$src" "$off"; fi
@@ -380,12 +467,10 @@ case "$MODE" in
   status)
     printf '%-20s %-22s %-22s %s\n' "package" "ubuntu offers" "built from" "state"
     printf -- '-%.0s' {1..80}; echo
-    for src in $(patched_packages); do
+    for src in $(selected_packages); do
       off=$(official_version "$src"); blt=$(built_version "$src")
       if [ -z "$off" ]; then st="NO SOURCE (deb-src missing?)"
-      elif [ -z "$blt" ]; then st="never built"
-      elif [ "$off" = "$blt" ]; then st="current"
-      else st="OUT OF DATE"; fi
+      else st=$(rebuild_reason "$src" "$off" "$blt"); st=${st:-current}; fi
       printf '%-20s %-22s %-22s %s\n' "$src" "${off:-?}" "${blt:--}" "$st"
     done
     ;;
@@ -395,11 +480,13 @@ case "$MODE" in
     [ -n "$prereq_report" ] && { echo "=== prerequisites missing ==="; echo "$prereq_report"; \
       [ -n "$MISSING_PACKAGES" ] && echo "      sudo apt install$MISSING_PACKAGES"; echo; }
     n=0
-    for src in $(patched_packages); do
+    for src in $(selected_packages); do
       off=$(official_version "$src"); blt=$(built_version "$src")
       [ -n "$off" ] || { echo "$src: cannot determine the Ubuntu version, is deb-src enabled?"; n=$((n+1)); continue; }
-      if [ "$off" != "$blt" ] || [ "$FORCE" = yes ]; then
-        echo "$src: would rebuild ${blt:-(never built)} -> $off"
+      reason=$(rebuild_reason "$src" "$off" "$blt")
+      [ -z "$reason" ] && [ "$FORCE" = yes ] && reason="forced"
+      if [ -n "$reason" ]; then
+        echo "$src: would rebuild $off, $reason"
         n=$((n+1))
       fi
       newer=$(unfetchable_update "$src" "$off")
@@ -425,15 +512,17 @@ case "$MODE" in
     [ -d "$LOCAL_REPO" ] || fail "local repository $LOCAL_REPO does not exist"
 
     built=0
-    for src in $(patched_packages); do
+    for src in $(selected_packages); do
       off=$(official_version "$src")
       [ -n "$off" ] || fail "$src: cannot determine the Ubuntu version, is deb-src enabled?"
       blt=$(built_version "$src")
       newer=$(unfetchable_update "$src" "$off")
       [ -n "$newer" ] && warn "$src: binary $newer is available but its source is not, so the rebuild is made" \
                               "from $off and will not contain whatever that newer version fixes"
-      if [ "$off" != "$blt" ] || [ "$FORCE" = yes ]; then
-        rebuild "$src" "$off"
+      reason=$(rebuild_reason "$src" "$off" "$blt")
+      [ -z "$reason" ] && [ "$FORCE" = yes ] && reason="forced"
+      if [ -n "$reason" ]; then
+        rebuild "$src" "$off" "$reason"
         built=$((built+1))
       fi
     done
