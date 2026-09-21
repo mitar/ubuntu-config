@@ -11,7 +11,7 @@
 # Usage
 # -----
 #   ./lockdown-apt-sources.sh               show what would change and verify it, write nothing (default)
-#   sudo ./lockdown-apt-sources.sh --apply  verify, then write the config, refresh apt and audit
+#   sudo ./lockdown-apt-sources.sh --apply  verify, then write the config, refresh apt and audit, unless nothing would change
 #   ./lockdown-apt-sources.sh --audit       report what the allowlist does not cover
 #
 #
@@ -461,6 +461,19 @@ case "$MODE" in
       echo "Either the allowlist needs the package adding, or CHECKS needs updating to match it." >&2
       exit 1
     fi
+
+    changed=false
+    cmp -s "$tmp/$PREF_NAME" "$PREF_DEST" || changed=true
+    for f in $SUPERSEDED; do
+      if [ -e "/etc/apt/preferences.d/$f" ]; then
+        changed=true
+      fi
+    done
+    if [ "$changed" = false ]; then
+      echo "already configured, nothing to change"
+      exit 0
+    fi
+
     echo "candidate configuration verified, applying"
     echo
 
