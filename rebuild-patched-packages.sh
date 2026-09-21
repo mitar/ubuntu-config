@@ -95,7 +95,10 @@ CRON_JOB=/etc/cron.daily/rebuild-patched-packages
 LOCAL_REPO=/usr/local/lib/debs
 STATE_DIR=/var/lib/patched-packages
 SOURCES_DIR=/etc/apt/sources.list.d
-BUILD_ROOT=/var/tmp
+# Apport reports a crash of any executable it guesses to be packaged, and it guesses so for anything under /var
+# outside /var/lib. Test suites run binaries that abort on purpose, and built under /var/tmp each of those would
+# become a crash report and a desktop notification. Under /tmp Apport leaves them alone.
+BUILD_ROOT=/tmp
 VERSION_SUFFIX=+patched
 # Parallelism has to be passed as -j. Setting parallel= in DEB_BUILD_OPTIONS does not survive, because
 # dpkg-buildpackage rewrites that variable from its own -j handling, and debhelper then falls back to ninja -j1.
