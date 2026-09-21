@@ -248,9 +248,19 @@ Pin-Priority: -1
 
 # ---- ppa.launchpadcontent.net ------------------------------------------------------------------------------
 
-# No PPA is configured, and one hostname serves every PPA on Launchpad, so this denies all of them: a PPA added
-# later installs nothing until an allow stanza is added here first. PPAs routinely rebuild core Ubuntu libraries
-# under the names Ubuntu uses, which is the case this file exists to prevent, so they are opt-in per package.
+# One hostname serves every PPA on Launchpad, so these rules cover all of them: a PPA added later installs nothing
+# until an allow stanza is added here first, and a package allowed here is allowed from any PPA that carries it.
+# PPAs routinely rebuild core Ubuntu libraries and applications under the names Ubuntu uses, which is the case this
+# file exists to prevent, so they are opt-in per package.
+
+# Chromium from ppa:xtradeb/apps, because Ubuntu's chromium-browser is a snap wrapper. Ubuntu has none of these
+# names, so the default priority is enough. The PPA carries more than 200 other packages, among them transmission
+# at a higher version than Ubuntu's, which it would otherwise replace. Denies chromium-driver and the other
+# Chromium packages that are not in use.
+Package: chromium chromium-common chromium-sandbox chromium-l10n
+Pin: origin ppa.launchpadcontent.net
+Pin-Priority: 500
+
 Package: *
 Pin: origin ppa.launchpadcontent.net
 Pin-Priority: -1
@@ -265,11 +275,13 @@ import re, subprocess, sys
 
 prefs = sys.argv[1]
 
-# pkg, kind, expected. origin: candidate must come from this host. version: candidate must be exactly this.
+# pkg, kind, expected. origin: candidate must come from this host, which can be followed by a path to name one
+# repository on a host serving many, such as a PPA. version: candidate must be exactly this.
 # none: package must have no installable candidate. installed: candidate must equal the installed version.
 CHECKS = [
     ("libfido2-1",               "origin",    "archive.ubuntu.com"),
     ("python3-dbus-fast",        "origin",    "archive.ubuntu.com"),
+    ("transmission-gtk",         "origin",    "archive.ubuntu.com"),
     ("thunderbird-esr",          "version",   "1:140.15.0esr~build1"),
     ("firefox",                  "origin",    "packages.mozilla.org"),
     ("thunderbird",              "origin",    "packages.mozilla.org"),
@@ -279,6 +291,7 @@ CHECKS = [
     ("claude-desktop",           "origin",    "downloads.claude.ai"),
     ("naps2",                    "origin",    "downloads.naps2.com"),
     ("proton-vpn-gtk-app",       "origin",    "repo.protonvpn.com"),
+    ("chromium",                 "origin",    "ppa.launchpadcontent.net/xtradeb/apps"),
     ("zoom",                     "installed", None),
     ("firefox-beta",             "none",      None),
     ("mozillavpn",               "none",      None),
@@ -287,6 +300,7 @@ CHECKS = [
     ("code-insiders",            "none",      None),
     ("protonvpn-beta-release",   "none",      None),
     ("python3-protonvpn-nm-lib", "none",      None),
+    ("chromium-driver",          "none",      None),
 ]
 
 def policy(pkg):
