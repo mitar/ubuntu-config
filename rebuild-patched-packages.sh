@@ -482,7 +482,7 @@ rebuild() {
       && cd "$work" \
       && as_builder "$work" SBUILD_CONFIG="$work/sbuild.conf" DEB_BUILD_OPTIONS="$opts" \
            sbuild --chroot-mode=unshare --chroot="$CHROOT_TARBALL" --dist="$CODENAME" --arch-all --arch-any \
-             --apt-update --apt-distupgrade --no-run-lintian --no-run-piuparts --no-run-autopkgtest \
+             --no-clean-source --apt-update --apt-distupgrade --no-run-lintian --no-run-piuparts --no-run-autopkgtest \
              --jobs="$BUILD_JOBS" --build-dir="$work" "$tree" \
   ) >"$work/build.log" 2>&1 || status=$?
 
