@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# Configure the GNOME desktop: input devices, bells, the login screen, workspaces, the look of the interface, privacy,
-# power, the dock, file management, and the settings of individual GNOME applications.
+# Configure the GNOME desktop: input devices, the power button light, bells, the login screen, workspaces, the look of
+# the interface, privacy, power, the dock, file management, and the settings of individual GNOME applications.
 #
 # Keyboard layout and shortcuts are configured by configure-gnome-keys.sh, and the terminal by
 # configure-ptyxis.sh. Workspaces are set in both this script and configure-gnome-keys.sh, because the workspace
@@ -28,8 +28,8 @@
 #   ./configure-gnome-desktop.sh --apply   apply the configuration
 #
 # Runs as your own user, because these settings live in your dconf and would land in root's under sudo. Installing
-# packages, the console's boot-time unit, the touchscreen rule, and the login screen settings need root, so those
-# parts call sudo themselves and will ask for a password.
+# packages, the console's boot-time unit, the udev rules, and the login screen settings need root, so those parts
+# call sudo themselves and will ask for a password.
 
 set -euo pipefail
 
@@ -280,17 +280,17 @@ install_unit() {
 }
 
 # Installs a udev rule from udev/ in this repository into the root-owned /etc/udev/rules.d through sudo, then has
-# udev reload its rules and apply them to input devices again. A program that already has a device open sees the
-# change only when it opens the device again.
+# udev reload its rules and apply them again to the devices of the given subsystem. A program that already has a
+# device open sees the change only when it opens the device again.
 install_udev_rule() {
-  local name=$1 src=$REPO_DIR/udev/$1 dst=/etc/udev/rules.d/$1
+  local name=$1 subsystem=$2 src=$REPO_DIR/udev/$1 dst=/etc/udev/rules.d/$1
   cmp -s "$src" "$dst" && return 0
   echo "  install $dst"
   CHANGED=$((CHANGED+1))
   [ "$MODE" = apply ] || return 0
   sudo install -m 644 "$src" "$dst"
   sudo udevadm control --reload
-  sudo udevadm trigger --subsystem-match=input
+  sudo udevadm trigger --subsystem-match="$subsystem"
   return 0
 }
 
@@ -332,7 +332,10 @@ set_key org.gnome.desktop.peripherals.touchpad click-method                     
 echo "=== touchscreen ==="
 # The rule makes libinput ignore every touchscreen. GNOME Shell checks for that only when a device appears, so it
 # takes effect at the next login.
-install_udev_rule 90-ignore-touchscreens.rules
+install_udev_rule 90-ignore-touchscreens.rules input
+
+echo "=== power button light ==="
+install_udev_rule 90-power-button-light-off.rules leds
 
 echo "=== bell and sound ==="
 set_key org.gnome.desktop.wm.preferences audible-bell                     "false"

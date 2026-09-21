@@ -1,0 +1,5 @@
+# Installed by configure-gnome-desktop.sh, which overwrites edits made here.
+#
+# The chromeos-auto trigger leaves the power button light to the embedded controller. With the trigger set to none,
+# the LED keeps the brightness given here, which is off.
+ACTION!="remove", SUBSYSTEM=="leds", KERNEL=="chromeos:white:power", ATTR{trigger}="none", ATTR{brightness}="0"
