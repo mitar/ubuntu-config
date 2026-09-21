@@ -1,0 +1,61 @@
+Description: Show the visual bell when animations are disabled.
+ The visual bell flashes the header through CSS keyframes, and GTK does not run CSS animations
+ while gtk-enable-animations is off, so with animations disabled a bell shows nothing at all.
+ .
+ In that case a visual-bell-static class is set instead, which gives the header the bell colours
+ for as long as Ptyxis keeps the class on, 500 ms. With animations enabled nothing changes.
+Author: Mitar
+Forwarded: not-needed
+Last-Update: 2026-09-21
+--- a/src/ptyxis-window-dressing.c
++++ b/src/ptyxis-window-dressing.c
+@@ -150,6 +150,11 @@
+                               self->css_class, self->css_class, dark ? "dark" : "light",
+                               self->css_class, dark ? "dark" : "light", bell_bg, bell_fg);
+       g_string_append_printf (string,
++                              "window.%s .window-contents box.visual-bell-static headerbar { background-color: transparent; }\n"
++                              "window.%s .window-contents box.visual-bell-static { background-color: %s; color: %s; }\n",
++                              self->css_class,
++                              self->css_class, bell_bg, bell_fg);
++      g_string_append_printf (string,
+                               "window.%s .window-contents banner > revealer > widget { background-color: %s; color: %s; }\n",
+                               self->css_class, bell_bg, bell_fg);
+ 
+--- a/src/ptyxis-window.c
++++ b/src/ptyxis-window.c
+@@ -2520,6 +2520,7 @@
+   self->visual_bell_source = 0;
+ 
+   gtk_widget_remove_css_class (GTK_WIDGET (self->visual_bell), "visual-bell");
++  gtk_widget_remove_css_class (GTK_WIDGET (self->visual_bell), "visual-bell-static");
+ 
+   return G_SOURCE_REMOVE;
+ }
+@@ -2528,6 +2529,7 @@
+ ptyxis_window_visual_bell (PtyxisWindow *self)
+ {
+   PtyxisSettings *settings;
++  gboolean gtk_enable_animations = TRUE;
+ 
+   g_return_if_fail (PTYXIS_IS_WINDOW (self));
+ 
+@@ -2535,7 +2537,18 @@
+   if (!ptyxis_settings_get_visual_bell (settings))
+     return;
+ 
+-  gtk_widget_add_css_class (GTK_WIDGET (self->visual_bell), "visual-bell");
++  g_object_get (gtk_settings_get_default (),
++                "gtk-enable-animations", &gtk_enable_animations,
++                NULL);
++
++  /* The visual-bell class flashes through CSS keyframes, which GTK does not run
++   * with animations disabled. The visual-bell-static class then shows the bell
++   * colour for as long as the class is set instead.
++   */
++  if (gtk_enable_animations)
++    gtk_widget_add_css_class (GTK_WIDGET (self->visual_bell), "visual-bell");
++  else
++    gtk_widget_add_css_class (GTK_WIDGET (self->visual_bell), "visual-bell-static");
+ 
+   g_clear_handle_id (&self->visual_bell_source, g_source_remove);
+ 

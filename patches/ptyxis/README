@@ -16,6 +16,11 @@ palette-highlight-colours.patch
     toolkit. Both keys are optional and read exactly as the cursor colours are, so palettes that
     omit them are unaffected.
 
+visual-bell-without-animations.patch
+    Makes the visual bell visible with animations disabled. The header flash is a CSS animation,
+    which GTK does not run while gtk-enable-animations is off, so the bell showed nothing. The
+    header then shows the bell colours for the 500 ms Ptyxis keeps the bell state on.
+
 None of this is reachable through settings, which is why the patches exist. A shortcut in Ptyxis
 is spread across four places, and only the first is visible from outside:
 
@@ -29,9 +34,10 @@ gtk_widget_class_add_binding_action, which is the case for Ctrl+G. Those are inv
 gsettings, to the preferences window, and to the conflict check in configure-ptyxis.sh.
 
 Ptyxis ships no test suite, so there is nothing to add tests to. A build failure is the only
-automated check, and for changes like these it is a weak one: all three patches could apply,
+automated check, and for changes like these it is a weak one: every patch here could apply,
 compile, and still behave wrongly. Check by hand after a rebuild.
 
   Ctrl+F then Ctrl+G           should move down the scrollback, towards newer output
   select text, Ctrl+Shift+C    should copy as HTML, and the context menu should show that accel
   select text                  should highlight dark red (#a40000) with white text
+  printf '\a', animations off  should colour the header for half a second
