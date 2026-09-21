@@ -66,7 +66,7 @@ set_key() {
 }
 
 REPO_DIR=$(dirname "$(readlink -f "$0")")
-SHELL_EXT=(--session --dest org.gnome.Shell.Extensions --object-path /org/gnome/Shell/Extensions)
+SHELL_EXT=(--session --dest org.gnome.Shell --object-path /org/gnome/Shell)
 
 # Collects missing packages, so that apt runs once for all of them.
 want_package() {
@@ -87,7 +87,9 @@ extension_installed() {
 
 # Installs from extensions.gnome.org through the shell itself, which asks for confirmation in a dialog, then loads
 # and enables the extension straight away without a new login. The call is held open until the dialog is answered,
-# hence the long timeout.
+# hence the long timeout. It goes to the shell directly rather than to the org.gnome.Shell.Extensions service, which
+# only forwards to the shell and exits two seconds after starting when none of its calls has returned yet, dropping a
+# call whose dialog is still open.
 install_remote() {
   local uuid=$1 result
   extension_installed "$uuid" && return 0
@@ -236,23 +238,21 @@ whoopsie_want() {
   return 0
 }
 
-# Places a bookmark directly after another in the GTK bookmarks file, appending it if the anchor is missing.
-# Leaves the file alone when the bookmark is already present anywhere, so it never duplicates or reorders.
-bookmark_after() {
-  local anchor=$1 entry=$2 file=${XDG_CONFIG_HOME:-$HOME/.config}/gtk-3.0/bookmarks
-  if [ -f "$file" ] && grep -qxF "$entry" "$file"; then
+# Makes a bookmark the first one in the GTK bookmarks file, moving it there when it is further down and adding it
+# when it is missing. The order of the other bookmarks is kept.
+bookmark_first() {
+  local uri=$1 file=${XDG_CONFIG_HOME:-$HOME/.config}/gtk-3.0/bookmarks line
+  if [ -f "$file" ] && [ "$(head -n 1 "$file" | cut -d' ' -f1)" = "$uri" ]; then
     return 0
   fi
-  echo "  add $entry after $anchor in $file"
+  echo "  put $uri first in $file"
   CHANGED=$((CHANGED+1))
   [ "$MODE" = apply ] || return 0
   mkdir -p "$(dirname "$file")"
   touch "$file"
-  if grep -qxF "$anchor" "$file"; then
-    awk -v a="$anchor" -v e="$entry" '{print} $0 == a {print e}' "$file" > "$file.new" && mv "$file.new" "$file"
-  else
-    echo "$entry" >> "$file"
-  fi
+  # A line is a URI optionally followed by a space and a label, and an existing label is kept.
+  line=$(awk -v u="$uri" '$1 == u {print; exit}' "$file")
+  { echo "${line:-$uri}"; awk -v u="$uri" '$1 != u' "$file"; } > "$file.new" && mv "$file.new" "$file"
   return 0
 }
 
@@ -412,8 +412,8 @@ set_key org.gnome.yelp show-cursor                      "true"
 echo "=== file manager sidebar ==="
 # The folders in the Files sidebar are the entries of the GTK bookmarks file. xdg-user-dirs-gtk-update adds the
 # standard folders to it at login but leaves Desktop out by design, and never removes an entry it did not add, so
-# Desktop placed after Downloads stays there.
-bookmark_after "file://$HOME/Downloads" "file://$HOME/Desktop"
+# Desktop placed first stays there.
+bookmark_first "file://$HOME/Desktop"
 
 echo
 if [ "$CHANGED" -eq 0 ]; then
