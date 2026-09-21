@@ -15,8 +15,9 @@
 # is also what lets the shell check extensions.gnome.org for updates daily and apply them at the next login. The shell
 # looks for extensions only when it starts, so a packaged extension installed during the session is enabled from the
 # next login on. Extensions from extensions.gnome.org are installed through the shell, which asks for confirmation in
-# a dialog and loads them immediately. Settings are then written with dconf from gnome-extensions/, one file per
-# extension.
+# a dialog and loads them immediately. Extensions from this repository, in gnome-extensions/, are copied into your
+# extensions directory, and the shell loads a new or changed one from the next login on. Settings are then written
+# with dconf from gnome-extensions/, one file per extension.
 #
 # tiling-assistant is disabled. While enabled it overrides mutter's tiling, and when disabled it resets the
 # settings it overrode to their defaults. That includes the toggle-tiled keybindings, so on a system where it is
@@ -68,6 +69,7 @@ set_key() {
 
 REPO_DIR=$(dirname "$(readlink -f "$0")")
 SHELL_EXT=(--session --dest org.gnome.Shell --object-path /org/gnome/Shell)
+USER_EXTENSIONS=${XDG_DATA_HOME:-$HOME/.local/share}/gnome-shell/extensions
 
 # Collects missing packages, so that apt runs once for all of them.
 want_package() {
@@ -106,6 +108,24 @@ install_remote() {
     *)            echo "      $uuid not installed: $result" ;;
   esac
   return 0
+}
+
+# Installs an extension from this repository by copying it into your extensions directory, replacing an earlier copy
+# as a whole when anything in it differs. The shell loads extension code only when it starts, so the running shell
+# keeps using the earlier copy until the next login.
+install_local() {
+  local uuid=$1 src=$REPO_DIR/gnome-extensions/$1 dest=$USER_EXTENSIONS/$1
+  diff -r "$src" "$dest" >/dev/null 2>&1 && return 0
+  if [ -e "$dest" ]; then
+    echo "  update $uuid, in effect from the next login"
+  else
+    echo "  install $uuid"
+  fi
+  CHANGED=$((CHANGED+1))
+  [ "$MODE" = apply ] || return 0
+  rm -rf "$dest"
+  mkdir -p "$USER_EXTENSIONS"
+  cp -r "$src" "$dest"
 }
 
 # Enables an extension the running shell does not know by adding it to the list of enabled extensions, which the
@@ -209,7 +229,9 @@ install_remote custom-hot-corners-extended@G-dH.github.com
 install_remote just-perfection-desktop@just-perfection
 install_remote vertical-workspaces@G-dH.github.com
 install_remote preserve-battery-health@marcosdalvarez.org
+install_local quick-settings-battery-time@mitar.tnode.com
 
+want_extension quick-settings-battery-time@mitar.tnode.com enabled
 want_extension auto-move-windows@gnome-shell-extensions.gcampax.github.com enabled
 want_extension drive-menu@gnome-shell-extensions.gcampax.github.com enabled
 want_extension ubuntu-appindicators@ubuntu.com enabled

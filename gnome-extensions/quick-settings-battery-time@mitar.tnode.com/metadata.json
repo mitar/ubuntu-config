@@ -1,0 +1,9 @@
+{
+  "uuid": "quick-settings-battery-time@mitar.tnode.com",
+  "name": "Battery Time in Quick Settings",
+  "description": "Shows the estimated time until the battery is empty or full under the battery percentage in quick settings.",
+  "shell-version": [
+    "50"
+  ],
+  "url": "https://gitlab.com/mitar/ubuntu-config"
+}
