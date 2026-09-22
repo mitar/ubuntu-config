@@ -83,7 +83,9 @@ Ptyxis, Ubuntu's terminal, is patched and configured (`patches/ptyxis/`, `config
 
 Third-party repositories are pinned by hostname, with an allowlist of the packages actually in use and a default
 deny for everything else from them, so a vendor repository cannot replace an Ubuntu package by publishing a higher
-version under the same name (`lockdown-apt-sources.sh`).
+version under the same name (`lockdown-apt-sources.sh`). Unattended upgrades are likewise tied to Ubuntu's own
+hosts, so a vendor repository cannot get its packages installed unattended by claiming to be Ubuntu's security
+pocket.
 
 ### Patched packages kept up to date
 
