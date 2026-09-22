@@ -5,11 +5,12 @@
 # For each package in the patch directory, compare the version Ubuntu currently offers against the version last
 # built here, and the patches against the ones that build was made with. When either has moved on, fetch the
 # source, apply the local patches on top of the ones the package already carries, build it, and publish the result
-# to the local apt repository. Nothing is installed: the rebuilt package simply becomes the candidate, so the next
-# ordinary apt upgrade picks it up.
+# to the local apt repository. Nothing is installed: the rebuilt package simply becomes the candidate, so
+# unattended-upgrades or the next ordinary apt upgrade picks it up.
 #
 # This only works because the local repository outranks the archive (Pin-Priority 1001, see
-# lockdown-apt-sources.sh). That is what stops an unpatched Ubuntu build from replacing a patched one. The
+# lockdown-apt-sources.sh), for unattended-upgrades too, which install-rebuild-patched-packages.sh allows to install
+# from it. That is what stops an unpatched Ubuntu build from replacing a patched one. The
 # consequence is that a package stays on the old version until a rebuild succeeds, so a silent failure would
 # mean silently missing security updates. Every failure is therefore loud: it goes to stderr for cron to mail,
 # and to syslog as well so that a missing mail transport cannot swallow it.
@@ -623,7 +624,7 @@ case "$MODE" in
     if [ "$built" -gt 0 ]; then
       refresh_repo
       echo
-      echo "Rebuilt packages are now the apt candidate. Install them with the next apt upgrade."
+      echo "Rebuilt packages are now the apt candidate. unattended-upgrades or the next apt upgrade installs them."
     fi
     ;;
 esac

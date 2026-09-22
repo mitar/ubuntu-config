@@ -1,0 +1,6 @@
+# Installed by install-rebuild-patched-packages.sh, which overwrites edits made here.
+#
+# The local repository, for the packages rebuild-patched-packages publishes and any other .deb placed there. It is
+# not signed and needs no signature, since only root can write to the directory. lockdown-apt-sources.sh pins it
+# above every other repository.
+deb [trusted=yes] file:/usr/local/lib/debs ./

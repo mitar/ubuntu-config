@@ -2,11 +2,14 @@
 #
 # Install rebuild-patched-packages.sh, its patches and its daily cron job from this repository as the root-owned
 # copies that root runs, and give the sbuild user its builds run as the subordinate ids building in unshare mode
-# needs. Only what differs from the installed copy is replaced.
+# needs. Also set up the local repository the rebuilds are published to, and let unattended-upgrades install from
+# it. Only what differs from the installed copy is replaced.
 #
-#   rebuild-patched-packages.sh           ->  /usr/local/bin/rebuild-patched-packages
-#   patches/                              ->  /usr/local/share/patched-packages
-#   cron.daily/rebuild-patched-packages   ->  /etc/cron.daily/rebuild-patched-packages
+#   rebuild-patched-packages.sh                         ->  /usr/local/bin/rebuild-patched-packages
+#   patches/                                            ->  /usr/local/share/patched-packages
+#   cron.daily/rebuild-patched-packages                 ->  /etc/cron.daily/rebuild-patched-packages
+#   sources.list.d/local.list                           ->  /etc/apt/sources.list.d/local.list
+#   apt.conf.d/52unattended-upgrades-local-repository   ->  /etc/apt/apt.conf.d/52unattended-upgrades-local-repository
 #
 # See Installing in rebuild-patched-packages.sh for why root does not run the repository directly.
 #
@@ -82,6 +85,20 @@ fi
 install_dir  "$REPO_DIR/patches"                             /usr/local/share/patched-packages
 install_file "$REPO_DIR/rebuild-patched-packages.sh"         /usr/local/bin/rebuild-patched-packages  755
 install_file "$REPO_DIR/cron.daily/rebuild-patched-packages" /etc/cron.daily/rebuild-patched-packages 755
+
+echo "=== local repository ==="
+# apt update fails on a source whose index is missing, so a repository without one gets an empty index.
+if [ ! -e /usr/local/lib/debs/Packages.gz ]; then
+  echo "  create an empty index in /usr/local/lib/debs"
+  CHANGED=$((CHANGED+1))
+  if [ "$MODE" = apply ]; then
+    sudo install -d -o root -g root -m 755 /usr/local/lib/debs
+    gzip -9n < /dev/null | sudo tee /usr/local/lib/debs/Packages.gz >/dev/null
+  fi
+fi
+install_file "$REPO_DIR/sources.list.d/local.list" /etc/apt/sources.list.d/local.list 644
+install_file "$REPO_DIR/apt.conf.d/52unattended-upgrades-local-repository" \
+             /etc/apt/apt.conf.d/52unattended-upgrades-local-repository 644
 
 echo
 if [ "$CHANGED" -eq 0 ]; then

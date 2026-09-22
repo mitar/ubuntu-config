@@ -22,9 +22,9 @@ Where a setting is not enough, Ubuntu's own packages are patched. `patches/<sour
 which are applied on top of Ubuntu's source package, together with tests for the patched behavior which run during
 the build. `rebuild-patched-packages.sh` rebuilds a package whenever Ubuntu publishes a new version of it or its
 patches change, building it with sbuild as an unprivileged user in a throwaway chroot, and publishes the result to
-a local APT repository. That repository is pinned above the Ubuntu archive, so the next ordinary `apt upgrade`
-installs the patched build. A daily cron job keeps patched packages current, running root-owned copies of the
-script and patches, installed with `install-rebuild-patched-packages.sh`.
+a local APT repository. That repository is pinned above the Ubuntu archive, so unattended-upgrades or the next
+ordinary `apt upgrade` installs the patched build. A daily cron job keeps patched packages current, running
+root-owned copies of the script and patches, installed with `install-rebuild-patched-packages.sh`.
 
 ## Main features
 

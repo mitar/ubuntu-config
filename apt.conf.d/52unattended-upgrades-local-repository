@@ -1,0 +1,12 @@
+// Installed by install-rebuild-patched-packages.sh, which overwrites edits made here.
+//
+// Lets unattended-upgrades install from the local repository in /usr/local/lib/debs. It pins every repository it is
+// not allowed to use to -32768, and switches a candidate from such a repository to the newest version in an allowed
+// one. For a patched package that would be Ubuntu's unpatched security update, installed as soon as the rebuild of
+// that update is published. Allowed, the local repository keeps the 1001 it is pinned at, so a patched package stays
+// on its patched build until the rebuild succeeds, and the rebuild is then installed unattended as well.
+//
+// The repository is matched by its empty site, which only a local repository has.
+Unattended-Upgrade::Origins-Pattern {
+	"site=";
+};
