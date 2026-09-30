@@ -177,9 +177,13 @@ Run each script first without `--apply` to see what it would change. The general
    ```
 
 `./all.sh` runs steps 2 to 4 in this order, showing what each script would change, and `./all.sh --apply`
-applies them all, leaving logging out and back in for the end.
+applies them all, leaving logging out and back in for the end. Run it as your own user, without sudo: it calls
+sudo itself for the steps which need root, and asks for the password then.
 
-The scripts run as your own user and call sudo themselves for the parts which need root.
+The scripts shown without sudo run as your own user and call sudo themselves for the parts which need root.
+`all.sh` and the configure scripts also refuse to run as root, since as root they have no session bus and
+cannot reach your settings. The ones shown with sudo write only system files and refuse to run without it,
+although their dry run works as your own user.
 Each script's header documents what it does and why in more detail.
 
 ## GitHub mirror

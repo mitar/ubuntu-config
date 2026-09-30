@@ -9,7 +9,8 @@
 #   ./all.sh           show what each script would change, change nothing (default)
 #   ./all.sh --apply   apply everything, stopping at the first step which fails
 #
-# Runs as your own user. The steps which need root run through sudo, which will ask for a password.
+# Run this as your own user, without sudo. The steps which need root run through sudo themselves, which will ask
+# for a password. Running the whole of it as root is refused.
 
 set -euo pipefail
 
@@ -20,6 +21,10 @@ case "${1:-}" in
   -h|--help)    awk 'NR>1 && !/^#/{exit} NR>1{sub(/^# ?/, ""); print}' "$0"; exit 0 ;;
   *)            echo "unknown option: $1 (try --help)" >&2; exit 2 ;;
 esac
+
+# Under sudo every step would run as root, which has no session bus, so the dconf and gsettings writes fail
+# instead of reaching your own settings.
+[ "$(id -u)" -ne 0 ] || { echo "run as your own user, not under sudo: root steps call sudo themselves" >&2; exit 1; }
 
 cd "$(dirname "$(readlink -f "$0")")"
 

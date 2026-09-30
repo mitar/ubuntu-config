@@ -43,6 +43,10 @@ case "${1:-}" in
   *)            echo "unknown option: $1 (try --help)" >&2; exit 2 ;;
 esac
 
+# Under sudo this would run as root, which has no session bus, so the dconf and gsettings writes fail instead
+# of reaching your own settings.
+[ "$(id -u)" -ne 0 ] || { echo "run as your own user, not under sudo: root parts call sudo themselves" >&2; exit 1; }
+
 CHANGED=0
 
 # Compares against what gsettings currently reports and acts only on a difference. Desired values are written in

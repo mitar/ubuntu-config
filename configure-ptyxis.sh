@@ -48,6 +48,10 @@ case "${1:-}" in
   *)            echo "unknown option: $1 (try --help)" >&2; exit 2 ;;
 esac
 
+# Under sudo this would run as root, which has no session bus, so the dconf and gsettings writes fail instead
+# of reaching your own settings.
+[ "$(id -u)" -ne 0 ] || { echo "run as your own user, not under sudo: these settings live in your dconf" >&2; exit 1; }
+
 CHANGED=0
 # The binding each shortcut ends up with, whether this script set it or it kept its default. Collected so that two
 # actions claiming the same key can be reported, which gsettings itself will happily allow.

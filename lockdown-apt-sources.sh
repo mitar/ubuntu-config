@@ -281,9 +281,8 @@ Pin-Priority: -1
 
 # Chromium from ppa:xtradeb/apps, because Ubuntu's chromium-browser is a snap wrapper. Ubuntu has none of these
 # names, so the default priority is enough. The PPA carries more than 200 other packages, among them transmission
-# at a higher version than Ubuntu's, which it would otherwise replace. Denies chromium-driver and the other
-# Chromium packages that are not in use.
-Package: chromium chromium-common chromium-sandbox chromium-l10n
+# at a higher version than Ubuntu's, which it would otherwise replace.
+Package: chromium chromium-common chromium-l10n chromium-driver
 Pin: origin ppa.launchpadcontent.net
 Pin-Priority: 500
 
@@ -318,6 +317,7 @@ CHECKS = [
     ("naps2",                    "origin",    "downloads.naps2.com"),
     ("proton-vpn-gtk-app",       "origin",    "repo.protonvpn.com"),
     ("chromium",                 "origin",    "ppa.launchpadcontent.net/xtradeb/apps"),
+    ("chromium-driver",          "origin",    "ppa.launchpadcontent.net/xtradeb/apps"),
     ("zoom",                     "installed", None),
     ("firefox-beta",             "none",      None),
     ("mozillavpn",               "none",      None),
@@ -326,7 +326,7 @@ CHECKS = [
     ("code-insiders",            "none",      None),
     ("protonvpn-beta-release",   "none",      None),
     ("python3-protonvpn-nm-lib", "none",      None),
-    ("chromium-driver",          "none",      None),
+    ("chromium-sandbox",         "none",      None),
 ]
 
 def policy(pkg):
