@@ -115,6 +115,18 @@ What it takes:
 The touchscreen is disabled, the power button light is off, and the longer key repeat delay applies in the console
 as well (`udev/`, `systemd/`).
 
+### Processor throttling
+
+An indicator appears in the top bar while the processor is being held below the speed it would otherwise run
+at, and names what is holding it there. Its menu breaks that down into the share of the last interval each
+limit accounted for, alongside the package power and the temperatures.
+
+The interfaces the usual tools read for this are Intel's and AMD publishes no equivalent, so the indicator
+reads the APU's own metrics table at `/sys/class/drm/card*/device/gpu_metrics` instead. That table counts the
+time spent limited by each reason: the sustained power limit, the fast and slow package power limits, a
+temperature limit for the cores, for the graphics and for the SoC, and the platform's PROCHOT. It needs an APU
+publishing the table in the `gpu_metrics_v3_0` layout, which Strix Point in the Ryzen AI 300 series does.
+
 ### GNOME extensions
 
 Extensions are installed from extensions.gnome.org and configured by `configure-gnome-desktop.sh`, with their
