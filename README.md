@@ -115,6 +115,12 @@ What it takes:
 The touchscreen is disabled, the power button light is off, and the longer key repeat delay applies in the console
 as well (`udev/`, `systemd/`).
 
+The audio coprocessor of the APU exposes a digital microphone which has no microphones wired to it on this laptop,
+and which the sound server otherwise offers as a second internal microphone beside the working one. Its card is kept
+unregistered (`modprobe.d/snd-acp-legacy-mach.conf`). Without that card the Realtek codec is no longer configured
+through ALSA UCM, so Sound settings offer one configuration whose ports follow the jacks in place of four
+combinations of speakers, headphones and microphones which differ in which of them they leave out.
+
 ### Processor throttling
 
 An indicator appears in the top bar while the processor is being held below the speed it would otherwise run

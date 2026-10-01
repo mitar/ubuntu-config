@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
-# Configure the GNOME desktop: input devices, the power button light, battery charging, bells, the login screen,
-# workspaces, the look of the interface, privacy, power, the dock, file management, and the settings of individual
-# GNOME applications.
+# Configure the GNOME desktop: input devices, the power button light, battery charging, microphones, bells, the
+# login screen, workspaces, the look of the interface, privacy, power, the dock, file management, and the settings
+# of individual GNOME applications.
 #
 # Keyboard layout and shortcuts are configured by configure-gnome-keys.sh, and the terminal by
 # configure-ptyxis.sh. Workspaces are set in both this script and configure-gnome-keys.sh, because the workspace
@@ -30,7 +30,7 @@
 #   ./configure-gnome-desktop.sh --apply   apply the configuration
 #
 # Runs as your own user, because these settings live in your dconf and would land in root's under sudo. Installing
-# packages, the console's boot-time unit, the udev rules, the module option, and the login screen settings need
+# packages, the console's boot-time unit, the udev rules, the module options, and the login screen settings need
 # root, so those parts call sudo themselves and will ask for a password.
 
 set -euo pipefail
@@ -341,6 +341,23 @@ install_modprobe_conf() {
   return 0
 }
 
+# Installs a module blacklist from modprobe.d/ in this repository into the root-owned /etc/modprobe.d through sudo,
+# then removes the module, so that the devices it registered are gone without a reboot. A module which is in use
+# cannot be removed and stays until the next boot, from when on the blacklist keeps udev from loading it for the
+# hardware it matches.
+install_modprobe_blacklist() {
+  local name=$1 module=$2 src=$REPO_DIR/modprobe.d/$1 dst=/etc/modprobe.d/$1
+  cmp -s "$src" "$dst" && return 0
+  echo "  install $dst"
+  CHANGED=$((CHANGED+1))
+  [ "$MODE" = apply ] || return 0
+  sudo install -m 644 "$src" "$dst"
+  if [ -d "/sys/module/$module" ] && ! sudo modprobe -r "$module"; then
+    echo "  $module is in use, so what it registered stays until the next boot"
+  fi
+  return 0
+}
+
 GREETER=/etc/gdm3/greeter.dconf-defaults
 
 # Sets a key in GDM's greeter settings through sudo, since the file is root owned. The key goes directly under its
@@ -394,6 +411,16 @@ install_udev_rule 90-battery-charge-limit.rules power_supply
 # UPower reads both only when it adds the battery.
 if [ "$MODE" = apply ] && [ "$CHANGED" -gt "$BATTERY_CHANGED" ]; then
   sudo systemctl restart upower
+fi
+
+echo "=== microphones ==="
+# Without the blacklist the sound server offers two internal microphones, and only one of them has microphones
+# behind it. The other belongs to the audio coprocessor of the APU and returns a railed signal instead of audio.
+MIC_CHANGED=$CHANGED
+install_modprobe_blacklist snd-acp-legacy-mach.conf snd_acp_legacy_mach
+# WirePlumber settles which configurations a card offers when it starts, from the cards which exist by then.
+if [ "$MODE" = apply ] && [ "$CHANGED" -gt "$MIC_CHANGED" ]; then
+  systemctl --user restart wireplumber
 fi
 
 echo "=== bell and sound ==="
