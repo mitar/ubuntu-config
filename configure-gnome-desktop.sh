@@ -427,6 +427,7 @@ echo "=== bell and sound ==="
 set_key org.gnome.desktop.wm.preferences audible-bell                     "false"
 set_key org.gnome.desktop.wm.preferences visual-bell                      "true"
 set_key org.gnome.desktop.sound event-sounds                     "false"
+set_key org.gnome.desktop.sound input-feedback-sounds             "false"
 
 echo "=== login screen ==="
 # The login screen runs as the gdm user with settings of its own, which GDM compiles from greeter.dconf-defaults
