@@ -13,9 +13,30 @@ const OFFSET_TEMPERATURE_GFX = 4;
 const OFFSET_TEMPERATURE_SOC = 6;
 const OFFSET_TEMPERATURE_CORE = 8;
 const OFFSET_TEMPERATURE_SKIN = 40;
+const OFFSET_AVERAGE_GFX_POWER = 124;
+const OFFSET_AVERAGE_ALL_CORE_POWER = 132;
+const OFFSET_AVERAGE_CORE_POWER = 136;
+const OFFSET_CURRENT_CORECLK = 190;
 const OFFSET_AVERAGE_SOCKET_POWER = 112;
 
-const TEMPERATURE_CORE_COUNT = 16;
+/**
+ * Where each core sits in the per-core arrays, and the frequency it reaches when nothing holds it back.
+ *
+ * The table carries no mapping of its own, so this was measured by pinning a load to one core at a time and
+ * watching which entry of average_core_power responded: on this processor the four classic cores occupy the even
+ * entries 0 to 6 and the eight dense cores the entries 8 to 15, leaving 1, 3, 5 and 7 unused. A processor with a
+ * different split may lay them out differently, in which case the activity test below keeps the result harmless
+ * rather than wrong, since a core which is not where this expects it reads as idle instead of as a bad number.
+ */
+export const CORE_GROUPS = [
+    {name: 'Zen 5', slots: [0, 2, 4, 6], maxFrequency: 5157},
+    {name: 'Zen 5c', slots: [8, 9, 10, 11, 12, 13, 14, 15], maxFrequency: 3289},
+];
+
+// A core drawing less than this is idle rather than held back, and a percentage of its maximum would then say
+// something about how little work it has rather than about throttling. Loaded cores draw several watts and idle
+// ones well under a tenth of one, so anything in between separates them.
+const ACTIVE_CORE_POWER_W = 0.5;
 
 // A field which holds the largest value it can is how the table says it carries nothing, for entries the firmware
 // leaves out.
@@ -62,12 +83,37 @@ export function decodeMetrics(bytes) {
         return null;
 
     // The core temperature limit acts on the hottest core, so that is the one worth reporting next to its counter.
+    // Only the entries which belong to a core are considered, because the unused ones carry a value as well and
+    // it has nothing to do with any core.
     let temperatureCore = 0;
-    for (let i = 0; i < TEMPERATURE_CORE_COUNT; i++) {
-        const value = view.getUint16(OFFSET_TEMPERATURE_CORE + 2 * i, true);
-        if (value !== UNSET_UINT16)
-            temperatureCore = Math.max(temperatureCore, value);
+    for (const group of CORE_GROUPS) {
+        for (const slot of group.slots) {
+            const value = view.getUint16(OFFSET_TEMPERATURE_CORE + 2 * slot, true);
+            if (value !== UNSET_UINT16)
+                temperatureCore = Math.max(temperatureCore, value);
+        }
     }
+
+    // A group runs at one clock per core, and the limit acts on whichever of them is working hardest, so the
+    // busiest core of each group is the one whose clock says how much of its speed the group is being allowed.
+    const coreGroups = CORE_GROUPS.map(group => {
+        let busiest = group.slots[0];
+        let busiestPower = 0;
+        for (const slot of group.slots) {
+            const power = view.getUint16(OFFSET_AVERAGE_CORE_POWER + 2 * slot, true) / 1000;
+            if (power > busiestPower) {
+                busiestPower = power;
+                busiest = slot;
+            }
+        }
+        const active = busiestPower >= ACTIVE_CORE_POWER_W;
+        return {
+            name: group.name,
+            maxFrequency: group.maxFrequency,
+            active,
+            frequency: active ? view.getUint16(OFFSET_CURRENT_CORECLK + 2 * busiest, true) : 0,
+        };
+    });
 
     const residency = {};
     for (const reason of REASONS)
@@ -80,6 +126,9 @@ export function decodeMetrics(bytes) {
         temperatureSoc: view.getUint16(OFFSET_TEMPERATURE_SOC, true) / 100,
         temperatureSkin: view.getUint16(OFFSET_TEMPERATURE_SKIN, true) / 100,
         socketPower: view.getUint32(OFFSET_AVERAGE_SOCKET_POWER, true) / 1000,
+        corePower: view.getUint32(OFFSET_AVERAGE_ALL_CORE_POWER, true) / 1000,
+        graphicsPower: view.getUint32(OFFSET_AVERAGE_GFX_POWER, true) / 1000,
+        coreGroups,
         residency,
     };
 }

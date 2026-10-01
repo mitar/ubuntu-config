@@ -9,7 +9,7 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 
-import {REASONS, decodeMetrics, dominantReason, findMetricsFile, throttleShares} from './metrics.js';
+import {CORE_GROUPS, REASONS, decodeMetrics, dominantReason, findMetricsFile, throttleShares} from './metrics.js';
 
 const SAMPLE_INTERVAL_S = 2;
 
@@ -50,12 +50,16 @@ class ThrottleIndicator extends PanelMenu.Button {
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem('Limits'));
         for (const reason of REASONS)
             this._shareLabels.set(reason.key, this._addRow(reason.label));
+        this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem('Frequency'));
+        this._frequencyLabels = CORE_GROUPS.map(group => this._addRow(`${group.name} cores`));
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem('Sensors'));
-        this._powerLabel = this._addRow('Package power');
+        this._powerLabel = this._addRow('APU power (SPL budget)');
+        this._corePowerLabel = this._addRow('CPU cores');
+        this._graphicsPowerLabel = this._addRow('Graphics');
         this._coreLabel = this._addRow('Hottest core');
-        this._gfxLabel = this._addRow('Graphics');
-        this._socLabel = this._addRow('SoC');
-        this._skinLabel = this._addRow('Skin');
+        this._gfxLabel = this._addRow('Graphics temperature');
+        this._socLabel = this._addRow('SoC temperature');
+        this._skinLabel = this._addRow('Skin temperature');
 
         // Nothing is known until two readings have been compared, and until then there is nothing to show.
         this.hide();
@@ -142,7 +146,16 @@ class ThrottleIndicator extends PanelMenu.Button {
         const shares = throttleShares(previous.metrics, metrics, elapsed);
         for (const reason of REASONS)
             this._shareLabels.get(reason.key).text = `${Math.round(shares[reason.key])}%`;
+        // A group which is not working is slow because it has nothing to do, so reporting a share of its maximum
+        // would say nothing about whether anything is holding it back.
+        metrics.coreGroups.forEach((group, index) => {
+            this._frequencyLabels[index].text = group.active
+                ? `${group.frequency} MHz, ${Math.round(100 * group.frequency / group.maxFrequency)}%`
+                : 'idle';
+        });
         this._powerLabel.text = `${metrics.socketPower.toFixed(1)} W`;
+        this._corePowerLabel.text = `${metrics.corePower.toFixed(1)} W`;
+        this._graphicsPowerLabel.text = `${metrics.graphicsPower.toFixed(1)} W`;
         this._coreLabel.text = `${metrics.temperatureCore.toFixed(1)} C`;
         this._gfxLabel.text = `${metrics.temperatureGfx.toFixed(1)} C`;
         this._socLabel.text = `${metrics.temperatureSoc.toFixed(1)} C`;
