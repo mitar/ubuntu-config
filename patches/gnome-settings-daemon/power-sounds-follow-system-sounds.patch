@@ -1,0 +1,126 @@
+Description: Let the power plugin's sounds follow the system sounds setting.
+ The power plugin plays sounds when the power cable goes in and out, when the lid is opened and
+ closed, and when a battery runs low, and it hands all of them to libcanberra directly. libcanberra
+ applies the desktop's system sounds setting, org.gnome.desktop.sound event-sounds, only in its GTK
+ wrappers, so these sounds play even with System Sounds switched off in Settings, and nothing
+ switches them off.
+ .
+ The setting is read in the plugin instead, around the plays only, so the low battery notification
+ still appears, without its sound, and the lid still suspends. The critical battery sounds are left
+ alone, since they are the last warning before the machine puts itself away. With the sounds off the
+ canberra context is not created for these events either, so the plugin stops connecting to the
+ sound server for them.
+Author: Mitar
+Forwarded: not-needed
+Last-Update: 2026-10-01
+--- a/plugins/power/gsd-power-manager.c
++++ b/plugins/power/gsd-power-manager.c
+@@ -781,6 +781,19 @@
+         }
+ };
+ 
++/* The sounds of this plugin reach libcanberra directly, and libcanberra applies the desktop's
++ * system sounds setting only in its GTK wrappers, so the setting is read here instead. The sounds
++ * for the power cable, for the lid and for a low battery follow it. The critical battery sounds do
++ * not, since they are the last warning before the machine puts itself away.
++ */
++static gboolean
++event_sounds_enabled (void)
++{
++        g_autoptr(GSettings) settings = g_settings_new ("org.gnome.desktop.sound");
++
++        return g_settings_get_boolean (settings, "event-sounds");
++}
++
+ static void
+ engine_charge_low (GsdPowerManager *manager, UpDevice *device)
+ {
+@@ -847,13 +860,15 @@
+ 
+         notify_notification_show (manager->notification_low, NULL);
+ 
+-        ca_context = gsd_application_get_ca_context (GSD_APPLICATION (manager));
++        if (event_sounds_enabled ()) {
++                ca_context = gsd_application_get_ca_context (GSD_APPLICATION (manager));
+ 
+-        /* play the sound, using sounds from the naming spec */
+-        ca_context_play (ca_context, 0,
+-                         CA_PROP_EVENT_ID, "battery-low",
+-                         /* TRANSLATORS: this is the sound description */
+-                         CA_PROP_EVENT_DESCRIPTION, _("Battery is low"), NULL);
++                /* play the sound, using sounds from the naming spec */
++                ca_context_play (ca_context, 0,
++                                 CA_PROP_EVENT_ID, "battery-low",
++                                 /* TRANSLATORS: this is the sound description */
++                                 CA_PROP_EVENT_DESCRIPTION, _("Battery is low"), NULL);
++        }
+ 
+         g_free (message);
+ }
+@@ -1620,6 +1635,9 @@
+ {
+         ca_context *ca_context;
+ 
++        if (!event_sounds_enabled ())
++                return;
++
+         ca_context = gsd_application_get_ca_context (GSD_APPLICATION (manager));
+ 
+         /* play a sound, using sounds from the naming spec */
+@@ -1658,14 +1676,16 @@
+ {
+         ca_context *ca_context;
+ 
+-        ca_context = gsd_application_get_ca_context (GSD_APPLICATION (manager));
++        if (event_sounds_enabled ()) {
++                ca_context = gsd_application_get_ca_context (GSD_APPLICATION (manager));
+ 
+-        /* play a sound, using sounds from the naming spec */
+-        ca_context_play (ca_context, 0,
+-                         CA_PROP_EVENT_ID, "lid-close",
+-                         /* TRANSLATORS: this is the sound description */
+-                         CA_PROP_EVENT_DESCRIPTION, _("Lid has been closed"),
+-                         NULL);
++                /* play a sound, using sounds from the naming spec */
++                ca_context_play (ca_context, 0,
++                                 CA_PROP_EVENT_ID, "lid-close",
++                                 /* TRANSLATORS: this is the sound description */
++                                 CA_PROP_EVENT_DESCRIPTION, _("Lid has been closed"),
++                                 NULL);
++        }
+ 
+         if (suspend_on_lid_close (manager)) {
+                 gboolean is_inhibited;
+@@ -2315,19 +2335,21 @@
+ {
+         ca_context *ca_context;
+ 
+-        ca_context = gsd_application_get_ca_context (GSD_APPLICATION (manager));
++        if (event_sounds_enabled ()) {
++                ca_context = gsd_application_get_ca_context (GSD_APPLICATION (manager));
+ 
+-        if (up_client_get_on_battery (manager->up_client)) {
+-                ca_context_play (ca_context, 0,
+-                                 CA_PROP_EVENT_ID, "power-unplug",
+-                                 /* TRANSLATORS: this is the sound description */
+-                                 CA_PROP_EVENT_DESCRIPTION, _("On battery power"), NULL);
+-        } else {
+-                ca_context_play (ca_context, 0,
+-                                 CA_PROP_EVENT_ID, "power-plug",
+-                                 /* TRANSLATORS: this is the sound description */
+-                                 CA_PROP_EVENT_DESCRIPTION, _("On AC power"), NULL);
++                if (up_client_get_on_battery (manager->up_client)) {
++                        ca_context_play (ca_context, 0,
++                                         CA_PROP_EVENT_ID, "power-unplug",
++                                         /* TRANSLATORS: this is the sound description */
++                                         CA_PROP_EVENT_DESCRIPTION, _("On battery power"), NULL);
++                } else {
++                        ca_context_play (ca_context, 0,
++                                         CA_PROP_EVENT_ID, "power-plug",
++                                         /* TRANSLATORS: this is the sound description */
++                                         CA_PROP_EVENT_DESCRIPTION, _("On AC power"), NULL);
+ 
++                }
+         }
+ 
+         idle_configure (manager);

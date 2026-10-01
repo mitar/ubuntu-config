@@ -1,0 +1,28 @@
+Source package: gnome-settings-daemon
+
+power-sounds-follow-system-sounds.patch
+    Lets the sounds the power plugin plays, the two for the power cable going in and out, the two
+    for the lid opening and closing, and the one for a low battery, follow
+    org.gnome.desktop.sound event-sounds, which is the System Sounds switch in Settings. The
+    plugin hands them to libcanberra directly, and libcanberra applies that setting only in its
+    GTK wrappers, so without this they play however the setting is set, and nothing turns them
+    off.
+
+    On this laptop the external monitor delivers power over USB-C, so connecting or disconnecting
+    the monitor is a cable event as well, and sounded on every dock and undock.
+
+    Only the sounds are held back. The low battery notification still appears, silently, and the
+    lid still suspends.
+
+The sounds are played in engine_charge_low, do_lid_open_action, do_lid_closed_action and
+up_client_on_battery_cb in plugins/power/gsd-power-manager.c, which take the context from
+gsd_application_get_ca_context in plugins/common/gsd-application.c. After a version bump, check
+that all four still play them with no check of their own, and drop the patch once one is there.
+The critical battery sounds in the same file, battery-caution and the alert loop it starts,
+deliberately keep sounding whatever the setting says.
+
+Check by hand after a rebuild and a new login, with System Sounds off in Settings:
+
+  plug and unplug the charger or the monitor      should stay silent
+  close the lid and open it again                 should stay silent, and still suspend
+  switch System Sounds on and plug it again       should sound as it did before
