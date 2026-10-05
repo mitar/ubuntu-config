@@ -21,6 +21,12 @@ visual-bell-without-animations.patch
     which GTK does not run while gtk-enable-animations is off, so the bell showed nothing. The
     header then shows the bell colours for 150 ms.
 
+working-directory-from-proc.patch
+    Opens a new tab or window in the active tab's directory even when the shell has not reported
+    it with OSC 7, for example after a terminal reset. The directory of the foreground process is
+    then read from /proc by ptyxis-agent, as Ubuntu's gnome-terminal did. Upstream relies on
+    OSC 7 alone and leaves the agent's GetWorkingDirectory unused.
+
 None of this is reachable through settings, which is why the patches exist. A shortcut in Ptyxis
 is spread across four places, and only the first is visible from outside:
 
@@ -41,3 +47,5 @@ compile, and still behave wrongly. Check by hand after a rebuild.
   select text, Ctrl+Shift+C    should copy as HTML, and the context menu should show that accel
   select text                  should highlight dark red (#a40000) with white text
   printf '\a', animations off  should colour the header for 150 ms
+  cd /tmp, then printf '\e]7;\e\\'; sleep 60, and Control+N while sleep runs
+                               should open in /tmp, not in the home directory

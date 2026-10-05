@@ -1,2 +1,4 @@
 treat-super-as-control.patch
 treat-super-as-control-tests.patch
+keep-directory-on-reset.patch
+keep-directory-on-reset-tests.patch

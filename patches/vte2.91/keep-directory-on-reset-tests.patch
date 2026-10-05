@@ -1,0 +1,53 @@
+Description: Test that TrackingStore::reset_all_except keeps only the given termprops.
+ Registered with the existing properties test, so it runs during every build.
+Author: Mitar
+Forwarded: no
+Last-Update: 2026-10-05
+--- a/src/properties-test.cc
++++ b/src/properties-test.cc
+@@ -392,6 +392,37 @@ test_termprops_uri(void)
+         assert_termprop_parse_nothing(Type::URI, "data:text/plain%3BQbase64,Qo=");
+ }
+ 
++static void
++test_termprops_reset_all_except(void)
++{
++        auto registry = vte::property::Registry{};
++        auto const kept = registry.install("test.kept", Type::URI);
++        auto const other_uri = registry.install("test.other-uri", Type::URI);
++        auto const other_string = registry.install("test.other-string", Type::STRING);
++
++        auto store = vte::property::TrackingStore{registry};
++        *store.value(kept) = std::move(*parse_termprop_value(Type::URI, "file:///kept"sv));
++        *store.value(other_uri) = std::move(*parse_termprop_value(Type::URI, "file:///other"sv));
++        *store.value(other_string) = std::move(*parse_termprop_value(Type::STRING, "other"sv));
++
++        store.reset_all_except({kept});
++
++        assert(std::holds_alternative<URIValue>(*store.value(kept)));
++        assert(std::get<URIValue>(*store.value(kept)).second == "file:///kept"sv);
++        assert(!store.dirty(unsigned(kept)));
++
++        assert(std::holds_alternative<std::monostate>(*store.value(other_uri)));
++        assert(store.dirty(unsigned(other_uri)));
++        assert(std::holds_alternative<std::monostate>(*store.value(other_string)));
++        assert(store.dirty(unsigned(other_string)));
++
++        // With nothing to keep it resets everything, like reset_all().
++        store.reset_all_except({});
++
++        assert(std::holds_alternative<std::monostate>(*store.value(kept)));
++        assert(store.dirty(unsigned(kept)));
++}
++
+ int
+ main(int argc,
+      char* argv[])
+@@ -411,6 +442,7 @@ main(int argc,
+         g_test_add_func("/vte/property/termprops/type/data", test_termprops_data);
+         g_test_add_func("/vte/property/termprops/type/uuid", test_termprops_uuid);
+         g_test_add_func("/vte/property/termprops/type/uri", test_termprops_uri);
++        g_test_add_func("/vte/property/termprops/reset-all-except", test_termprops_reset_all_except);
+ ;
+ 
+         return g_test_run();

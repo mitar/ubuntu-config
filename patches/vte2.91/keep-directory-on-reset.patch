@@ -1,0 +1,69 @@
+Description: Keep the current directory and file across a terminal reset.
+ A reset (RIS, DECSTR, DECSR, or vte_terminal_reset) clears every termprop, and since the current
+ directory and file became termprops, set by OSC 7 and OSC 6, it clears those too. The shell does
+ not learn about the reset and reports its directory again only at its next prompt. Until then a
+ terminal application finds no directory, so a new tab or window opens in the home directory
+ rather than where the shell is.
+ .
+ Both are kept, as they were before they became termprops. Every other termprop is still reset.
+ .
+ The selection lives in TrackingStore::reset_all_except so that it can be unit tested without a
+ terminal. The test is added by keep-directory-on-reset-tests.patch.
+Author: Mitar
+Forwarded: no
+Last-Update: 2026-10-05
+--- a/src/properties.hh
++++ b/src/properties.hh
+@@ -25,6 +25,7 @@
+ #include "cairo-glue.hh"
+ #include "cxx-utils.hh"
+ 
++#include <algorithm>
+ #include <cassert>
+ #include <cmath> // for std::isfinite
+ 
+@@ -956,6 +957,16 @@ public:
+                 }
+         }
+ 
++        // Resets every property except those whose id is in @keep, which keep
++        // their value and are not marked dirty.
++        void reset_all_except(std::initializer_list<int> keep)
++        {
++                for (auto const& info: registry().get_all()) {
++                        if (std::find(keep.begin(), keep.end(), info.id()) == keep.end())
++                                reset(info);
++                }
++        }
++
+ }; // class TrackingStore
+ 
+ } // namespace vte::property
+--- a/src/vtegtk.cc
++++ b/src/vtegtk.cc
+@@ -2917,7 +2917,8 @@ vte_terminal_class_init(VteTerminalClass *klass)
+  * no value at all.
+  *
+  * Note also that when the terminal is reset (by RIS, DECSTR, or DECSR) all
+- * termprops are reset to having no value.
++ * termprops except %VTE_TERMPROP_CURRENT_DIRECTORY_URI and
++ * %VTE_TERMPROP_CURRENT_FILE_URI are reset to having no value.
+  *
+  * It is a programming error to call any of the vte_terminal_*_termprop*()
+  * functions for a termprop that is not of the type specified by the function
+--- a/src/vteinternal.hh
++++ b/src/vteinternal.hh
+@@ -844,7 +844,12 @@ public:
+ 
+         void reset_termprops()
+         {
+-                m_termprops.reset_all();
++                // The current directory and file are kept. They describe the state of the
++                // shell, not of the terminal, and the shell reports them again only at its next
++                // prompt, unaware of the reset. Until then a terminal application asking for the
++                // directory, for example to open a new tab there, would find none.
++                m_termprops.reset_all_except({VTE_PROPERTY_ID_CURRENT_DIRECTORY_URI,
++                                              VTE_PROPERTY_ID_CURRENT_FILE_URI});
+                 m_pending_changes |= std::to_underlying(PendingChanges::TERMPROPS);
+         }
+ 

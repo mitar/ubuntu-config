@@ -1,0 +1,56 @@
+Description: Read the working directory from /proc when OSC 7 has not reported one.
+ A new tab or window opens in the directory of the active tab, which Ptyxis takes only from the
+ OSC 7 sequence the shell sends at each prompt. That directory is missing when the shell never
+ sends it, and after a terminal reset cleared it until the shell shows its next prompt. The new
+ terminal then opens in the home directory.
+ .
+ In that case the directory of the tab's foreground process is asked from ptyxis-agent, which
+ reads it from /proc. The agent already offers this as GetWorkingDirectory, and the tab has a
+ wrapper for it, but upstream calls neither. This is the fallback Debian and Ubuntu carried for
+ gnome-terminal as Provide-fallback-for-reading-current-directory-if-OS.patch.
+ .
+ The agent answered "/" when it could not read the directory, which would open the new terminal
+ in "/". It now answers with an empty path, which the window treats as unknown.
+Author: Mitar
+Forwarded: not-needed
+Last-Update: 2026-10-05
+--- a/agent/ptyxis-process-impl.c
++++ b/agent/ptyxis-process-impl.c
+@@ -323,10 +323,13 @@ ptyxis_process_impl_handle_get_working_directory (PtyxisIpcProcess      *process
+         }
+     }
+ 
++  /* An unknown directory is answered with an empty path, so that the
++   * caller can tell it apart from a real "/".
++   */
+   ptyxis_ipc_process_complete_get_working_directory (process,
+                                                      g_steal_pointer (&invocation),
+                                                      NULL,
+-                                                     "/");
++                                                     "");
+ 
+   return TRUE;
+ }
+--- a/src/ptyxis-window.c
++++ b/src/ptyxis-window.c
+@@ -559,6 +559,20 @@ ptyxis_window_apply_current_settings (PtyxisWindow *self,
+             ptyxis_tab_set_container (tab, current_container);
+         }
+ 
++      /* The directory the shell reports with OSC 7 can be missing, for
++       * example when the shell never sends it, or after a terminal reset
++       * cleared it and the shell has not shown a prompt since. The kernel
++       * still knows the directory of the foreground process, so the agent
++       * reads it from /proc instead.
++       */
++      if (current_directory_uri == NULL)
++        {
++          g_autofree char *path = ptyxis_tab_query_working_directory_from_agent (active_tab);
++
++          if (!ptyxis_str_empty0 (path))
++            current_directory_uri = g_filename_to_uri (path, NULL, NULL);
++        }
++
+       if (current_directory_uri != NULL)
+         ptyxis_tab_set_previous_working_directory_uri (tab, current_directory_uri);
+ 
