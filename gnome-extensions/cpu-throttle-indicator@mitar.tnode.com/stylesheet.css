@@ -1,0 +1,14 @@
+/* The warning at the top of the menu, in the red of the theme's screen recording indicator, which is also how the top
+   bar shows the same warning. The background is on a box inside the menu item, because the theme clears the background
+   of a menu item which does not react to the pointer. */
+.cpu-throttle-indicator-warning {
+    color: white;
+    background-color: #c7162b;
+    border-radius: 8px;
+    padding: 6px 9px;
+    spacing: 9px;
+}
+
+.cpu-throttle-indicator-warning-title {
+    font-weight: bold;
+}

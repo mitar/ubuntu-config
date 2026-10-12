@@ -133,6 +133,13 @@ time spent limited by each reason: the sustained power limit, the fast and slow 
 temperature limit for the cores, for the graphics and for the SoC, and the platform's PROCHOT. It needs an APU
 publishing the table in the `gpu_metrics_v3_0` layout, which Strix Point in the Ryzen AI 300 series does.
 
+The indicator also turns red and shows THM, and its menu a warning, while the embedded controller cannot read the
+APU's temperature. The EC runs the fan from its own sensors, and the only one of them which follows the APU is the one
+it reads from the APU over SB-TSI. After days of uptime the EC has been seen to stop reading its sensors, and the
+fan then stays off while the APU heats up until its temperature limit holds it back. A suspend and resume makes
+the EC read them again. The indicator checks the sensor with every sample, through `cros_ec`'s hwmon device,
+where it shows as `cpu@4c`.
+
 ### GNOME extensions
 
 Extensions are installed from extensions.gnome.org and configured by `configure-gnome-desktop.sh`, with their

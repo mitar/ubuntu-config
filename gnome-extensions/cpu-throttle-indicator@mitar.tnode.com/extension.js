@@ -9,6 +9,7 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 
+import {findApuSensorFile} from './ec.js';
 import {CORE_GROUPS, REASONS, decodeMetrics, dominantReason, findMetricsFile, throttleShares} from './metrics.js';
 
 const SAMPLE_INTERVAL_S = 2;
@@ -21,16 +22,29 @@ const THRESHOLD_PERCENT = 10;
 // program drains the fast power budget for about one sample, so leaving at the first quiet sample would blink.
 const HIDE_AFTER_SAMPLES = 2;
 
+// How many readings in a row the embedded controller has to fail to report the APU temperature before that is shown
+// as a fault. A reading taken while the APU is coming out of suspend can fail before the EC has read the sensor again.
+const SENSOR_FAILING_AFTER_SAMPLES = 5;
+
+// The theme's red pill for a top bar indicator which needs attention, the one the shell shows while recording the
+// screen. Borrowing it keeps the warning in the theme's colors, light or dark.
+const WARNING_PANEL_STYLE_CLASS = 'screen-recording-indicator';
+
 const Indicator = GObject.registerClass(
 class ThrottleIndicator extends PanelMenu.Button {
-    _init(iconsPath, file) {
+    _init(iconsPath, file, apuSensorFile) {
         super._init(0, 'CPU Throttle Indicator');
 
         this._file = file;
+        this._apuSensorFile = apuSensorFile;
         this._cancellable = new Gio.Cancellable();
         this._previous = null;
         this._reading = false;
+        this._readingApuSensor = false;
         this._samplesUnderThreshold = 0;
+        this._apuSensorFailures = 0;
+        // The reason the top bar names, which stays for HIDE_AFTER_SAMPLES after it stops holding anything back.
+        this._throttle = null;
         this._icons = {
             power: Gio.icon_new_for_string(`${iconsPath}/cpu-throttle-power-symbolic.svg`),
             thermal: Gio.icon_new_for_string(`${iconsPath}/cpu-throttle-thermal-symbolic.svg`),
@@ -46,6 +60,9 @@ class ThrottleIndicator extends PanelMenu.Button {
         box.add_child(this._reasonLabel);
         this.add_child(box);
 
+        this._warningItem = this._addWarning('Fan control cannot read the APU temperature',
+            ['The fan ignores processor heat.']);
+
         this._shareLabels = new Map();
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem('Limits'));
         for (const reason of REASONS)
@@ -60,15 +77,19 @@ class ThrottleIndicator extends PanelMenu.Button {
         this._gfxLabel = this._addRow('Graphics temperature');
         this._socLabel = this._addRow('SoC temperature');
         this._skinLabel = this._addRow('Skin temperature');
+        if (apuSensorFile)
+            this._apuSensorLabel = this._addRow('APU temperature (EC)');
 
         // Nothing is known until two readings have been compared, and until then there is nothing to show.
         this.hide();
 
         this._timeoutId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, SAMPLE_INTERVAL_S, () => {
             this._sample();
+            this._sampleApuSensor();
             return GLib.SOURCE_CONTINUE;
         });
         this._sample();
+        this._sampleApuSensor();
     }
 
     // PanelMenu.Button connects this to its own destroy signal, and destroys the menu and the container in it, so
@@ -97,6 +118,32 @@ class ThrottleIndicator extends PanelMenu.Button {
         return value;
     }
 
+    /**
+     * Adds a warning to the menu, hidden until it is shown.
+     *
+     * @param {string} title - the first line of the warning, saying what is wrong
+     * @param {string[]} lines - the lines under the title
+     * @returns {PopupMenu.PopupBaseMenuItem} the menu item holding the warning, to show and hide
+     */
+    _addWarning(title, lines) {
+        const item = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
+        const box = new St.BoxLayout({style_class: 'cpu-throttle-indicator-warning', x_expand: true});
+        const text = new St.BoxLayout({orientation: Clutter.Orientation.VERTICAL, y_align: Clutter.ActorAlign.CENTER});
+        text.add_child(new St.Label({text: title, style_class: 'cpu-throttle-indicator-warning-title'}));
+        for (const line of lines)
+            text.add_child(new St.Label({text: line}));
+        box.add_child(new St.Icon({
+            icon_name: 'dialog-warning-symbolic',
+            style_class: 'popup-menu-icon',
+            y_align: Clutter.ActorAlign.CENTER,
+        }));
+        box.add_child(text);
+        item.add_child(box);
+        item.hide();
+        this.menu.addMenuItem(item);
+        return item;
+    }
+
     _sample() {
         // A read is answered by the SMU rather than out of memory, so it is kept off the shell's main loop. A read
         // still running when the next one is due is left to finish on its own instead of queueing another behind
@@ -120,6 +167,48 @@ class ThrottleIndicator extends PanelMenu.Button {
             if (!this._cancellable.is_cancelled())
                 this._update(decodeMetrics(bytes.get_data()), GLib.get_monotonic_time());
         });
+    }
+
+    _sampleApuSensor() {
+        // The file is read off the main loop and one read at a time, the same as the metrics table.
+        if (!this._apuSensorFile || this._readingApuSensor)
+            return;
+        this._readingApuSensor = true;
+        this._apuSensorFile.load_bytes_async(this._cancellable, (file, result) => {
+            this._readingApuSensor = false;
+            let temperature = null;
+            try {
+                const [bytes] = file.load_bytes_finish(result);
+                temperature = Number(new TextDecoder().decode(bytes.get_data())) / 1000;
+            } catch (error) {
+                if (error.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED))
+                    return;
+                // INVALID_DATA is the EC failing to read the sensor, which is what the warning is about. Any other
+                // error is about reaching the file and says nothing about the sensor, so it changes nothing.
+                if (!error.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.INVALID_DATA)) {
+                    console.warn(`CPU Throttle Indicator: cannot read ${file.get_path()}: ${error.message}`);
+                    return;
+                }
+            }
+            if (!this._cancellable.is_cancelled())
+                this._updateApuSensor(temperature);
+        });
+    }
+
+    /**
+     * Takes a reading of the APU temperature the embedded controller reports, and updates the indicator from it.
+     *
+     * @param {number|null} temperature - the temperature in degrees Celsius, or null when the EC cannot read the sensor
+     */
+    _updateApuSensor(temperature) {
+        if (temperature === null) {
+            this._apuSensorFailures++;
+            this._apuSensorLabel.text = 'error';
+        } else {
+            this._apuSensorFailures = 0;
+            this._apuSensorLabel.text = `${temperature.toFixed(1)} C`;
+        }
+        this._render();
     }
 
     /**
@@ -164,13 +253,36 @@ class ThrottleIndicator extends PanelMenu.Button {
         const dominant = dominantReason(shares, THRESHOLD_PERCENT);
         if (dominant) {
             this._samplesUnderThreshold = 0;
-            this._icon.gicon = this._icons[dominant.kind];
-            this._reasonLabel.text = dominant.short;
+            this._throttle = dominant;
+        } else {
+            this._samplesUnderThreshold++;
+            if (this._samplesUnderThreshold >= HIDE_AFTER_SAMPLES)
+                this._throttle = null;
+        }
+        this._render();
+    }
+
+    /**
+     * Shows in the top bar what currently deserves attention, and hides the indicator when nothing does.
+     */
+    _render() {
+        const sensorFailing = this._apuSensorFailures >= SENSOR_FAILING_AFTER_SAMPLES;
+        this._warningItem.visible = sensorFailing;
+        // Without the APU temperature the fan stays as slow as the board's temperatures let it, so the APU heats up
+        // until its temperature limit holds it back. That takes the place of whatever is holding it back right now.
+        if (sensorFailing) {
+            this._icon.gicon = this._icons.thermal;
+            this._reasonLabel.text = 'THM';
+            this.add_style_class_name(WARNING_PANEL_STYLE_CLASS);
             this.show();
             return;
         }
-        this._samplesUnderThreshold++;
-        if (this._samplesUnderThreshold >= HIDE_AFTER_SAMPLES && this.visible) {
+        this.remove_style_class_name(WARNING_PANEL_STYLE_CLASS);
+        if (this._throttle) {
+            this._icon.gicon = this._icons[this._throttle.kind];
+            this._reasonLabel.text = this._throttle.short;
+            this.show();
+        } else if (this.visible) {
             this.menu.close();
             this.hide();
         }
@@ -186,7 +298,9 @@ export default class CpuThrottleIndicatorExtension extends Extension {
             console.warn(`${this.uuid}: no device publishes a metrics table this can read, not showing an indicator`);
             return;
         }
-        this._indicator = new Indicator(`${this.path}/icons`, file);
+        // An embedded controller which does not report the APU temperature leaves nothing to warn about, and the
+        // indicator then does without the warning.
+        this._indicator = new Indicator(`${this.path}/icons`, file, findApuSensorFile());
         Main.panel.addToStatusArea(this.uuid, this._indicator);
     }
 
