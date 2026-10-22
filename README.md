@@ -138,7 +138,9 @@ APU's temperature. The EC runs the fan from its own sensors, and the only one of
 it reads from the APU over SB-TSI. After days of uptime the EC has been seen to stop reading its sensors, and the
 fan then stays off while the APU heats up until its temperature limit holds it back. A suspend and resume makes
 the EC read them again. The indicator checks the sensor with every sample, through `cros_ec`'s hwmon device,
-where it shows as `cpu@4c`.
+where it shows as `cpu@4c`. The EC also cannot read that sensor while the APU is in its deepest idle state, so it
+misses most readings while the APU idles. The fan is off at such temperatures anyway, so the indicator counts a
+failed reading only while the hottest core is at 60 C or more, and warns after 30 seconds of them in a row.
 
 ### GNOME extensions
 

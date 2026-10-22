@@ -22,9 +22,17 @@ const THRESHOLD_PERCENT = 10;
 // program drains the fast power budget for about one sample, so leaving at the first quiet sample would blink.
 const HIDE_AFTER_SAMPLES = 2;
 
-// How many readings in a row the embedded controller has to fail to report the APU temperature before that is shown
-// as a fault. A reading taken while the APU is coming out of suspend can fail before the EC has read the sensor again.
-const SENSOR_FAILING_AFTER_SAMPLES = 5;
+// How many readings in a row the embedded controller has to fail to report the APU temperature, counting only those
+// taken while the APU is at SENSOR_NEEDED_ABOVE_C or more, before that is shown as a fault. Under load the EC reads
+// the sensor nearly every time, but in the seconds after a load ends the APU is idle while still warm, and the EC
+// then misses several readings in a row, so this has to outlast the APU cooling down from its temperature limit.
+const SENSOR_FAILING_AFTER_SAMPLES = 15;
+
+// The hottest core's temperature below which a failed reading of the APU temperature by the embedded controller is
+// not counted. The EC cannot read the sensor while the APU is in its deepest idle state, so it misses most readings
+// while the APU idles, but it also keeps the fan off below about this temperature, where a missed reading changes
+// nothing.
+const SENSOR_NEEDED_ABOVE_C = 60;
 
 // The theme's red pill for a top bar indicator which needs attention, the one the shell shows while recording the
 // screen. Borrowing it keeps the warning in the theme's colors, light or dark.
@@ -43,6 +51,9 @@ class ThrottleIndicator extends PanelMenu.Button {
         this._readingApuSensor = false;
         this._samplesUnderThreshold = 0;
         this._apuSensorFailures = 0;
+        // The hottest core's temperature from the latest metrics table. The SMU measures it itself, so it is known
+        // even while the embedded controller cannot read its sensor.
+        this._temperatureCore = null;
         // The reason the top bar names, which stays for HIDE_AFTER_SAMPLES after it stops holding anything back.
         this._throttle = null;
         this._icons = {
@@ -202,7 +213,10 @@ class ThrottleIndicator extends PanelMenu.Button {
      */
     _updateApuSensor(temperature) {
         if (temperature === null) {
-            this._apuSensorFailures++;
+            // A failure while the APU is cool is not counted, and it does not reset the count either, because a
+            // sensor which stopped working fails at any temperature and has to stay reported while the APU cools.
+            if (this._temperatureCore !== null && this._temperatureCore >= SENSOR_NEEDED_ABOVE_C)
+                this._apuSensorFailures++;
             this._apuSensorLabel.text = 'error';
         } else {
             this._apuSensorFailures = 0;
@@ -222,6 +236,7 @@ class ThrottleIndicator extends PanelMenu.Button {
         // same as saying that nothing is, so the indicator keeps showing what it showed.
         if (!metrics)
             return;
+        this._temperatureCore = metrics.temperatureCore;
 
         const previous = this._previous;
         this._previous = {metrics, timestamp};
