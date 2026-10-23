@@ -145,20 +145,27 @@ the fan can spin faster, up to about 7600 RPM at a full duty cycle, which shows 
 ACPI fan declares 6100 RPM as its full speed in its `_FPS` table instead, and only on or off as its control state,
 so it says less than the EC does.
 
-The indicator also turns red and shows THM, and its menu a warning, while no fan spins although the processor is
-hot. Linux has no say in the fan, the EC runs it by itself from its own temperature sensors. According to the EC's
-source code, which the EC's `EC_CMD_THERMAL_GET_THRESHOLD` host command confirms, the fan follows only the three
-F75303 sensors on the board. Each of them keeps the fan off up to 50 C and above that asks for a speed which grows
-from 2100 RPM to the top of the fan table at 70 C (69 C for the one next to the APU, and 46 C to 60 C for the one
-next to the memory), and the EC runs the fan at the fastest speed any of them asks for. The fourth sensor, the APU's
-own temperature which the EC reads over SB-TSI and which shows as `cpu@4c`, asks for the fan only from 103 C, and
-the EC uses it to throttle and to shut down the APU when it overheats. After days of uptime the EC has been seen to
-stop updating its sensors, which then keep reporting the values they had, and the fan stays off while the APU heats
-up until its temperature limit holds it back. A suspend and resume makes the EC read them again. The board warms up
-after the cores do: starting from a cool board with the fan off, a working EC starts the fan at most about 10
-seconds after the hottest core reaches 70 C, and under lighter loads before the cores get there. So the indicator
-warns only once no fan has spun for 30 seconds in a row while the hottest core was at 70 C or more, and it keeps
-warning until a fan spins again.
+Linux has no say in the fan, the EC runs it by itself from its own temperature sensors. According to the EC's source
+code, which the EC's `EC_CMD_THERMAL_GET_THRESHOLD` host command confirms, the fan follows only the three F75303
+sensors on the board. Each of them keeps the fan off up to 50 C and above that asks for a speed which grows from
+2100 RPM to the top of the fan table at 70 C (69 C for the one next to the APU, and 46 C to 60 C for the one next to
+the memory), and the EC runs the fan at the fastest speed any of them asks for. The fourth sensor, the APU's own
+temperature which the EC reads over SB-TSI and which shows as `cpu@4c`, asks for the fan only from 103 C, and the EC
+uses it to throttle and to shut down the APU when it overheats.
+
+The indicator also turns red and shows THM, and its menu a warning, when the EC's fan control stops following the
+processor's heat. After days of uptime the EC has been seen to stop updating its sensors. The three F75303 readings
+come from one chip, which shares an I2C bus with the APU's SB-TSI, and the EC's driver for it keeps reporting the
+last temperature it read when it cannot read the chip any more. The readings then stay at the values they had, and
+the fan stays at the speed those values ask for, which is off when they stopped below 50 C. A suspend and resume
+makes the EC read them again. The indicator tells that the fan does not follow the heat from either of two signs.
+One is that no fan has spun for 30 seconds in a row while the hottest core was at 70 C or more: the board warms up
+after the cores do, but starting from a cool board with the fan off, a working EC starts the fan at most about 10
+seconds after the hottest core reaches 70 C, and under lighter loads before the cores get there. The other is that
+none of the board readings has changed for 2 minutes while the hottest core has been at 70 C or more for the last 30
+seconds in a row: the readings are in whole degrees and can all stay the same for minutes while the processor idles,
+but once it heats up, at least one of them changes within seconds. The warning stays until the sign which raised it
+is gone, so until a fan spins again or a board reading changes.
 
 ### GNOME extensions
 

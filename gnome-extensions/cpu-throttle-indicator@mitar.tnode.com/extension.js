@@ -9,7 +9,7 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 
-import {FAN_MAX_RPM, findApuSensorFile, findFanFiles} from './ec.js';
+import {FAN_MAX_RPM, findApuSensorFile, findBoardSensorFiles, findFanFiles} from './ec.js';
 import {CORE_GROUPS, REASONS, decodeMetrics, dominantReason, findMetricsFile, throttleShares} from './metrics.js';
 
 const SAMPLE_INTERVAL_S = 2;
@@ -27,12 +27,21 @@ const HIDE_AFTER_SAMPLES = 2;
 // after the cores reach this.
 const FAN_NEEDED_ABOVE_C = 70;
 
-// How many samples in a row no fan has to spin while the hottest core is at FAN_NEEDED_ABOVE_C or more before that is
-// shown as a fault. It has to outlast the board warming up to where the EC starts the fan. Starting from a cool board
-// with the fan off, the EC was measured to start the fan at most about 10 seconds after the hottest core reached
-// FAN_NEEDED_ABOVE_C, for loads from a few threads to all of them, while lighter loads warm the board enough before
-// the cores get there, or never get the cores there.
-const FAN_OFF_FAULT_AFTER_SAMPLES = 15;
+// How many samples in a row the hottest core has to be at FAN_NEEDED_ABOVE_C or more, with no fan spinning in that
+// time or no board reading changing for BOARD_STALE_AFTER_S, before that is shown as the fan not following the heat. It
+// has to outlast the board warming up to where the EC starts the fan. Starting from a cool board with the fan off, the
+// EC was measured to start the fan at most about 10 seconds after the hottest core reached FAN_NEEDED_ABOVE_C, for
+// loads from a few threads to all of them, while lighter loads warm the board enough before the cores get there, or
+// never get the cores there.
+const FAULT_AFTER_HOT_SAMPLES = 15;
+
+// How long none of the board's temperature readings may change, with the hottest core at FAN_NEEDED_ABOVE_C or more
+// for the last FAULT_AFTER_HOT_SAMPLES in a row, before that is shown as the fan not following the heat. The EC keeps
+// reporting the last temperature it read from a board sensor it cannot read any more, and the fan then keeps the speed
+// that temperature asks for, which can be a slow one as well as off. The readings are in whole degrees and can all
+// stay the same for minutes while the processor idles, but once it heats up, at least one of them changes within
+// seconds.
+const BOARD_STALE_AFTER_S = 120;
 
 // The theme's red pill for a top bar indicator which needs attention, the one the shell shows while recording the
 // screen. Borrowing it keeps the warning in the theme's colors, light or dark.
@@ -40,7 +49,7 @@ const WARNING_PANEL_STYLE_CLASS = 'screen-recording-indicator';
 
 const Indicator = GObject.registerClass(
 class ThrottleIndicator extends PanelMenu.Button {
-    _init(iconsPath, file, apuSensorFile, fanFiles) {
+    _init(iconsPath, file, apuSensorFile, fanFiles, boardSensorFiles) {
         super._init(0, 'CPU Throttle Indicator');
 
         this._file = file;
@@ -50,7 +59,17 @@ class ThrottleIndicator extends PanelMenu.Button {
         this._reading = false;
         this._readingApuSensor = false;
         this._samplesUnderThreshold = 0;
+        this._samplesHot = 0;
         this._samplesFanOffWhileHot = 0;
+        // The temperature is undefined until the sensor has been read, and null while the EC reports it as failed.
+        this._boardSensors = boardSensorFiles.map(boardFile => ({
+            file: boardFile,
+            reading: false,
+            temperature: undefined,
+        }));
+        // The monotonic time in microseconds at which a board reading last changed.
+        this._boardChangedAt = null;
+        this._boardStale = false;
         // The reason the top bar names, which stays for HIDE_AFTER_SAMPLES after it stops holding anything back.
         this._throttle = null;
         this._icons = {
@@ -68,8 +87,8 @@ class ThrottleIndicator extends PanelMenu.Button {
         box.add_child(this._reasonLabel);
         this.add_child(box);
 
-        this._warningItem = this._addWarning('Fan is off while the processor is hot',
-            ['Fan control may have stopped reading its sensors.', 'Suspend and resume to make it read them again.']);
+        this._warningItem = this._addWarning('Fan does not follow the processor heat',
+            ['Fan control may be stuck on old temperatures.']);
 
         this._shareLabels = new Map();
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem('Limits'));
@@ -120,11 +139,13 @@ class ThrottleIndicator extends PanelMenu.Button {
             this._sample();
             this._sampleApuSensor();
             this._sampleFans();
+            this._sampleBoardSensors();
             return GLib.SOURCE_CONTINUE;
         });
         this._sample();
         this._sampleApuSensor();
         this._sampleFans();
+        this._sampleBoardSensors();
     }
 
     // PanelMenu.Button connects this to its own destroy signal, and destroys the menu and the container in it, so
@@ -279,6 +300,37 @@ class ThrottleIndicator extends PanelMenu.Button {
         row.label.text = speed === null ? 'stalled' : `${speed} RPM, ${Math.round(100 * speed / FAN_MAX_RPM)}%`;
     }
 
+    _sampleBoardSensors() {
+        // Each file is read off the main loop and one read at a time, the same as the metrics table.
+        for (const sensor of this._boardSensors) {
+            if (sensor.reading)
+                continue;
+            sensor.reading = true;
+            sensor.file.load_bytes_async(this._cancellable, (file, result) => {
+                sensor.reading = false;
+                let temperature = null;
+                try {
+                    const [bytes] = file.load_bytes_finish(result);
+                    temperature = Number(new TextDecoder().decode(bytes.get_data()));
+                } catch (error) {
+                    if (error.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED))
+                        return;
+                    // INVALID_DATA is the EC reporting the sensor as failed, which stays the same as long as the
+                    // failure does. Any other error is about reaching the file and says nothing about the sensor.
+                    if (!error.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.INVALID_DATA)) {
+                        console.warn(`CPU Throttle Indicator: cannot read ${file.get_path()}: ${error.message}`);
+                        return;
+                    }
+                }
+                if (this._cancellable.is_cancelled() || temperature === sensor.temperature)
+                    return;
+                sensor.temperature = temperature;
+                this._boardChangedAt = GLib.get_monotonic_time();
+                this._boardStale = false;
+            });
+        }
+    }
+
     /**
      * Takes a reading and updates the indicator and its menu from it and the reading before it.
      *
@@ -291,20 +343,31 @@ class ThrottleIndicator extends PanelMenu.Button {
         if (!metrics)
             return;
 
+        // A burst of load which ends before the board warms up rightly never starts the fan nor changes a board
+        // reading, so a cool sample starts both counts over.
+        const hot = metrics.temperatureCore >= FAN_NEEDED_ABOVE_C;
+        this._samplesHot = hot ? this._samplesHot + 1 : 0;
+
         // A fan which the EC reports as stalled does not spin either, while one which has not been read yet counts as
         // spinning, so that nothing is reported before it is known.
         const fansOff = this._fanSpeedRows.length > 0 &&
             this._fanSpeedRows.every(row => row.speed === 0 || row.speed === null);
         if (!fansOff) {
             this._samplesFanOffWhileHot = 0;
-        } else if (metrics.temperatureCore >= FAN_NEEDED_ABOVE_C) {
+        } else if (hot) {
             this._samplesFanOffWhileHot++;
-        } else if (this._samplesFanOffWhileHot < FAN_OFF_FAULT_AFTER_SAMPLES) {
-            // A burst of load which ends before the board warms up rightly never starts the fan, so a cool sample
-            // starts the count over. Once the fault is shown, it stays until a fan spins again, because fan control
-            // which stopped reading its sensors does not recover as the processor cools down.
+        } else if (this._samplesFanOffWhileHot < FAULT_AFTER_HOT_SAMPLES) {
+            // Once the warning is shown for this, it stays until a fan spins again, because fan control which stopped
+            // reading its sensors does not recover as the processor cools down.
             this._samplesFanOffWhileHot = 0;
         }
+
+        // The board readings are judged as soon as the processor has been hot for long enough, against the whole
+        // BOARD_STALE_AFTER_S before. Once the warning is shown for them, it stays until one of them changes, for the
+        // same reason as for a fan which does not spin.
+        if (this._samplesHot >= FAULT_AFTER_HOT_SAMPLES && this._boardChangedAt !== null &&
+            timestamp - this._boardChangedAt >= BOARD_STALE_AFTER_S * GLib.USEC_PER_SEC)
+            this._boardStale = true;
 
         const previous = this._previous;
         this._previous = {metrics, timestamp};
@@ -349,10 +412,10 @@ class ThrottleIndicator extends PanelMenu.Button {
      * Shows in the top bar what currently deserves attention, and hides the indicator when nothing does.
      */
     _render() {
-        const fanFault = this._samplesFanOffWhileHot >= FAN_OFF_FAULT_AFTER_SAMPLES;
+        const fanFault = this._boardStale || this._samplesFanOffWhileHot >= FAULT_AFTER_HOT_SAMPLES;
         this._warningItem.visible = fanFault;
-        // Without the fan the APU heats up until its temperature limit holds it back. That takes the place of
-        // whatever is holding it back right now.
+        // Without a fan which follows the heat the APU heats up until its temperature limit holds it back. That takes
+        // the place of whatever is holding it back right now.
         if (fanFault) {
             this._icon.gicon = this._icons.thermal;
             this._reasonLabel.text = 'THM';
@@ -382,8 +445,10 @@ export default class CpuThrottleIndicatorExtension extends Extension {
             return;
         }
         // An embedded controller which does not report the APU temperature leaves the menu without it, and one which
-        // reports no fan leaves the menu without its fans and the indicator without the warning about them.
-        this._indicator = new Indicator(`${this.path}/icons`, file, findApuSensorFile(), findFanFiles());
+        // reports no fan leaves the menu without its fans. The warning about the fan not following the heat then
+        // rests on whichever of the fans and the board temperatures the EC does report.
+        this._indicator = new Indicator(`${this.path}/icons`, file, findApuSensorFile(), findFanFiles(),
+            findBoardSensorFiles());
         Main.panel.addToStatusArea(this.uuid, this._indicator);
     }
 

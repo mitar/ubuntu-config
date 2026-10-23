@@ -39,6 +39,30 @@ export function findApuSensorFile() {
 }
 
 /**
+ * Finds the files through which the embedded controller reports the temperatures on the board, which it runs the fan
+ * from.
+ *
+ * These are all of the EC's temperature sensors other than the one it reads from the APU. Each file holds the
+ * temperature in millidegrees Celsius, in whole degrees. Reading it fails with Gio.IOErrorEnum.INVALID_DATA while the
+ * EC reports the sensor as failed, but Framework's EC does not report a board sensor it cannot read any more as
+ * failed. It keeps reporting the last temperature it read from it, so that shows only as a reading which stops
+ * changing.
+ *
+ * @returns {Gio.File[]} the files, or an empty array when no embedded controller on this system reports such a sensor
+ */
+export function findBoardSensorFiles() {
+    const files = [];
+    for (const directory of findHwmonDirectories(HWMON_NAME)) {
+        for (const name of listChildren(directory)) {
+            const match = /^(temp\d+)_label$/.exec(name);
+            if (match && readText(`${directory}/${name}`) !== APU_SENSOR_LABEL)
+                files.push(Gio.File.new_for_path(`${directory}/${match[1]}_input`));
+        }
+    }
+    return files;
+}
+
+/**
  * Finds the files through which the embedded controller reports the speed of each of its fans.
  *
  * Each file holds the speed in RPM. The driver lists only the fans the EC reported as present when the driver came up,

@@ -1,7 +1,7 @@
 {
   "uuid": "cpu-throttle-indicator@mitar.tnode.com",
   "name": "CPU Throttle Indicator",
-  "description": "Shows in the top bar when the processor is being held below the speed it would otherwise run at, and whether a power limit or a temperature limit is holding it there. Also warns when a Framework laptop's fan stays off while the processor is hot. Needs an AMD APU which publishes a gpu_metrics_v3_0 table, such as Strix Point in the Ryzen AI 300 series.",
+  "description": "Shows in the top bar when the processor is being held below the speed it would otherwise run at, and whether a power limit or a temperature limit is holding it there. Also warns when a Framework laptop's fan does not follow the processor's heat. Needs an AMD APU which publishes a gpu_metrics_v3_0 table, such as Strix Point in the Ryzen AI 300 series.",
   "shell-version": [
     "50"
   ],
