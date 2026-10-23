@@ -125,7 +125,7 @@ combinations of speakers, headphones and microphones which differ in which of th
 
 An indicator appears in the top bar while the processor is being held below the speed it would otherwise run
 at, and names what is holding it there. Its menu breaks that down into the share of the last interval each
-limit accounted for, alongside the package power and the temperatures.
+limit accounted for, alongside the fan speed, the package power and the temperatures.
 
 The interfaces the usual tools read for this are Intel's and AMD publishes no equivalent, so the indicator
 reads the APU's own metrics table at `/sys/class/drm/card*/device/gpu_metrics` instead. That table counts the
@@ -141,6 +141,17 @@ the EC read them again. The indicator checks the sensor with every sample, throu
 where it shows as `cpu@4c`. The EC also cannot read that sensor while the APU is in its deepest idle state, so it
 misses most readings while the APU idles. The fan is off at such temperatures anyway, so the indicator counts a
 failed reading only while the hottest core is at 60 C or more, and warns after 30 seconds of them in a row.
+
+The menu also shows the fan's speed and the target speed the EC's control is bringing it to, both as the EC reports
+them through the same hwmon device. The target is 0 while the fan is off, and also while `framework_tool --fansetduty`
+holds the fan at a fixed duty cycle. Both are given as a share of 6200 RPM, the top of the EC's fan table, which the
+EC does not report. It comes from the EC's source code, where Framework sets the fan's `rpm_max` in
+`zephyr/program/framework/azalea/fan.dtsi` of
+[EmbeddedController](https://github.com/FrameworkComputer/EmbeddedController) (the EC of this laptop is built as its
+`lilac` variant), and requesting 10000 RPM with `framework_tool --fansetrpm` runs into the same cap. The firmware's
+ACPI fan declares 6100 RPM as its full speed in its `_FPS` table instead, and only on or off as its control state, so
+it says less than the EC does. At a full duty cycle the fan spins up to about 7300 RPM, which then shows as more than
+100%.
 
 ### GNOME extensions
 

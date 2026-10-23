@@ -9,7 +9,7 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 
-import {findApuSensorFile} from './ec.js';
+import {FAN_MAX_RPM, findApuSensorFile, findFanFiles} from './ec.js';
 import {CORE_GROUPS, REASONS, decodeMetrics, dominantReason, findMetricsFile, throttleShares} from './metrics.js';
 
 const SAMPLE_INTERVAL_S = 2;
@@ -40,7 +40,7 @@ const WARNING_PANEL_STYLE_CLASS = 'screen-recording-indicator';
 
 const Indicator = GObject.registerClass(
 class ThrottleIndicator extends PanelMenu.Button {
-    _init(iconsPath, file, apuSensorFile) {
+    _init(iconsPath, file, apuSensorFile, fanFiles) {
         super._init(0, 'CPU Throttle Indicator');
 
         this._file = file;
@@ -80,6 +80,23 @@ class ThrottleIndicator extends PanelMenu.Button {
             this._shareLabels.set(reason.key, this._addRow(reason.label));
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem('Frequency'));
         this._frequencyLabels = CORE_GROUPS.map(group => this._addRow(`${group.name} cores`));
+        if (fanFiles.length)
+            this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem('Fans'));
+        // Each row of the section shows one file, either the speed of a fan or its target.
+        this._fanRows = [];
+        for (const fan of fanFiles) {
+            // Fans are numbered only when there are several of them to tell apart.
+            const name = fanFiles.length === 1 ? 'Fan' : `Fan ${fan.number}`;
+            this._fanRows.push({kind: 'speed', file: fan.file, label: this._addRow(name), reading: false});
+            if (fan.targetFile) {
+                this._fanRows.push({
+                    kind: 'target',
+                    file: fan.targetFile,
+                    label: this._addRow(`${name} target`),
+                    reading: false,
+                });
+            }
+        }
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem('Sensors'));
         this._powerLabel = this._addRow('APU power (SPL budget)');
         this._corePowerLabel = this._addRow('CPU cores');
@@ -97,10 +114,12 @@ class ThrottleIndicator extends PanelMenu.Button {
         this._timeoutId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, SAMPLE_INTERVAL_S, () => {
             this._sample();
             this._sampleApuSensor();
+            this._sampleFans();
             return GLib.SOURCE_CONTINUE;
         });
         this._sample();
         this._sampleApuSensor();
+        this._sampleFans();
     }
 
     // PanelMenu.Button connects this to its own destroy signal, and destroys the menu and the container in it, so
@@ -225,6 +244,45 @@ class ThrottleIndicator extends PanelMenu.Button {
         this._render();
     }
 
+    _sampleFans() {
+        // Each file is read off the main loop and one read at a time, the same as the metrics table.
+        for (const row of this._fanRows) {
+            if (row.reading)
+                continue;
+            row.reading = true;
+            row.file.load_bytes_async(this._cancellable, (file, result) => {
+                row.reading = false;
+                let speed = null;
+                try {
+                    const [bytes] = file.load_bytes_finish(result);
+                    speed = Number(new TextDecoder().decode(bytes.get_data()));
+                } catch (error) {
+                    if (error.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED))
+                        return;
+                    // INVALID_DATA for the speed is the EC reporting the fan as stalled. Any other error, and any error
+                    // for the target, is about reaching the EC and says nothing about the fan, so the menu keeps
+                    // showing what it showed.
+                    if (row.kind !== 'speed' || !error.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.INVALID_DATA)) {
+                        console.warn(`CPU Throttle Indicator: cannot read ${file.get_path()}: ${error.message}`);
+                        return;
+                    }
+                }
+                if (!this._cancellable.is_cancelled())
+                    this._updateFanRow(row, speed);
+            });
+        }
+    }
+
+    /**
+     * Takes a reading of the speed of a fan or of its target, and shows it in the menu.
+     *
+     * @param {object} row - the row the reading is for, as an entry of this._fanRows
+     * @param {number|null} speed - the speed in RPM, or null when the EC reports the fan as stalled
+     */
+    _updateFanRow(row, speed) {
+        row.label.text = speed === null ? 'stalled' : `${speed} RPM, ${Math.round(100 * speed / FAN_MAX_RPM)}%`;
+    }
+
     /**
      * Takes a reading and updates the indicator and its menu from it and the reading before it.
      *
@@ -314,8 +372,8 @@ export default class CpuThrottleIndicatorExtension extends Extension {
             return;
         }
         // An embedded controller which does not report the APU temperature leaves nothing to warn about, and the
-        // indicator then does without the warning.
-        this._indicator = new Indicator(`${this.path}/icons`, file, findApuSensorFile());
+        // indicator then does without the warning. One which reports no fan leaves the menu without its fans.
+        this._indicator = new Indicator(`${this.path}/icons`, file, findApuSensorFile(), findFanFiles());
         Main.panel.addToStatusArea(this.uuid, this._indicator);
     }
 
