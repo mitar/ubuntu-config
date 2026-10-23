@@ -11,11 +11,10 @@ const APU_SENSOR_LABEL = 'cpu@4c';
  *
  * The EC does not report it, so it is taken from the EC's source code, the rpm_max of the fan which Framework sets in
  * zephyr/program/framework/azalea/fan.dtsi of https://github.com/FrameworkComputer/EmbeddedController (branch
- * fwk-lilac-27116). It is the limit for the Framework Laptop 13 with a Ryzen AI 300 series processor, whose EC is built
- * as the lilac variant of azalea, without any board code which would change the limit at runtime. Requesting 10000 RPM
- * makes the EC cap its target at this as well. The _FPS table of the firmware's ACPI fan declares 6100 RPM as the fan's
- * full speed instead, which is below what the EC runs it at, and at a full duty cycle the fan spins up to about 7300
- * RPM, past anything the EC asks of it.
+ * fwk-lilac-27116). The EC of this laptop is built as the lilac variant of azalea, without any board code which would
+ * change the limit at runtime, so this is the fastest the EC's automatic control runs the fan. Under manual control of
+ * its duty cycle the fan can spin faster, up to about 7600 RPM at a full duty cycle. The _FPS table of the firmware's
+ * ACPI fan declares 6100 RPM as the fan's full speed.
  */
 export const FAN_MAX_RPM = 6200;
 
@@ -47,9 +46,10 @@ export function findApuSensorFile() {
  * stalled, because the driver answers that with ENODATA.
  *
  * The target file of a fan holds the speed in RPM the EC's control is bringing the fan to, which is 0 while the fan is
- * off and also while the fan is under manual control of its duty cycle. The EC reports a target only for its first fan,
- * because the command for it carries no fan index. Reading the file fails with an error for any failure of that
- * command, and Gio.IOErrorEnum.INVALID_DATA there means that the EC could not answer, not that the fan is stalled.
+ * off. Under manual control of the fan's duty cycle the EC does not update the target, which then keeps the last one
+ * its automatic control set. The EC reports a target only for its first fan, because the command for it carries no fan
+ * index. Reading the file fails with an error for any failure of that command, and Gio.IOErrorEnum.INVALID_DATA there
+ * means that the EC could not answer, not that the fan is stalled.
  *
  * @returns {{number: number, file: Gio.File, targetFile: Gio.File|null}[]} the fans in the order of the EC's own
  *   numbering of them, which starts at 1, with targetFile null for a fan without a target, or an empty array when no

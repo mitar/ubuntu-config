@@ -22,17 +22,17 @@ const THRESHOLD_PERCENT = 10;
 // program drains the fast power budget for about one sample, so leaving at the first quiet sample would blink.
 const HIDE_AFTER_SAMPLES = 2;
 
-// How many readings in a row the embedded controller has to fail to report the APU temperature, counting only those
-// taken while the APU is at SENSOR_NEEDED_ABOVE_C or more, before that is shown as a fault. Under load the EC reads
-// the sensor nearly every time, but in the seconds after a load ends the APU is idle while still warm, and the EC
-// then misses several readings in a row, so this has to outlast the APU cooling down from its temperature limit.
-const SENSOR_FAILING_AFTER_SAMPLES = 15;
+// The hottest core's temperature from which a fan is expected to spin. The embedded controller runs the fan from the
+// sensors on the board only, and starts it once one of them passes about 50 C, which the board reaches some time
+// after the cores reach this.
+const FAN_NEEDED_ABOVE_C = 70;
 
-// The hottest core's temperature below which a failed reading of the APU temperature by the embedded controller is
-// not counted. The EC cannot read the sensor while the APU is in its deepest idle state, so it misses most readings
-// while the APU idles, but it also keeps the fan off below about this temperature, where a missed reading changes
-// nothing.
-const SENSOR_NEEDED_ABOVE_C = 60;
+// How many samples in a row no fan has to spin while the hottest core is at FAN_NEEDED_ABOVE_C or more before that is
+// shown as a fault. It has to outlast the board warming up to where the EC starts the fan. Starting from a cool board
+// with the fan off, the EC was measured to start the fan at most about 10 seconds after the hottest core reached
+// FAN_NEEDED_ABOVE_C, for loads from a few threads to all of them, while lighter loads warm the board enough before
+// the cores get there, or never get the cores there.
+const FAN_OFF_FAULT_AFTER_SAMPLES = 15;
 
 // The theme's red pill for a top bar indicator which needs attention, the one the shell shows while recording the
 // screen. Borrowing it keeps the warning in the theme's colors, light or dark.
@@ -50,10 +50,7 @@ class ThrottleIndicator extends PanelMenu.Button {
         this._reading = false;
         this._readingApuSensor = false;
         this._samplesUnderThreshold = 0;
-        this._apuSensorFailures = 0;
-        // The hottest core's temperature from the latest metrics table. The SMU measures it itself, so it is known
-        // even while the embedded controller cannot read its sensor.
-        this._temperatureCore = null;
+        this._samplesFanOffWhileHot = 0;
         // The reason the top bar names, which stays for HIDE_AFTER_SAMPLES after it stops holding anything back.
         this._throttle = null;
         this._icons = {
@@ -71,8 +68,8 @@ class ThrottleIndicator extends PanelMenu.Button {
         box.add_child(this._reasonLabel);
         this.add_child(box);
 
-        this._warningItem = this._addWarning('Fan control cannot read the APU temperature',
-            ['The fan ignores processor heat.']);
+        this._warningItem = this._addWarning('Fan is off while the processor is hot',
+            ['Fan control may have stopped reading its sensors.', 'Suspend and resume to make it read them again.']);
 
         this._shareLabels = new Map();
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem('Limits'));
@@ -87,7 +84,14 @@ class ThrottleIndicator extends PanelMenu.Button {
         for (const fan of fanFiles) {
             // Fans are numbered only when there are several of them to tell apart.
             const name = fanFiles.length === 1 ? 'Fan' : `Fan ${fan.number}`;
-            this._fanRows.push({kind: 'speed', file: fan.file, label: this._addRow(name), reading: false});
+            this._fanRows.push({
+                kind: 'speed',
+                file: fan.file,
+                label: this._addRow(name),
+                reading: false,
+                // Undefined until the fan has been read, and null while the EC reports the fan as stalled.
+                speed: undefined,
+            });
             if (fan.targetFile) {
                 this._fanRows.push({
                     kind: 'target',
@@ -97,6 +101,7 @@ class ThrottleIndicator extends PanelMenu.Button {
                 });
             }
         }
+        this._fanSpeedRows = this._fanRows.filter(row => row.kind === 'speed');
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem('Sensors'));
         this._powerLabel = this._addRow('APU power (SPL budget)');
         this._corePowerLabel = this._addRow('CPU cores');
@@ -213,8 +218,8 @@ class ThrottleIndicator extends PanelMenu.Button {
             } catch (error) {
                 if (error.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED))
                     return;
-                // INVALID_DATA is the EC failing to read the sensor, which is what the warning is about. Any other
-                // error is about reaching the file and says nothing about the sensor, so it changes nothing.
+                // INVALID_DATA is the EC failing to read the sensor. Any other error is about reaching the file and
+                // says nothing about the sensor, so the menu keeps showing what it showed.
                 if (!error.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.INVALID_DATA)) {
                     console.warn(`CPU Throttle Indicator: cannot read ${file.get_path()}: ${error.message}`);
                     return;
@@ -226,22 +231,12 @@ class ThrottleIndicator extends PanelMenu.Button {
     }
 
     /**
-     * Takes a reading of the APU temperature the embedded controller reports, and updates the indicator from it.
+     * Takes a reading of the APU temperature the embedded controller reports, and shows it in the menu.
      *
      * @param {number|null} temperature - the temperature in degrees Celsius, or null when the EC cannot read the sensor
      */
     _updateApuSensor(temperature) {
-        if (temperature === null) {
-            // A failure while the APU is cool is not counted, and it does not reset the count either, because a
-            // sensor which stopped working fails at any temperature and has to stay reported while the APU cools.
-            if (this._temperatureCore !== null && this._temperatureCore >= SENSOR_NEEDED_ABOVE_C)
-                this._apuSensorFailures++;
-            this._apuSensorLabel.text = 'error';
-        } else {
-            this._apuSensorFailures = 0;
-            this._apuSensorLabel.text = `${temperature.toFixed(1)} C`;
-        }
-        this._render();
+        this._apuSensorLabel.text = temperature === null ? 'error' : `${temperature.toFixed(1)} C`;
     }
 
     _sampleFans() {
@@ -280,6 +275,7 @@ class ThrottleIndicator extends PanelMenu.Button {
      * @param {number|null} speed - the speed in RPM, or null when the EC reports the fan as stalled
      */
     _updateFanRow(row, speed) {
+        row.speed = speed;
         row.label.text = speed === null ? 'stalled' : `${speed} RPM, ${Math.round(100 * speed / FAN_MAX_RPM)}%`;
     }
 
@@ -294,7 +290,21 @@ class ThrottleIndicator extends PanelMenu.Button {
         // same as saying that nothing is, so the indicator keeps showing what it showed.
         if (!metrics)
             return;
-        this._temperatureCore = metrics.temperatureCore;
+
+        // A fan which the EC reports as stalled does not spin either, while one which has not been read yet counts as
+        // spinning, so that nothing is reported before it is known.
+        const fansOff = this._fanSpeedRows.length > 0 &&
+            this._fanSpeedRows.every(row => row.speed === 0 || row.speed === null);
+        if (!fansOff) {
+            this._samplesFanOffWhileHot = 0;
+        } else if (metrics.temperatureCore >= FAN_NEEDED_ABOVE_C) {
+            this._samplesFanOffWhileHot++;
+        } else if (this._samplesFanOffWhileHot < FAN_OFF_FAULT_AFTER_SAMPLES) {
+            // A burst of load which ends before the board warms up rightly never starts the fan, so a cool sample
+            // starts the count over. Once the fault is shown, it stays until a fan spins again, because fan control
+            // which stopped reading its sensors does not recover as the processor cools down.
+            this._samplesFanOffWhileHot = 0;
+        }
 
         const previous = this._previous;
         this._previous = {metrics, timestamp};
@@ -339,11 +349,11 @@ class ThrottleIndicator extends PanelMenu.Button {
      * Shows in the top bar what currently deserves attention, and hides the indicator when nothing does.
      */
     _render() {
-        const sensorFailing = this._apuSensorFailures >= SENSOR_FAILING_AFTER_SAMPLES;
-        this._warningItem.visible = sensorFailing;
-        // Without the APU temperature the fan stays as slow as the board's temperatures let it, so the APU heats up
-        // until its temperature limit holds it back. That takes the place of whatever is holding it back right now.
-        if (sensorFailing) {
+        const fanFault = this._samplesFanOffWhileHot >= FAN_OFF_FAULT_AFTER_SAMPLES;
+        this._warningItem.visible = fanFault;
+        // Without the fan the APU heats up until its temperature limit holds it back. That takes the place of
+        // whatever is holding it back right now.
+        if (fanFault) {
             this._icon.gicon = this._icons.thermal;
             this._reasonLabel.text = 'THM';
             this.add_style_class_name(WARNING_PANEL_STYLE_CLASS);
@@ -371,8 +381,8 @@ export default class CpuThrottleIndicatorExtension extends Extension {
             console.warn(`${this.uuid}: no device publishes a metrics table this can read, not showing an indicator`);
             return;
         }
-        // An embedded controller which does not report the APU temperature leaves nothing to warn about, and the
-        // indicator then does without the warning. One which reports no fan leaves the menu without its fans.
+        // An embedded controller which does not report the APU temperature leaves the menu without it, and one which
+        // reports no fan leaves the menu without its fans and the indicator without the warning about them.
         this._indicator = new Indicator(`${this.path}/icons`, file, findApuSensorFile(), findFanFiles());
         Main.panel.addToStatusArea(this.uuid, this._indicator);
     }

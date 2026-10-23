@@ -133,25 +133,32 @@ time spent limited by each reason: the sustained power limit, the fast and slow 
 temperature limit for the cores, for the graphics and for the SoC, and the platform's PROCHOT. It needs an APU
 publishing the table in the `gpu_metrics_v3_0` layout, which Strix Point in the Ryzen AI 300 series does.
 
-The indicator also turns red and shows THM, and its menu a warning, while the embedded controller cannot read the
-APU's temperature. The EC runs the fan from its own sensors, and the only one of them which follows the APU is the one
-it reads from the APU over SB-TSI. After days of uptime the EC has been seen to stop reading its sensors, and the
-fan then stays off while the APU heats up until its temperature limit holds it back. A suspend and resume makes
-the EC read them again. The indicator checks the sensor with every sample, through `cros_ec`'s hwmon device,
-where it shows as `cpu@4c`. The EC also cannot read that sensor while the APU is in its deepest idle state, so it
-misses most readings while the APU idles. The fan is off at such temperatures anyway, so the indicator counts a
-failed reading only while the hottest core is at 60 C or more, and warns after 30 seconds of them in a row.
-
-The menu also shows the fan's speed and the target speed the EC's control is bringing it to, both as the EC reports
-them through the same hwmon device. The target is 0 while the fan is off, and also while `framework_tool --fansetduty`
-holds the fan at a fixed duty cycle. Both are given as a share of 6200 RPM, the top of the EC's fan table, which the
-EC does not report. It comes from the EC's source code, where Framework sets the fan's `rpm_max` in
+The menu also shows the fan's speed and the target speed the embedded controller (EC) is bringing it to, both as the
+EC reports them through `cros_ec`'s hwmon device. The target is 0 while the fan is off. While
+`framework_tool --fansetduty` holds the fan at a fixed duty cycle, the EC does not update the target, which then
+keeps the last one its automatic control set. Both are given as a share of 6200 RPM, the top of the EC's fan table,
+which the EC does not report. It comes from the EC's source code, where Framework sets the fan's `rpm_max` in
 `zephyr/program/framework/azalea/fan.dtsi` of
 [EmbeddedController](https://github.com/FrameworkComputer/EmbeddedController) (the EC of this laptop is built as its
-`lilac` variant), and requesting 10000 RPM with `framework_tool --fansetrpm` runs into the same cap. The firmware's
-ACPI fan declares 6100 RPM as its full speed in its `_FPS` table instead, and only on or off as its control state, so
-it says less than the EC does. At a full duty cycle the fan spins up to about 7300 RPM, which then shows as more than
-100%.
+`lilac` variant), and it is the fastest the EC's automatic control runs the fan. With `framework_tool --fansetduty`
+the fan can spin faster, up to about 7600 RPM at a full duty cycle, which shows as more than 100%. The firmware's
+ACPI fan declares 6100 RPM as its full speed in its `_FPS` table instead, and only on or off as its control state,
+so it says less than the EC does.
+
+The indicator also turns red and shows THM, and its menu a warning, while no fan spins although the processor is
+hot. Linux has no say in the fan, the EC runs it by itself from its own temperature sensors. According to the EC's
+source code, which the EC's `EC_CMD_THERMAL_GET_THRESHOLD` host command confirms, the fan follows only the three
+F75303 sensors on the board. Each of them keeps the fan off up to 50 C and above that asks for a speed which grows
+from 2100 RPM to the top of the fan table at 70 C (69 C for the one next to the APU, and 46 C to 60 C for the one
+next to the memory), and the EC runs the fan at the fastest speed any of them asks for. The fourth sensor, the APU's
+own temperature which the EC reads over SB-TSI and which shows as `cpu@4c`, asks for the fan only from 103 C, and
+the EC uses it to throttle and to shut down the APU when it overheats. After days of uptime the EC has been seen to
+stop updating its sensors, which then keep reporting the values they had, and the fan stays off while the APU heats
+up until its temperature limit holds it back. A suspend and resume makes the EC read them again. The board warms up
+after the cores do: starting from a cool board with the fan off, a working EC starts the fan at most about 10
+seconds after the hottest core reaches 70 C, and under lighter loads before the cores get there. So the indicator
+warns only once no fan has spun for 30 seconds in a row while the hottest core was at 70 C or more, and it keeps
+warning until a fan spins again.
 
 ### GNOME extensions
 
