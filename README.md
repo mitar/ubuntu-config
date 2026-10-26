@@ -167,6 +167,16 @@ seconds in a row: the readings are in whole degrees and can all stay the same fo
 but once it heats up, at least one of them changes within seconds. The warning stays until the sign which raised it
 is gone, so until a fan spins again or a board reading changes.
 
+### Windows keep their size when the screen locks
+
+GNOME Shell disables most extensions while the screen is locked, the dock among them, and enables them again after
+unlocking. The dock reserves its part of the screen only while it is enabled, so windows snapped to a side or
+maximized would grow while the screen is locked and shrink back a moment after unlocking. A terminal resizes its
+contents with the window, which garbles the screen of programs like Claude Code running in it. The Reserve Space
+extension stays enabled on the lock screen and keeps an invisible copy of every part of the screen reserved by the
+dock, the top bar or another panel, so the space left for windows does not change. The copies follow the reserved
+space a few seconds after it changes, for example when the dock is moved to another side of the screen.
+
 ### GNOME extensions
 
 Extensions are installed from extensions.gnome.org and configured by `configure-gnome-desktop.sh`, with their

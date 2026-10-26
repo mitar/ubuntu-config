@@ -1,0 +1,13 @@
+{
+  "uuid": "reserve-space@mitar.tnode.com",
+  "name": "Reserve Space",
+  "description": "Keeps the screen space reserved by the dock, the top bar and any other panel while the screen is locked, so that snapped and maximized windows keep their size when the screen locks and unlocks. The shell disables extensions such as the dock while the screen is locked, which otherwise gives the space they reserve to windows until they are enabled again.",
+  "shell-version": [
+    "50"
+  ],
+  "session-modes": [
+    "user",
+    "unlock-dialog"
+  ],
+  "url": "https://gitlab.com/mitar/ubuntu-config"
+}

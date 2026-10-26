@@ -235,9 +235,11 @@ install_remote vertical-workspaces@G-dH.github.com
 install_remote preserve-battery-health@marcosdalvarez.org
 install_local quick-settings-battery-time@mitar.tnode.com
 install_local cpu-throttle-indicator@mitar.tnode.com
+install_local reserve-space@mitar.tnode.com
 
 want_extension quick-settings-battery-time@mitar.tnode.com enabled
 want_extension cpu-throttle-indicator@mitar.tnode.com enabled
+want_extension reserve-space@mitar.tnode.com enabled
 want_extension auto-move-windows@gnome-shell-extensions.gcampax.github.com enabled
 want_extension drive-menu@gnome-shell-extensions.gcampax.github.com enabled
 want_extension ubuntu-appindicators@ubuntu.com enabled
