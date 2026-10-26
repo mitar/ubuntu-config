@@ -137,7 +137,7 @@ export default class ReserveSpaceExtension extends Extension {
             this._placeholders.pop().destroy();
         while (this._placeholders.length < rects.length) {
             const placeholder = new Placeholder({name: 'reserveSpacePlaceholder', reactive: false});
-            Main.layoutManager.addChrome(placeholder, {affectsStruts: true, affectsInputRegion: false});
+            Main.layoutManager.addChrome(placeholder, {affectsStruts: true});
             this._placeholders.push(placeholder);
         }
         rects.forEach(({x, y, width, height}, i) => {
