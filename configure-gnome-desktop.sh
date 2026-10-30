@@ -31,7 +31,7 @@
 #
 # Runs as your own user, because these settings live in your dconf and would land in root's under sudo. Installing
 # packages, the console's boot-time unit, the udev rules, the module options, and the login screen settings need
-# root, so those parts call sudo themselves and will ask for a password.
+# root, as do the rules added to AppArmor profiles, so those parts call sudo themselves and will ask for a password.
 
 set -euo pipefail
 
@@ -360,6 +360,20 @@ install_modprobe_blacklist() {
   return 0
 }
 
+# Installs rules added to an AppArmor profile from apparmor.d/local/ in this repository into the root-owned
+# /etc/apparmor.d/local through sudo, then replaces the loaded profiles of the given file in /etc/apparmor.d, which
+# includes them. The rules apply at once, also to programs already running under the profile.
+install_apparmor_local() {
+  local name=$1 profile=$2 src=$REPO_DIR/apparmor.d/local/$1 dst=/etc/apparmor.d/local/$1
+  cmp -s "$src" "$dst" && return 0
+  echo "  install $dst"
+  CHANGED=$((CHANGED+1))
+  [ "$MODE" = apply ] || return 0
+  sudo install -m 644 "$src" "$dst"
+  sudo apparmor_parser --replace "/etc/apparmor.d/$profile"
+  return 0
+}
+
 GREETER=/etc/gdm3/greeter.dconf-defaults
 
 # Sets a key in GDM's greeter settings through sudo, since the file is root owned. The key goes directly under its
@@ -522,6 +536,9 @@ set_key org.gnome.TextEditor style-variant                    "'light'"
 set_key org.gnome.meld folder-status-filters            "['new', 'modified']"
 set_key org.gnome.meld ignore-blank-lines               "true"
 set_key org.gnome.yelp show-cursor                      "true"
+# Without the added rules the AppArmor profile keeps a second Transmission from passing a magnet link or a torrent
+# file on to the one which already runs, so only links opened while Transmission is not running would be added.
+install_apparmor_local transmission-gtk transmission
 
 echo "=== file manager sidebar ==="
 # The folders in the Files sidebar are the entries of the GTK bookmarks file. xdg-user-dirs-gtk-update adds the

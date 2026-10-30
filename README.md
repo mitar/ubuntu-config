@@ -177,6 +177,14 @@ extension stays enabled on the lock screen and keeps an invisible copy of every 
 dock, the top bar or another panel, so the space left for windows does not change. The copies follow the reserved
 space a few seconds after it changes, for example when the dock is moved to another side of the screen.
 
+### Magnet links open in a running Transmission
+
+Opening a magnet link or a torrent file while Transmission already runs starts a second Transmission, which passes
+the link over the session bus to the one already running and exits. Ubuntu confines Transmission with an AppArmor
+profile which allows it to own its name on the session bus, but not these calls between two of its instances, so
+without rules added to the profile (`apparmor.d/local/transmission-gtk`) the link is lost and nothing happens. The
+missing rules are reported in [Ubuntu bug 2169433](https://bugs.launchpad.net/ubuntu/+source/transmission/+bug/2169433).
+
 ### GNOME extensions
 
 Extensions are installed from extensions.gnome.org and configured by `configure-gnome-desktop.sh`, with their

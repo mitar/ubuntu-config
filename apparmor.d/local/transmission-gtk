@@ -1,0 +1,22 @@
+# Installed by configure-gnome-desktop.sh, which overwrites edits made here.
+#
+# Rules added to the transmission-gtk profile, which the apparmor package ships in /etc/apparmor.d/transmission and
+# which includes this file.
+#
+# Transmission runs as a single instance. Opening a magnet link or a torrent file while it already runs starts a
+# second transmission-gtk, which finds the application's name on the session bus owned by the first one, asks the
+# first one for its actions (org.gtk.Actions), passes it the link to open (org.gtk.Application) and exits. The first
+# one then shows its dialog for adding the torrent. The profile allows owning the name, but not these calls between
+# the two, so the second one fails to register and exits without passing the link on, and nothing happens.
+#
+# With a configuration directory other than the default one, the name and the object path have the device and the
+# inode of the directory appended.
+#
+# The missing rules are reported in https://bugs.launchpad.net/ubuntu/+source/transmission/+bug/2169433. Once the
+# profile shipped by the apparmor package has them, this file is not needed anymore.
+
+  dbus (send, receive)
+       bus=session
+       path=/com/transmissionbt/transmission{,_*}{,/**}
+       interface={org.gtk.Application,org.gtk.Actions}
+       peer=(label=@{profile_name}),
