@@ -6,7 +6,8 @@ Reads the systemd journal, of the system and of every user, and prints:
 - the units which failed, grouped by unit and result, with when and how often, and the last lines the latest failed
   run logged, which usually say why,
 - the messages logged at priority err or more urgent, grouped by what logged them and by their text with the numbers
-  in it left out, with when and how often.
+  in it left out, with when and how often,
+- the crash reports apport wrote to /var/crash, since a crash is otherwise logged only at a lower priority.
 
 It prints nothing when there is nothing to report, so that cron mails only when there is. Each report starts right
 after the last journal entry the previous one read, so that days on which it did not run are covered by the next
@@ -14,8 +15,9 @@ report, and no entry is reported twice or left out. The position is kept as a jo
 order in which journald wrote the entries, so that it holds even when the clock jumps.
 
 Patterns in /etc/journal-digest/ignore leave out the failures and messages they match: one Python regular expression
-per line, searched for in the line the report shows, "unit (system): result" or "unit (user): result" for a failure
-and "identifier: message" for a message. Empty lines and lines starting with # are skipped.
+per line, searched for in the line the report shows: "unit (system): result" or "unit (user): result" for a failure,
+"identifier: message" for a message, and "crash of executable (package): signal" for a crash report. Empty lines and
+lines starting with # are skipped.
 
 
 Usage
@@ -30,6 +32,7 @@ Usage
 import argparse
 import collections
 import datetime
+import glob
 import json
 import os
 import re
@@ -41,6 +44,8 @@ STATE_DIR = '/var/lib/journal-digest'
 # Holds the cursor of the last journal entry the previous report read, and when that report was made.
 STATE_FILE = f'{STATE_DIR}/state.json'
 IGNORE_FILE = '/etc/journal-digest/ignore'
+CRASH_DIR = '/var/crash'
+CRASH_FIELDS = ('ProblemType', 'Date', 'ExecutablePath', 'Package', 'SignalName')
 
 # The message ID systemd logs, both as the system manager and as a user's manager, when a unit fails.
 UNIT_FAILED = 'd9b373ed55a64feb8242e02dbe79a49c'
@@ -144,10 +149,68 @@ def when(group):
     return first if first == last else f'{first} to {last}'
 
 
-def report(start, label, patterns):
+def resolve_time(value):
+    """Returns the time a specification in any form journalctl accepts, such as -7d, names, in seconds since the epoch.
+
+    Exits with an error when it cannot be resolved.
+    """
+    result = subprocess.run(['systemd-analyze', 'timestamp', '--', value], capture_output=True, text=True)
+    match = re.search(r'UNIX seconds: @([0-9.]+)', result.stdout)
+    if result.returncode != 0 or not match:
+        sys.exit(f'journal-digest: cannot read the time {value}: {result.stderr.strip()}')
+    return float(match.group(1))
+
+
+def read_crash_report(path):
+    """Returns the CRASH_FIELDS of an apport crash report which it has, as a dict.
+
+    A report which cannot be read, such as one of another user when not running as root, has none.
+    """
+    fields = {}
+    try:
+        with open(path, 'rb') as file:
+            for line in file:
+                # A field continues on the lines which start with a space, and the core dump fills most of the file
+                # with them, so they are passed over without decoding.
+                if line.startswith(b' '):
+                    continue
+                key, separator, value = line.decode(errors='replace').rstrip('\n').partition(': ')
+                if separator and key in CRASH_FIELDS:
+                    fields[key] = value
+    except OSError:
+        pass
+    return fields
+
+
+def crash_reports(since):
+    """Returns the crash reports in CRASH_DIR of crashes since a time in seconds since the epoch, oldest first, as
+    (time, path, fields) tuples.
+
+    A report counts by the crash time it records. Only files modified since then are read, because apport modifies a
+    report after writing it, when it is viewed or uploaded, but never before.
+    """
+    reports = []
+    for path in glob.glob(f'{CRASH_DIR}/*.crash'):
+        try:
+            modified = os.stat(path).st_mtime
+        except OSError:
+            continue
+        if modified < since:
+            continue
+        fields = read_crash_report(path)
+        try:
+            crashed = time.mktime(time.strptime(fields['Date'], '%a %b %d %H:%M:%S %Y'))
+        except (KeyError, ValueError):
+            crashed = modified
+        if crashed >= since:
+            reports.append((crashed, path, fields))
+    return sorted(reports)
+
+
+def report(start, label, patterns, crashes_since):
     """Prints the failures and errors logged from where the journalctl arguments in start begin to the end of the
-    journal, under a heading naming label as the start. Leaves out what the patterns match, and prints nothing when
-    nothing is left.
+    journal, and the crash reports of crashes since crashes_since, in seconds since the epoch, under a heading naming
+    label as the start. Leaves out what the patterns match, and prints nothing when nothing is left.
 
     Returns the cursor of the last entry read, or None when no entry matched.
     """
@@ -172,8 +235,23 @@ def report(start, label, patterns):
         group['last'] = entry
         group['line'] = line
 
-    if failures or errors:
+    crashes = []
+    for crashed, path, fields in crash_reports(crashes_since):
+        what = fields.get('SignalName') or fields.get('ProblemType', '')
+        line = (f'crash of {fields.get("ExecutablePath", os.path.basename(path))}'
+                f' ({fields.get("Package", "unknown package")}): {what}')
+        if not any(pattern.search(line) for pattern in patterns):
+            crashes.append((crashed, path, line))
+
+    if failures or errors or crashes:
         print(f'Since {label}:')
+    if crashes:
+        print()
+        print(f'Crash reports ({len(crashes)}):')
+        for crashed, path, line in crashes:
+            print()
+            print(f'  {line}')
+            print(f'         {datetime.datetime.fromtimestamp(crashed):%Y-%m-%d %H:%M}, {path}')
     if failures:
         print()
         print(f'Failed units ({sum(group["count"] for group in failures.values())}):')
@@ -246,7 +324,7 @@ def main():
     patterns = read_ignore_patterns(args.ignore or IGNORE_FILE, required=args.ignore is not None)
 
     if args.since:
-        report([f'--since={args.since}'], args.since, patterns)
+        report([f'--since={args.since}'], args.since, patterns, resolve_time(args.since))
         return
 
     if os.geteuid() != 0:
@@ -256,14 +334,12 @@ def main():
     # Read before the report, so that when nothing matched, the next report starts after the entry which was the newest
     # then, and still reads what was logged while this one ran.
     newest = newest_cursor()
+    previous = state.get('time') if isinstance(state.get('time'), (int, float)) else now - FIRST_REPORT_S
     if state.get('cursor'):
         start = [f'--after-cursor={state["cursor"]}']
-        label = format_time(state['time']) if isinstance(state.get('time'), (int, float)) else 'the previous report'
     else:
-        since = now - FIRST_REPORT_S
-        start = [f'--since=@{since:.6f}']
-        label = format_time(since)
-    last = report(start, label, patterns)
+        start = [f'--since=@{previous:.6f}']
+    last = report(start, format_time(previous), patterns, previous)
     sys.stdout.flush()
 
     # The position is remembered only once the report is printed, so that one which failed is made again next time.

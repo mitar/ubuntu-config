@@ -1,7 +1,8 @@
 # Installed as /etc/journal-digest/ignore by install-journal-digest.sh, which overwrites edits made there.
 #
 # Failures and errors which journal-digest leaves out of its daily report. One Python regular expression per line,
-# searched for in the line the report shows: "unit (system): result" or "unit (user): result" for a failed unit, and
-# "identifier: message" for an error. Empty lines and lines starting with # are skipped.
+# searched for in the line the report shows: "unit (system): result" or "unit (user): result" for a failed unit,
+# "identifier: message" for an error, and "crash of executable (package): signal" for a crash report. Empty lines and
+# lines starting with # are skipped.
 #
 # Try patterns out before installing them with: ./journal-digest.py --since -7d --ignore journal-digest.ignore

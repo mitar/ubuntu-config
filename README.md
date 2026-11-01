@@ -102,7 +102,8 @@ Once a day, a mail lists the units which failed and the errors logged since the 
 when there were none (`journal-digest.py`, `install-journal-digest.sh`, `cron.daily/`). It reads the systemd
 journal of the system and of every user. A failed unit is listed with the last lines its failed run logged, which
 usually say why, and errors are grouped by what logged them and their text with the numbers in it left out, so that
-one which repeats is listed once with how often and when. Known noise can be left out with patterns in
+one which repeats is listed once with how often and when. New crash reports in `/var/crash` are listed too, since
+apport writes them without logging the crash as an error. Known noise can be left out with patterns in
 `journal-digest.ignore`. `journal-digest --since -7d` can be used to get a week load of messages to determine
 patterns from. With `--ignore journal-digest.ignore`, patterns are tried out from the repository before they are
 installed.
