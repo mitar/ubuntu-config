@@ -54,6 +54,9 @@ if [ "$MODE" = apply ]; then
   step "Terminal"
   ./configure-ptyxis.sh --apply
 
+  step "Health benchmark"
+  ./install-health-benchmark.sh --apply
+
   echo
   echo "Done. Log out and back in, or reboot, so that newly installed packages and extensions are loaded."
 else
@@ -74,4 +77,7 @@ else
 
   step "Terminal"
   ./configure-ptyxis.sh
+
+  step "Health benchmark"
+  ./install-health-benchmark.sh
 fi

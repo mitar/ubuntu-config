@@ -6,7 +6,7 @@ changed to fit its user, not only its settings. On Linux the whole system is ope
 not enough, the program itself can be changed. With AI assistance, doing so has become practical even for parts
 of the system one has never looked into, like the terminal or the window manager.
 
-The configuration here is highly opinionated: it is how I like my computer. But the code is free to reuse. Take
+The configuration here is highly opinionated: it is how I like my computer. But the code is free to reuse. Use
 whatever helps and adapt it to your own liking.
 
 It targets Ubuntu 26.04 with GNOME 50 on a Framework Laptop 13 Pro.
@@ -38,7 +38,7 @@ This makes the terminal behave like every other application. The pinky key sends
 interrupts, Ctrl+R searches history), while the thumb key copies and pastes with the same shortcuts as everywhere
 else, without the usual Ctrl+Shift+C and Ctrl+Shift+V.
 
-What it takes:
+What it needs:
 
 - The keys rotated with XKB options, and GNOME's shortcuts moved to match (`configure-gnome-keys.sh`).
 - Super treated as Control inside the terminal, so that the pinky key sends control characters there
@@ -58,7 +58,7 @@ Tapping the right Super on its own opens Claude Desktop's Quick Entry, and tappi
 the overview. Held together with other keys, both stay an ordinary Super, so Ctrl+Super+L, both right of the
 space bar, locks the screen.
 
-What it takes:
+What it needs:
 
 - A third key tapped on its own, next to GNOME's overview and locate-pointer keys, which sends a configured key
   combination (`patches/mutter/`). The right Super sends XF86Launch9, which no physical key sends
@@ -84,7 +84,7 @@ Ptyxis, Ubuntu's terminal, is patched and configured (`patches/ptyxis/`, `config
 Third-party repositories are pinned by hostname, with an allowlist of the packages actually in use and a default
 deny for everything else from them, so a vendor repository cannot replace an Ubuntu package by publishing a higher
 version under the same name (`lockdown-apt-sources.sh`). Unattended upgrades are likewise tied to Ubuntu's own
-hosts, so a vendor repository cannot get its packages installed unattended by claiming to be Ubuntu's security
+hosts, so a vendor repository cannot have its packages installed unattended by claiming to be Ubuntu's security
 pocket.
 
 ### Patched packages kept up to date
@@ -101,7 +101,7 @@ package's build scripts and test suite cannot change the system.
 GNOME's Preserve Battery Health keeps the battery between 40% and 60% while the laptop is docked most of the time,
 and a quick settings toggle switches back to charging to 100% before traveling.
 
-What it takes:
+What it needs:
 
 - The kernel's charge control enabled, which it keeps disabled on Framework laptops by default
   (`modprobe.d/cros-charge-control.conf`).
@@ -161,11 +161,42 @@ the fan stays at the speed those values ask for, which is off when they stopped 
 makes the EC read them again. The indicator tells that the fan does not follow the heat from either of two signs.
 One is that no fan has spun for 30 seconds in a row while the hottest core was at 70 C or more: the board warms up
 after the cores do, but starting from a cool board with the fan off, a working EC starts the fan at most about 10
-seconds after the hottest core reaches 70 C, and under lighter loads before the cores get there. The other is that
+seconds after the hottest core reaches 70 C, and under lighter loads before the cores reach it. The other is that
 none of the board readings has changed for 2 minutes while the hottest core has been at 70 C or more for the last 30
 seconds in a row: the readings are in whole degrees and can all stay the same for minutes while the processor idles,
 but once it heats up, at least one of them changes within seconds. The warning stays until the sign which raised it
 is gone, so until a fan spins again or a board reading changes.
+
+### Cooling and performance tracked over time
+
+Every day at 04:00, if the laptop is on AC power, its screen is locked and its load is low, a measurement records
+how well it cools itself and how fast its processor is, so that both can be followed over months and years
+(`health-benchmark.py`, `install-health-benchmark.sh`, `systemd/health-benchmark.*`). Dust builds up in the fan and
+in the fins it blows through, and firmware, microcode and kernel updates, with the mitigations they bring, can make
+the processor slower without anything else showing it. A day on which the laptop is suspended, in use or busy at
+04:00 is skipped, and the measurement made the next day.
+
+A measurement holds the fan at a full duty cycle and the power profile at performance for about 25 minutes. With
+the fan at full speed at rest, the temperatures stand in for the room's, since no sensor measures it, and the fan's
+speed shows the fan's state: it falls as the fan wears, and rises as dust clogs the fins, because a blocked fan has
+less air to push. Then come 7-Zip's benchmark on all threads and on one, and perf's context switch and system call
+benchmarks, which is where kernel mitigations cost the most. A steady load follows until the heatsink has warmed
+up, which gives the thermal resistance of the cooling, the degrees the APU rises above the air inside per watt, and
+the cooldown after it gives the time constant with which the temperature falls. Both grow as dust accumulates. The
+fan runs at full speed throughout, so that dust shows in these two and not in the scores. Nothing is recorded when
+other processes used more than 1% of the CPU time during any of the phases, since that would have cost the scores
+about as much, nor when the screen is unlocked, AC power is disconnected or the laptop suspends during the
+measurement. Such a day is skipped, while a measurement which fails, for example because the EC stopped reading its
+sensors (see [Processor throttling](#processor-throttling)), leaves `health-benchmark.service` failed.
+
+7-Zip is a static build of a pinned release, verified by its checksum, so that its scores stay comparable across
+years and only the hardware, firmware, microcode and kernel can move them. Each measurement records those as well,
+in `/var/lib/health-benchmark/results.csv`, which everyone can read, and keeps the samples it read every second in
+`traces/` next to it.
+
+`health-benchmark` without arguments reports the latest measurement as a share of the best one for each value, and
+lists what changed since the measurement with the best performance. `sudo health-benchmark --run --note "..."`
+measures right away, which marks a reference point, for example before and after cleaning the fan.
 
 ### Windows keep their size when the screen locks
 
@@ -245,7 +276,13 @@ Run each script first without `--apply` to see what it would change. The general
    ./configure-ptyxis.sh --apply
    ```
 
-`./all.sh` runs steps 2 to 4 in this order, showing what each script would change, and `./all.sh --apply`
+5. Install the daily measurement of cooling and performance:
+
+   ```sh
+   ./install-health-benchmark.sh --apply
+   ```
+
+`./all.sh` runs steps 2 to 5 in this order, showing what each script would change, and `./all.sh --apply`
 applies them all, leaving logging out and back in for the end. Run it as your own user, without sudo: it calls
 sudo itself for the steps which need root, and asks for the password then.
 

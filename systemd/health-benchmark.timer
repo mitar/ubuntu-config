@@ -1,0 +1,19 @@
+# Installed by install-health-benchmark.sh, which overwrites edits made here.
+#
+# Starts health-benchmark.service once a day at 04:00, when no other scheduled job runs: e2scrub_all runs on Sundays
+# at 03:10 and finishes within seconds, cron.hourly at minute 17 is empty, anacron runs the daily cron jobs from 07:30
+# on, apt-daily-upgrade from 06:00, and logrotate and the dpkg and sysstat jobs around midnight. apt-daily, man-db,
+# fwupd-refresh, ua-timer and motd-news start at random times of the day and cannot be avoided this way.
+#
+# A day on which the laptop is suspended or off at 04:00 is skipped rather than made up later, because later the
+# laptop is likely in use.
+
+[Unit]
+Description=Measure cooling and processor performance once a day
+
+[Timer]
+OnCalendar=*-*-* 04:00:00
+Persistent=false
+
+[Install]
+WantedBy=timers.target
