@@ -1,0 +1,74 @@
+Description: Test that the PS extractor fails on a file which vanished.
+ Runs the extractor on a file which does not exist, with its MIME type given on the command
+ line, so that the PS module is asked to read it. Without
+ extractor-ps-fail-unreadable-file.patch the extractor reports success without metadata.
+ .
+ The test is in the extractor suite, which fails the package build. A test in the functional
+ suite would not do, because the package's debian/rules ignores failures of that suite.
+Author: Mitar
+Forwarded: no
+Last-Update: 2026-11-01
+--- a/tests/functional-tests/meson.build
++++ b/tests/functional-tests/meson.build
+@@ -288,6 +288,14 @@ foreach t: extractor_tests
+     suite: ['extractor'] + test_suite)
+ endforeach
+ 
++if get_option('ps')
++  test('ps-vanished-file', python,
++    args: [meson.current_source_dir() / 'test_extractor_ps_vanished.py'],
++    env: test_env,
++    protocol: test_protocol,
++    suite: ['extractor', 'office'])
++endif
++
+ foreach t: functional_tests
+   file = meson.current_source_dir() / '@0@.py'.format(t)
+   test(t, python,
+--- /dev/null
++++ b/tests/functional-tests/test_extractor_ps_vanished.py
+@@ -0,0 +1,44 @@
++"""
++Test that the PS extractor fails on a file it cannot read, as happens when the
++file vanishes after it was queued for extraction.
++"""
++
++import os
++import subprocess
++import tempfile
++import unittest as ut
++
++import configuration as cfg
++import fixtures
++
++
++class PsVanishedFileTest(ut.TestCase):
++    def test_vanished_file(self):
++        with tempfile.TemporaryDirectory(prefix="tracker-extract-test-") as tmpdir:
++            env = os.environ.copy()
++            env.update(cfg.test_environment(tmpdir))
++            # A MIME type given on the command line is used without looking
++            # at the file, so the file does not have to exist.
++            result = subprocess.run(
++                [
++                    cfg.TRACKER_EXTRACT_PATH,
++                    "--output-format",
++                    "json-ld",
++                    "--mime",
++                    "application/postscript",
++                    "--file",
++                    os.path.join(tmpdir, "vanished.ps"),
++                ],
++                env=env,
++                stdout=subprocess.PIPE,
++                stderr=subprocess.PIPE,
++                text=True,
++            )
++
++        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
++        self.assertIn("Metadata extraction failed", result.stderr)
++        self.assertIn("No such file or directory", result.stderr)
++
++
++if __name__ == "__main__":
++    fixtures.tracker_test_main()

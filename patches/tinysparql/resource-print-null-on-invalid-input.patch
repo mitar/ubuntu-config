@@ -1,0 +1,82 @@
+Description: Return NULL from TrackerResource print functions on invalid input.
+ tracker_resource_print_turtle(), tracker_resource_print_sparql_update() and
+ tracker_resource_print_jsonld() returned a string literal when given something which is not a
+ TrackerResource, although the caller owns the result and frees it. Freeing it aborted with
+ "free(): invalid pointer", which crashed the localsearch extractor. They return NULL instead,
+ like tracker_resource_print_rdf() does, and a test covers all three.
+Author: Mitar
+Forwarded: https://gitlab.gnome.org/GNOME/tinysparql/-/merge_requests/819
+Last-Update: 2026-11-01
+--- a/src/libtinysparql/tracker-resource.c
++++ b/src/libtinysparql/tracker-resource.c
+@@ -1266,7 +1266,7 @@ char *
+ tracker_resource_print_turtle (TrackerResource         *self,
+                                TrackerNamespaceManager *namespaces)
+ {
+-	g_return_val_if_fail (TRACKER_IS_RESOURCE (self), "");
++	g_return_val_if_fail (TRACKER_IS_RESOURCE (self), NULL);
+ 
+ 	if (namespaces == NULL) {
+ 		G_GNUC_BEGIN_IGNORE_DEPRECATIONS
+@@ -1500,7 +1500,7 @@ tracker_resource_print_sparql_update (Tr
+ 	TrackerResourcePrivate *priv;
+ 	GenerateSparqlData context = { 0, };
+ 
+-	g_return_val_if_fail (TRACKER_IS_RESOURCE (resource), "");
++	g_return_val_if_fail (TRACKER_IS_RESOURCE (resource), NULL);
+ 
+ 	priv = GET_PRIVATE(resource);
+ 
+@@ -1577,7 +1577,7 @@ char *
+ tracker_resource_print_jsonld (TrackerResource         *self,
+                                TrackerNamespaceManager *namespaces)
+ {
+-	g_return_val_if_fail (TRACKER_IS_RESOURCE (self), "");
++	g_return_val_if_fail (TRACKER_IS_RESOURCE (self), NULL);
+ 
+ 	if (namespaces == NULL) {
+ 		G_GNUC_BEGIN_IGNORE_DEPRECATIONS
+--- a/tests/libtinysparql/tracker-resource-test.c
++++ b/tests/libtinysparql/tracker-resource-test.c
+@@ -157,6 +157,32 @@ test_resource_get_set_pointer_validation
+ }
+ 
+ static void
++test_resource_print_invalid (void)
++{
++	char *str;
++
++	/* On a precondition failure the print functions return NULL,
++	 * which is safe to free, and not a static string.
++	 */
++	g_test_expect_message (G_LOG_DOMAIN, G_LOG_LEVEL_CRITICAL, "*TRACKER_IS_RESOURCE*");
++	str = tracker_resource_print_sparql_update (NULL, NULL, NULL);
++	g_test_assert_expected_messages ();
++	g_assert_null (str);
++
++	G_GNUC_BEGIN_IGNORE_DEPRECATIONS
++	g_test_expect_message (G_LOG_DOMAIN, G_LOG_LEVEL_CRITICAL, "*TRACKER_IS_RESOURCE*");
++	str = tracker_resource_print_turtle (NULL, NULL);
++	g_test_assert_expected_messages ();
++	g_assert_null (str);
++
++	g_test_expect_message (G_LOG_DOMAIN, G_LOG_LEVEL_CRITICAL, "*TRACKER_IS_RESOURCE*");
++	str = tracker_resource_print_jsonld (NULL, NULL);
++	g_test_assert_expected_messages ();
++	g_assert_null (str);
++	G_GNUC_END_IGNORE_DEPRECATIONS
++}
++
++static void
+ test_resource_serialization (void)
+ {
+ 	TrackerResource *res, *child, *child2, *child3, *copy;
+@@ -589,6 +615,8 @@ main (int    argc,
+ 	                 test_resource_get_set_many);
+ 	g_test_add_func ("/libtracker-sparql/tracker-resource/get_set_pointer_validation",
+ 	                 test_resource_get_set_pointer_validation);
++	g_test_add_func ("/libtracker-sparql/tracker-resource/print_invalid",
++	                 test_resource_print_invalid);
+ 	g_test_add_func ("/libtracker-sparql/tracker-resource/serialization",
+ 	                 test_resource_serialization);
+ 	g_test_add_func ("/libtracker-sparql/tracker-resource/iri-valid-chars",

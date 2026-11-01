@@ -522,6 +522,15 @@ set_key org.gnome.shell.extensions.ding start-corner                     "'top-l
 echo "=== files ==="
 set_key org.gnome.nautilus.preferences default-folder-viewer            "'list-view'"
 set_key org.gnome.nautilus.preferences fts-enabled                      "true"
+IGNORED_FILES=(
+  '*~' '*.o' '*.la' '*.lo' '*.loT' '*.in' '*.m4' '*.rej' '*.gmo' '*.orig' '*.pc' '*.omf' '*.aux' '*.tmp' '*.vmdk'
+  '*.vm*' '*.nvram' '*.part' '*.rcore' '*.lzo' 'autom4te' 'conftest' 'confstat' 'Makefile' 'SCCS' 'ltmain.sh'
+  'libtool' 'config.status' 'confdefs.h' 'configure' '#*#' '~$*.doc?' '~$*.dot?' '~$*.xls?' '~$*.xlt?' '~$*.xlam'
+  '~$*.ppt?' '~$*.pot?' '~$*.ppam' '~$*.ppsm' '~$*.ppsx' '~$*.vsd?' '~$*.vss?' '~$*.vst?' '*.directory'
+  '*.part-Frag*' '*.ytdl' '*.temp.*'
+)
+printf -v IGNORED_FILES_VALUE "'%s', " "${IGNORED_FILES[@]}"
+set_key org.freedesktop.Tracker3.Miner.Files ignored-files "[${IGNORED_FILES_VALUE%, }]"
 set_key org.gnome.nautilus.icon-view default-zoom-level               "'extra-large'"
 set_key org.gtk.Settings.FileChooser sort-column                      "'modified'"
 set_key org.gtk.Settings.FileChooser sort-order                       "'descending'"

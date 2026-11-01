@@ -1,0 +1,36 @@
+Source package: localsearch
+
+Keeps the metadata extractor from crashing on a file which vanished between being queued and
+being extracted, as the temporary files of a download do. The extractor aborted with
+"free(): invalid pointer", see https://gitlab.gnome.org/GNOME/localsearch/-/merge_requests/707,
+which proposes both changes upstream. The other half of the fix is in patches/tinysparql/.
+
+extractor-check-resource-before-printing.patch
+    The crash fix, the first commit of the merge request. When committing an extraction result
+    fails, the decorator retries the items one by one and, for an item which fails again,
+    prints its metadata as SPARQL for the error report. An item without metadata has no
+    resource, and printing the NULL resource is what crashed.
+
+extractor-ps-fail-unreadable-file.patch
+    The second commit of the merge request. The PS extractor reported a file it could not open
+    as a success without metadata, which is how a vanished file reached the code above. It now
+    fails with the error from opening the file, so the file is handled as a failed extraction.
+
+extractor-ps-fail-unreadable-file-tests.patch
+    A test for the PS extractor patch, not part of the merge request. It runs the extractor on
+    a file which does not exist, with the MIME type given on the command line. The test is in
+    the extractor suite because debian/rules ignores failures of the functional suite.
+
+The decorator patch has no test. The crash needs a file to vanish after its extraction and
+before the result is committed, which the test suite cannot arrange without depending on timing.
+Either the decorator patch or the tinysparql patch alone prevents this crash.
+
+Drop all three patches once Ubuntu ships a version which includes the merge request. If upstream
+changed the commits before merging them, compare the merged code with the patches first. The
+code they change is retry_synchronously in src/extractor/tracker-decorator.c and extract_ps,
+extract_ps_gz and tracker_extract_get_metadata in src/extractor/tracker-extract-ps.c.
+
+With the PS patch, a vanished PS file goes through tracker_decorator_info_complete_error, like a
+failed extraction of any other kind. Ubuntu bug 2168518 reports a crash on that path with
+localsearch 3.11.2 and glib 2.90, from Ubuntu 26.10. On 26.04 the path works, but after an
+upgrade check that the bug is fixed before keeping the PS patch.

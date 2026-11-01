@@ -185,6 +185,17 @@ profile which allows it to own its name on the session bus, but not these calls 
 without rules added to the profile (`apparmor.d/local/transmission-gtk`) the link is lost and nothing happens. The
 missing rules are reported in [Ubuntu bug 2169433](https://bugs.launchpad.net/ubuntu/+source/transmission/+bug/2169433).
 
+### File indexing does not crash on vanished downloads
+
+GNOME's file indexer, localsearch, extracts metadata from new files in the background. Its extractor crashed on a
+temporary file of a download which was deleted before the extractor could read it: the file was handled as an
+extraction without metadata, recording it failed, and preparing the error report freed memory it did not own.
+Ubuntu's localsearch and tinysparql are patched to handle such a file as a failed extraction and to report the
+error without crashing (`patches/localsearch/`, `patches/tinysparql/`). The fixes are proposed upstream in
+[localsearch merge request 707](https://gitlab.gnome.org/GNOME/localsearch/-/merge_requests/707) and
+[tinysparql merge request 819](https://gitlab.gnome.org/GNOME/tinysparql/-/merge_requests/819), and the patches can be
+dropped once Ubuntu ships versions which include them.
+
 ### GNOME extensions
 
 Extensions are installed from extensions.gnome.org and configured by `configure-gnome-desktop.sh`, with their

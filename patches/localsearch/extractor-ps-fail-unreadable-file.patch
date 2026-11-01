@@ -1,0 +1,87 @@
+Description: Fail PS extraction when the file cannot be read.
+ When the file could not be opened, the PS extractor logged a warning and still reported
+ success, without metadata. A file which vanished before it was extracted was then handled as
+ a successful extraction, which is how the extractor reached the crash
+ extractor-check-resource-before-printing.patch fixes. The error from g_file_read() is
+ propagated instead, so that such files are handled as failed extractions.
+Author: Mitar
+Forwarded: https://gitlab.gnome.org/GNOME/localsearch/-/merge_requests/707
+Last-Update: 2026-11-01
+--- a/src/extractor/tracker-extract-ps.c
++++ b/src/extractor/tracker-extract-ps.c
+@@ -166,22 +166,20 @@ extract_ps_from_inputstream (GInputStrea
+ }
+ 
+ static TrackerResource *
+-extract_ps (TrackerExtractInfo *info,
+-            const gchar        *uri)
++extract_ps (TrackerExtractInfo  *info,
++            const gchar         *uri,
++            GError             **error)
+ {
+ 	g_autoptr(GFile) file = NULL;
+ 	g_autoptr(GInputStream) stream = NULL;
+-	g_autoptr(GError) error = NULL;
+ 
+ 	g_debug ("Extracting PS '%s'...", uri);
+ 
+ 	file = g_file_new_for_uri (uri);
+ 
+-	stream = G_INPUT_STREAM (g_file_read (file, NULL, &error));
+-	if (stream == NULL) {
+-		g_warning ("Could't not read file %s: %s", uri, error->message);
++	stream = G_INPUT_STREAM (g_file_read (file, NULL, error));
++	if (stream == NULL)
+ 		return NULL;
+-	}
+ 
+ 	return extract_ps_from_inputstream (stream, file, info);
+ }
+@@ -189,23 +187,21 @@ extract_ps (TrackerExtractInfo *info,
+ #ifdef USING_UNZIPPSFILES
+ 
+ static TrackerResource *
+-extract_ps_gz (TrackerExtractInfo *info,
+-               const gchar        *uri)
++extract_ps_gz (TrackerExtractInfo  *info,
++               const gchar         *uri,
++               GError             **error)
+ {
+ 	g_autoptr(GFile) file = NULL;
+ 	g_autoptr(GInputStream) stream = NULL, cstream = NULL;
+ 	g_autoptr(GConverter) converter = NULL;
+-	g_autoptr(GError) error = NULL;
+ 
+ 	g_debug ("Extracting PS '%s'...", uri);
+ 
+ 	file = g_file_new_for_uri (uri);
+ 
+-	stream = G_INPUT_STREAM (g_file_read (file, NULL, &error));
+-	if (stream == NULL) {
+-		g_warning ("Could't not read file %s: %s", uri, error->message);
++	stream = G_INPUT_STREAM (g_file_read (file, NULL, error));
++	if (stream == NULL)
+ 		return NULL;
+-	}
+ 
+ 	converter = G_CONVERTER (g_zlib_decompressor_new (G_ZLIB_COMPRESSOR_FORMAT_GZIP));
+ 	cstream = g_converter_input_stream_new (stream, converter);
+@@ -230,12 +226,16 @@ tracker_extract_get_metadata (TrackerExt
+ 
+ 	if (strcmp (mimetype, "application/x-gzpostscript") == 0) {
+ #ifdef USING_UNZIPPSFILES
+-		metadata = extract_ps_gz (info, uri);
++		metadata = extract_ps_gz (info, uri, error);
++		if (!metadata)
++			return FALSE;
+ #else
+ 		metadata = NULL;
+ #endif /* USING_UNZIPPSFILES */
+ 	} else {
+-		metadata = extract_ps (info, uri);
++		metadata = extract_ps (info, uri, error);
++		if (!metadata)
++			return FALSE;
+ 	}
+ 
+ 	if (metadata) {

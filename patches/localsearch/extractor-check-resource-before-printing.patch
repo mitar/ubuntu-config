@@ -1,0 +1,37 @@
+Description: Check for a resource before printing it when a commit is retried.
+ An extractor may succeed without finding any metadata, which leaves the extract info without
+ a resource. When committing such an item failed, for example because the file vanished and
+ was removed from the database in the meantime, retry_synchronously() passed the NULL resource
+ to tracker_resource_print_sparql_update(). tinysparql returns a static empty string on that
+ precondition failure, and freeing it aborted the extractor with "free(): invalid pointer".
+ .
+ The SPARQL is printed only when there is a resource, as tracker_decorator_update() already
+ does.
+Author: Mitar
+Forwarded: https://gitlab.gnome.org/GNOME/localsearch/-/merge_requests/707
+Last-Update: 2026-11-01
+--- a/src/extractor/tracker-decorator.c
++++ b/src/extractor/tracker-decorator.c
+@@ -397,15 +397,18 @@ retry_synchronously (TrackerDecorator *d
+ 			GFile *file;
+ 
+ 			/* This is a SPARQL/ontology error, set the SPARQL query
+-			 * as the the extra information.
++			 * as the extra information. There is none when the
++			 * extractor found no metadata.
+ 			 */
+ 			file = tracker_extract_info_get_file (info);
+ 			graph = tracker_extract_info_get_graph (info);
+ 			resource = tracker_extract_info_get_resource (info);
+ 
+-			sparql = tracker_resource_print_sparql_update (resource,
+-			                                               NULL,
+-			                                               graph);
++			if (resource) {
++				sparql = tracker_resource_print_sparql_update (resource,
++				                                               NULL,
++				                                               graph);
++			}
+ 
+ 			tracker_decorator_raise_error (decorator, file,
+ 			                               error->message, sparql);
