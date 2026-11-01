@@ -57,6 +57,9 @@ if [ "$MODE" = apply ]; then
   step "Health benchmark"
   ./install-health-benchmark.sh --apply
 
+  step "Journal digest"
+  ./install-journal-digest.sh --apply
+
   echo
   echo "Done. Log out and back in, or reboot, so that newly installed packages and extensions are loaded."
 else
@@ -80,4 +83,7 @@ else
 
   step "Health benchmark"
   ./install-health-benchmark.sh
+
+  step "Journal digest"
+  ./install-journal-digest.sh
 fi

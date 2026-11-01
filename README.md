@@ -96,6 +96,17 @@ with sbuild in a throwaway chroot without network access, with build dependencie
 unshare mode needs no root even to set up the chroot, so everything runs as an unprivileged system user, and a
 package's build scripts and test suite cannot change the system.
 
+### Daily mail of failures and errors
+
+Once a day, a mail lists the units which failed and the errors logged since the previous mail, and no mail is sent
+when there were none (`journal-digest.py`, `install-journal-digest.sh`, `cron.daily/`). It reads the systemd
+journal of the system and of every user. A failed unit is listed with the last lines its failed run logged, which
+usually say why, and errors are grouped by what logged them and their text with the numbers in it left out, so that
+one which repeats is listed once with how often and when. Known noise can be left out with patterns in
+`journal-digest.ignore`. `journal-digest --since -7d` can be used to get a week load of messages to determine
+patterns from. With `--ignore journal-digest.ignore`, patterns are tried out from the repository before they are
+installed.
+
 ### Battery charge thresholds on Framework laptops
 
 GNOME's Preserve Battery Health keeps the battery between 40% and 60% while the laptop is docked most of the time,
@@ -187,7 +198,8 @@ fan runs at full speed throughout, so that dust shows in these two and not in th
 other processes used more than 1% of the CPU time during any of the phases, since that would have cost the scores
 about as much, nor when the screen is unlocked, AC power is disconnected or the laptop suspends during the
 measurement. Such a day is skipped, while a measurement which fails, for example because the EC stopped reading its
-sensors (see [Processor throttling](#processor-throttling)), leaves `health-benchmark.service` failed.
+sensors (see [Processor throttling](#processor-throttling)), leaves `health-benchmark.service` failed, which the
+[daily mail](#daily-mail-of-failures-and-errors) then reports.
 
 7-Zip is a static build of a pinned release, verified by its checksum, so that its scores stay comparable across
 years and only the hardware, firmware, microcode and kernel can move them. Each measurement records those as well,
@@ -246,8 +258,8 @@ settings in `gnome-extensions/`. Custom extensions are installed from the reposi
   itself needs, such as GNOME Shell extensions, are installed by the scripts.
 
 - Optionally a mail transport, such as `nullmailer`, which relays through your mail provider and queues mail
-  while offline, with `MAILTO` set in `/etc/anacrontab`, so that the daily rebuild can mail its reports. Without
-  one, its failures are logged to syslog only.
+  while offline, with `MAILTO` set in `/etc/anacrontab`, so that the daily rebuild and the daily digest of
+  failures and errors can mail their reports. Without one, their output is logged to syslog only.
 
 ## Applying everything
 
@@ -276,10 +288,11 @@ Run each script first without `--apply` to see what it would change. The general
    ./configure-ptyxis.sh --apply
    ```
 
-5. Install the daily measurement of cooling and performance:
+5. Install the daily measurement of cooling and performance, and the daily mail of failures and errors:
 
    ```sh
    ./install-health-benchmark.sh --apply
+   ./install-journal-digest.sh --apply
    ```
 
 `./all.sh` runs steps 2 to 5 in this order, showing what each script would change, and `./all.sh --apply`

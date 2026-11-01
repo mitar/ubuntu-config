@@ -1,0 +1,9 @@
+#!/bin/sh
+#
+# Installed as /etc/cron.daily/journal-digest by install-journal-digest.sh, which copies it so that root runs only
+# root-owned files. run-parts ignores any name containing a dot, so the name must stay extensionless.
+#
+# The digest prints nothing when no unit failed and nothing was logged as an error since the previous one, so mail
+# arrives only when something did. Where that mail goes is described in cron.daily/rebuild-patched-packages.
+
+exec /usr/local/bin/journal-digest
