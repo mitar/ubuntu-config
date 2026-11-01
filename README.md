@@ -247,12 +247,15 @@ Signal, Slack, Claude Desktop and other applications built on Electron crashed a
 systemd scope of its own, so that xdg-desktop-portal can identify it, but leaves its zygotes, GPU process and other
 helpers in the scope GNOME launched it in. Only GNOME's scopes are tied to the session, so at logout systemd stops
 the helpers while the browser process keeps running, fails to start its GPU process again, and crashes. A drop-in
-for the user service manager ties every application scope to the session, so that both scopes are stopped together,
-and the application then exits cleanly (`systemd/user/app-.scope.d/`, installed by `configure-gnome-desktop.sh`).
+for the user service manager ties every application scope to the session, so that the application's own scope is
+stopped at logout too. Stopping both scopes at once is not enough, because the helpers can still die before the
+browser process starts to shut down, so a user service stops the scopes applications created for themselves first,
+and GNOME's scopes are ordered to stop only after it. The browser process then shuts down while its helpers still
+run, and ends them itself (`systemd/user/`, installed by `configure-gnome-desktop.sh`).
 
-The cause is reported to Chromium as [issue 580525223](https://issues.chromium.org/issues/580525223), and the drop-in
-can go once that is fixed. Separately, Chromium and Electron do not learn about a logout from the portal through
-which GNOME announces it, which would let them exit before anything is stopped:
+The cause is reported to Chromium as [issue 580525223](https://issues.chromium.org/issues/580525223), and the
+drop-ins and the service can go once that is fixed. Separately, Chromium and Electron do not learn about a logout
+from the portal through which GNOME announces it, which would let them exit before anything is stopped:
 [Chromium issue 580443832](https://issues.chromium.org/issues/580443832) and
 [Electron issue 55551](https://github.com/electron/electron/issues/55551).
 
@@ -265,6 +268,18 @@ orders GDM after accounts-daemon, so that it is stopped first (`systemd/gdm.serv
 `configure-gnome-desktop.sh`). The same ordering is proposed for GDM's own unit in
 [GDM merge request 418](https://gitlab.gnome.org/GNOME/gdm/-/merge_requests/418), and the drop-in can go once Ubuntu
 ships a GDM which includes it.
+
+### The encrypted disk is not closed while in use at shutdown
+
+The installer writes the crypttab entry of the encrypted device holding the root filesystem without the option
+`x-initrd.attach`, so at every shutdown systemd tried to close the device while the root filesystem on it was still
+mounted, and `systemd-cryptsetup` failed with "Device or resource busy". The device is closed anyway in the final
+phase of the shutdown, after the root filesystem is unmounted, and with the option systemd leaves it to that phase,
+as systemd's crypttab(5) recommends for this device. `configure-gnome-desktop.sh` adds the option to the entry of
+each encrypted device below `/`, keeps the previous file as `/etc/crypttab.bak`, and rebuilds the initramfs, which
+keeps a copy of crypttab. The problem is reported as
+[Launchpad bug 2152224](https://bugs.launchpad.net/ubuntu/+source/systemd/+bug/2152224). Fedora fixed it in its
+installer with [anaconda pull request 6785](https://github.com/rhinstaller/anaconda/pull/6785).
 
 ### GNOME extensions
 

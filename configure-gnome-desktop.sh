@@ -31,8 +31,9 @@
 #
 # Runs as your own user, because these settings live in your dconf and would land in root's under sudo. Installing
 # packages, the console's boot-time unit, the udev rules, the module options, and the login screen settings need
-# root, as do the rules added to AppArmor profiles and the drop-ins for GDM's unit and for application scopes, so
-# those parts call sudo themselves and will ask for a password.
+# root, as do the rules added to AppArmor profiles, the drop-ins for GDM's unit and for application scopes, the user
+# service which stops application scopes, and the option added to /etc/crypttab, so those parts call sudo themselves
+# and will ask for a password.
 
 set -euo pipefail
 
@@ -389,6 +390,30 @@ install_dropin() {
   return 0
 }
 
+# Installs a unit of the user service manager from systemd/user/ in this repository into the root-owned
+# /etc/systemd/user through sudo, enables it for every user, and starts it in your own service manager, after a reload
+# which also applies a changed unit to the one already running.
+install_user_unit() {
+  local name=$1 src=$REPO_DIR/systemd/user/$1 dst=/etc/systemd/user/$1 touched=no
+  if ! cmp -s "$src" "$dst"; then
+    echo "  install $dst"
+    CHANGED=$((CHANGED+1))
+    touched=yes
+    if [ "$MODE" = apply ]; then
+      sudo install -m 644 "$src" "$dst"
+      systemctl --user daemon-reload
+    fi
+  fi
+  if ! systemctl --global is-enabled --quiet "$name" 2>/dev/null; then
+    echo "  enable $name for every user"
+    CHANGED=$((CHANGED+1))
+    touched=yes
+    [ "$MODE" = apply ] && sudo systemctl --global enable --quiet "$name"
+  fi
+  [ "$touched" = yes ] && [ "$MODE" = apply ] && systemctl --user start "$name"
+  return 0
+}
+
 # Installs a drop-in for units of the user service manager from systemd/user/ in this repository into the root-owned
 # /etc/systemd/user through sudo, where it applies to every user, then has your service manager reload, which applies
 # it also to the units already running.
@@ -400,6 +425,57 @@ install_user_dropin() {
   [ "$MODE" = apply ] || return 0
   sudo install -D -m 644 "$src" "$dst"
   systemctl --user daemon-reload
+  return 0
+}
+
+# Gives the crypttab entries of the encrypted devices which hold the root filesystem the option x-initrd.attach, through
+# sudo, keeping the previous file as /etc/crypttab.bak. Then has systemd regenerate the units of these devices and
+# rebuilds the initramfs, which keeps a copy of crypttab. Only the options field of such an entry changes, and an
+# entry which does not have the three or four fields expected is left as it is, with a warning.
+crypttab_attach_root_in_initrd() {
+  local names report new state name old options
+  # lsblk lists the devices below the root filesystem's, the encrypted ones under the names crypttab gives them. A
+  # filesystem on a btrfs subvolume names its device with the subvolume appended in brackets.
+  names=$(lsblk -r -n -s -o NAME,TYPE "$(findmnt -n -o SOURCE / | sed 's/\[.*//')" 2>/dev/null |
+            awk '$2 == "crypt" {print $1}') || true
+  [ -n "$names" ] && [ -r /etc/crypttab ] || return 0
+  report=$(mktemp)
+  new=$(awk -v names="$names" '
+    BEGIN { n = split(names, list, "\n"); for (i = 1; i <= n; i++) if (list[i] != "") want[list[i]] = 1 }
+    /^[[:space:]]*(#|$)/ { print; next }
+    $1 in want {
+      seen[$1] = 1
+      if (NF == 4 && $4 ~ /(^|,)x-initrd\.attach(,|$)/) { print; next }
+      if (NF == 3 || NF == 4) {
+        options = (NF == 4 ? $4 "," : "") "x-initrd.attach"
+        print "changed " $1 " " (NF == 4 ? $4 : "(none)") " " options > "/dev/stderr"
+        print $1, $2, $3, options
+        next
+      }
+      print "unrecognized " $1 > "/dev/stderr"
+    }
+    { print }
+    END { for (name in want) if (!(name in seen)) print "missing " name > "/dev/stderr" }' /etc/crypttab 2>"$report")
+  while read -r state name old options; do
+    case $state in
+      changed)
+        echo "  /etc/crypttab $name: options $old -> $options"
+        CHANGED=$((CHANGED+1)) ;;
+      unrecognized)
+        echo "  /etc/crypttab $name: not in the expected form, left as it is" ;;
+      missing)
+        echo "  /etc/crypttab has no entry for $name, which holds the root filesystem" ;;
+    esac
+  done < "$report"
+  rm -f "$report"
+  [ "$new" != "$(cat /etc/crypttab)" ] || return 0
+  [ "$MODE" = apply ] || return 0
+  sudo cp -p /etc/crypttab /etc/crypttab.bak
+  printf '%s\n' "$new" | sudo tee /etc/crypttab.new >/dev/null
+  sudo chmod --reference=/etc/crypttab /etc/crypttab.new
+  sudo mv /etc/crypttab.new /etc/crypttab
+  sudo systemctl daemon-reload
+  sudo update-initramfs -u
   return 0
 }
 
@@ -467,6 +543,13 @@ install_modprobe_blacklist snd-acp-legacy-mach.conf snd_acp_legacy_mach
 if [ "$MODE" = apply ] && [ "$CHANGED" -gt "$MIC_CHANGED" ]; then
   systemctl --user restart wireplumber
 fi
+
+echo "=== disk encryption ==="
+# Without the option, systemd tries to close the encrypted device holding the root filesystem during the regular
+# shutdown, while the root filesystem on it is still mounted, which fails at every shutdown. With it, the device is
+# closed after the root filesystem is unmounted, as systemd's crypttab(5) recommends for that device. The installer
+# does not add it: https://bugs.launchpad.net/ubuntu/+source/systemd/+bug/2152224
+crypttab_attach_root_in_initrd
 
 echo "=== bell and sound ==="
 set_key org.gnome.desktop.wm.preferences audible-bell                     "false"
@@ -579,8 +662,11 @@ set_key org.gnome.yelp show-cursor                      "true"
 # Without the added rules the AppArmor profile keeps a second Transmission from passing a magnet link or a torrent
 # file on to the one which already runs, so only links opened while Transmission is not running would be added.
 install_apparmor_local transmission-gtk transmission
-# Chromium and the Electron applications built on it otherwise crash at every logout and shutdown, see the drop-in.
+# Chromium and the Electron applications built on it otherwise crash at every logout and shutdown, see the drop-ins
+# and the service.
 install_user_dropin app-.scope.d/50-graphical-session.conf
+install_user_dropin app-gnome-.scope.d/50-after-application-scopes.conf
+install_user_unit stop-application-scopes.service
 
 echo "=== file manager sidebar ==="
 # The folders in the Files sidebar are the entries of the GTK bookmarks file. xdg-user-dirs-gtk-update adds the
