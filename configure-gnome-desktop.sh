@@ -31,8 +31,8 @@
 #
 # Runs as your own user, because these settings live in your dconf and would land in root's under sudo. Installing
 # packages, the console's boot-time unit, the udev rules, the module options, and the login screen settings need
-# root, as do the rules added to AppArmor profiles and the drop-in for application scopes, so those parts call sudo
-# themselves and will ask for a password.
+# root, as do the rules added to AppArmor profiles and the drop-ins for GDM's unit and for application scopes, so
+# those parts call sudo themselves and will ask for a password.
 
 set -euo pipefail
 
@@ -375,6 +375,20 @@ install_apparmor_local() {
   return 0
 }
 
+# Installs a drop-in for a system unit from systemd/ in this repository into the root-owned /etc/systemd/system through
+# sudo, then has systemd reload. The unit is not restarted, so a changed ordering applies from the next time the unit
+# is started or stopped.
+install_dropin() {
+  local path=$1 src=$REPO_DIR/systemd/$1 dst=/etc/systemd/system/$1
+  cmp -s "$src" "$dst" && return 0
+  echo "  install $dst"
+  CHANGED=$((CHANGED+1))
+  [ "$MODE" = apply ] || return 0
+  sudo install -D -m 644 "$src" "$dst"
+  sudo systemctl daemon-reload
+  return 0
+}
+
 # Installs a drop-in for units of the user service manager from systemd/user/ in this repository into the root-owned
 # /etc/systemd/user through sudo, where it applies to every user, then has your service manager reload, which applies
 # it also to the units already running.
@@ -470,6 +484,8 @@ greeter_set org/gnome/login-screen logo                   "''"
 if [ "$GREETER_TOUCHED" = yes ]; then
   sudo systemctl reload gdm
 fi
+# Without it GDM fails at every shutdown, see the drop-in.
+install_dropin gdm.service.d/50-after-accounts-daemon.conf
 
 echo "=== workspaces and windows ==="
 set_key org.gnome.mutter dynamic-workspaces               "false"

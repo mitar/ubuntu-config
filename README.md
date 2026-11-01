@@ -256,6 +256,16 @@ which GNOME announces it, which would let them exit before anything is stopped:
 [Chromium issue 580443832](https://issues.chromium.org/issues/580443832) and
 [Electron issue 55551](https://github.com/electron/electron/issues/55551).
 
+### GDM does not fail at shutdown
+
+GDM lists the users for the login screen through accountsservice, but its unit is not ordered relative to
+accounts-daemon, so at shutdown systemd stopped both at once. When accounts-daemon was gone first, GDM logged "Failed
+to list cached users" and exited with status 1, which left `gdm.service` failed at almost every shutdown. A drop-in
+orders GDM after accounts-daemon, so that it is stopped first (`systemd/gdm.service.d/`, installed by
+`configure-gnome-desktop.sh`). The same ordering is proposed for GDM's own unit in
+[GDM merge request 418](https://gitlab.gnome.org/GNOME/gdm/-/merge_requests/418), and the drop-in can go once Ubuntu
+ships a GDM which includes it.
+
 ### GNOME extensions
 
 Extensions are installed from extensions.gnome.org and configured by `configure-gnome-desktop.sh`, with their
