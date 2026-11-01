@@ -221,6 +221,16 @@ extension stays enabled on the lock screen and keeps an invisible copy of every 
 dock, the top bar or another panel, so the space left for windows does not change. The copies follow the reserved
 space a few seconds after it changes, for example when the dock is moved to another side of the screen.
 
+### Signal and Slack open where they were placed
+
+Signal and Slack start at login on their own workspace and in their own place on the screen. On Wayland a window
+cannot tell GNOME where it should be, and Electron does not use the session management protocol through which GNOME
+could remember that for it, so GNOME places their windows anew at every start. The Auto Move Windows extension moves
+them to their workspace, and the Smart Auto Move extension then restores their monitor, position and size, recorded
+in its settings (`gnome-extensions/smart-auto-move.dconf`). Positions are kept per monitor, by the name of its
+connector, and are recorded for the laptop's own screen, where the windows also open while an external monitor is
+connected.
+
 ### Magnet links open in a running Transmission
 
 Opening a magnet link or a torrent file while Transmission already runs starts a second Transmission, which passes

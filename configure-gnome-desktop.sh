@@ -235,6 +235,7 @@ install_remote custom-hot-corners-extended@G-dH.github.com
 install_remote just-perfection-desktop@just-perfection
 install_remote vertical-workspaces@G-dH.github.com
 install_remote preserve-battery-health@marcosdalvarez.org
+install_remote smart-auto-move@khimaros.com
 install_local quick-settings-battery-time@mitar.tnode.com
 install_local cpu-throttle-indicator@mitar.tnode.com
 install_local reserve-space@mitar.tnode.com
@@ -255,6 +256,16 @@ extension_settings custom-hot-corners-extended
 extension_settings just-perfection
 extension_settings vertical-workspaces
 extension_settings preserve-battery-health
+# Smart Auto Move restores the monitor, position and size of Signal and Slack, while auto-move-windows keeps choosing
+# their workspace, so its overrides restore only those properties. Each of the two has a single main window, which is
+# matched by its window class alone, with a threshold of 0.0, whatever its title. The positions are part of the
+# settings and frozen (freeze-saves), so moving a window does not change them. max-unseen-age is 0, because otherwise
+# the extension drops saved windows not seen for a week whenever it is enabled at login. config-version is set,
+# because at its first enable the extension clears saved windows when that is older than its own format, so a newer
+# version of the extension which raises it requires the positions to be recorded again. On a new installation the
+# extension runs with its defaults until these settings are written, and should it save its own state after that,
+# the next run of this script writes the positions again.
+extension_settings smart-auto-move
 
 WHOOPSIE=(--system com.ubuntu.WhoopsiePreferences /com/ubuntu/WhoopsiePreferences com.ubuntu.WhoopsiePreferences)
 

@@ -1,0 +1,8 @@
+[/]
+config-version=37
+freeze-saves=true
+generic-title-extended-wait=3000
+max-unseen-age=0
+overrides='{"signal":[{"action":"RESTORE","threshold":0.0,"match_properties":["monitor","maximized","frame_rect"]}],"slack":[{"action":"RESTORE","threshold":0.0,"match_properties":["monitor","maximized","frame_rect"]}]}'
+saved-windows='[{"occupied":null,"props":{"title":"Signal","wm_class":"signal","configs":[{"connector":"eDP-1","workspace":1,"minimized":false,"maximized":0,"relative_rect":{"x":1164,"y":660,"width":972,"height":738}}],"connectorPreference":["eDP-1"]},"seen":1793574967862},{"occupied":null,"props":{"title":"Slack","wm_class":"slack","configs":[{"connector":"eDP-1","workspace":1,"minimized":false,"maximized":0,"relative_rect":{"x":83,"y":639,"width":1060,"height":789}}],"connectorPreference":["eDP-1"]},"seen":1793574967861}]'
+sync-mode='IGNORE'
