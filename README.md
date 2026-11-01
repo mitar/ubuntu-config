@@ -240,6 +240,22 @@ error without crashing (`patches/localsearch/`, `patches/tinysparql/`). The fixe
 [tinysparql merge request 819](https://gitlab.gnome.org/GNOME/tinysparql/-/merge_requests/819), and the patches can be
 dropped once Ubuntu ships versions which include them.
 
+### Chromium and Electron applications do not crash at logout
+
+Signal, Slack, Claude Desktop and other applications built on Electron crashed at every logout and shutdown with
+"GPU process isn't usable. Goodbye.", and Chromium itself does the same. Chromium moves its browser process into a
+systemd scope of its own, so that xdg-desktop-portal can identify it, but leaves its zygotes, GPU process and other
+helpers in the scope GNOME launched it in. Only GNOME's scopes are tied to the session, so at logout systemd stops
+the helpers while the browser process keeps running, fails to start its GPU process again, and crashes. A drop-in
+for the user service manager ties every application scope to the session, so that both scopes are stopped together,
+and the application then exits cleanly (`systemd/user/app-.scope.d/`, installed by `configure-gnome-desktop.sh`).
+
+The cause is reported to Chromium as [issue 580525223](https://issues.chromium.org/issues/580525223), and the drop-in
+can go once that is fixed. Separately, Chromium and Electron do not learn about a logout from the portal through
+which GNOME announces it, which would let them exit before anything is stopped:
+[Chromium issue 580443832](https://issues.chromium.org/issues/580443832) and
+[Electron issue 55551](https://github.com/electron/electron/issues/55551).
+
 ### GNOME extensions
 
 Extensions are installed from extensions.gnome.org and configured by `configure-gnome-desktop.sh`, with their

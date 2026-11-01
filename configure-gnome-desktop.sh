@@ -31,7 +31,8 @@
 #
 # Runs as your own user, because these settings live in your dconf and would land in root's under sudo. Installing
 # packages, the console's boot-time unit, the udev rules, the module options, and the login screen settings need
-# root, as do the rules added to AppArmor profiles, so those parts call sudo themselves and will ask for a password.
+# root, as do the rules added to AppArmor profiles and the drop-in for application scopes, so those parts call sudo
+# themselves and will ask for a password.
 
 set -euo pipefail
 
@@ -374,6 +375,20 @@ install_apparmor_local() {
   return 0
 }
 
+# Installs a drop-in for units of the user service manager from systemd/user/ in this repository into the root-owned
+# /etc/systemd/user through sudo, where it applies to every user, then has your service manager reload, which applies
+# it also to the units already running.
+install_user_dropin() {
+  local path=$1 src=$REPO_DIR/systemd/user/$1 dst=/etc/systemd/user/$1
+  cmp -s "$src" "$dst" && return 0
+  echo "  install $dst"
+  CHANGED=$((CHANGED+1))
+  [ "$MODE" = apply ] || return 0
+  sudo install -D -m 644 "$src" "$dst"
+  systemctl --user daemon-reload
+  return 0
+}
+
 GREETER=/etc/gdm3/greeter.dconf-defaults
 
 # Sets a key in GDM's greeter settings through sudo, since the file is root owned. The key goes directly under its
@@ -548,6 +563,8 @@ set_key org.gnome.yelp show-cursor                      "true"
 # Without the added rules the AppArmor profile keeps a second Transmission from passing a magnet link or a torrent
 # file on to the one which already runs, so only links opened while Transmission is not running would be added.
 install_apparmor_local transmission-gtk transmission
+# Chromium and the Electron applications built on it otherwise crash at every logout and shutdown, see the drop-in.
+install_user_dropin app-.scope.d/50-graphical-session.conf
 
 echo "=== file manager sidebar ==="
 # The folders in the Files sidebar are the entries of the GTK bookmarks file. xdg-user-dirs-gtk-update adds the
