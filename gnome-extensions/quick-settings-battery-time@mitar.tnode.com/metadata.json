@@ -5,5 +5,9 @@
   "shell-version": [
     "50"
   ],
+  "session-modes": [
+    "user",
+    "unlock-dialog"
+  ],
   "url": "https://gitlab.com/mitar/ubuntu-config"
 }

@@ -119,7 +119,8 @@ What it needs:
   (`modprobe.d/cros-charge-control.conf`).
 - The thresholds for UPower, which applies them for Preserve Battery Health (`udev/90-battery-charge-limit.rules`).
 - The Preserve Battery Health extension for the quick settings toggle (`configure-gnome-desktop.sh`).
-- The estimated time until the battery is empty or full, shown under the battery percentage in quick settings.
+- The estimated time until the battery is empty or full, shown under the battery percentage in quick settings, also
+  on the lock screen.
 - The firmware's own charge limit at 99%[^charge-limit] and Battery Extender disabled, in the BIOS.
 
 ### Hardware tweaks
