@@ -2,13 +2,10 @@ Source package: firefox, from the Mozilla Team PPA (https://launchpad.net/~mozil
 
 Ubuntu's own firefox package only installs the snap, and Mozilla's APT repository publishes no source
 (requested in https://bugzilla.mozilla.org/show_bug.cgi?id=2087959), so Firefox comes from the Mozilla Team
-PPA, run by Ubuntu's Mozilla team, which builds Mozilla's release source with Ubuntu's packaging. Its source
-has to be enabled with the binaries:
-
-  sudo add-apt-repository --enable-source ppa:mozillateam/ppa
-
-source-from makes this script rebuild the PPA's source rather than Ubuntu's, and lockdown-apt-sources.sh pins
-firefox to the PPA, below the local repository, so the rebuilt package is what is installed.
+PPA, run by Ubuntu's Mozilla team, which builds Mozilla's release source with Ubuntu's packaging.
+lockdown-apt-sources.sh configures the PPA with its source enabled (sources.list.d/ of this repository) and pins
+firefox to it, below the local repository, so the rebuilt package is what is installed. source-from makes this
+script rebuild the PPA's source rather than Ubuntu's.
 
 The PPA's packaging differs from Mozilla's own build mainly in that it disables the wasm sandboxed libraries,
 which wasm-sandboxed-libraries.patch turns back on, in shipping an AppArmor profile, which

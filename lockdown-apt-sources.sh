@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 #
-# Lock down third-party APT repositories so they cannot take over Ubuntu package names.
+# Configure the third-party APT repositories from this repository, and lock them down so they cannot take over
+# Ubuntu package names.
 #
 # Each third-party origin gets an allowlist of the packages actually in use, followed by a default-deny for
 # everything else from that origin. A denied version is never installable whatever its version number, which is
@@ -11,8 +12,23 @@
 # Usage
 # -----
 #   ./lockdown-apt-sources.sh               show what would change and verify it, write nothing (default)
-#   sudo ./lockdown-apt-sources.sh --apply  verify, then write the config, refresh apt and audit, unless nothing would change
+#   sudo ./lockdown-apt-sources.sh --apply  install the sources, verify, then write the config, refresh apt and audit,
+#                                           unless nothing would change
 #   ./lockdown-apt-sources.sh --audit       report what the allowlist does not cover
+#
+#
+# Sources
+# -------
+# Every third-party repository is configured by a deb822 file in sources.list.d/ of this repository, which --apply
+# installs into /etc/apt/sources.list.d. Each file embeds the repository's signing key in Signed-By, so APT trusts
+# that key for that repository only, and its comment names the key's fingerprint. Files and keys these replace are
+# moved into the backup directory, see REPLACED. Ubuntu's own sources are left to Ubuntu, and ProtonVPN's to Proton's
+# protonvpn-stable-release package, which --apply installs when it is missing, see PROTON_RELEASE_URL. The dry-run
+# and --apply list any other source file, which something outside this repository added.
+#
+# A vendor's new signing key therefore does not arrive by itself: apt update fails for that repository until the
+# key in its file here is replaced and --apply runs again. Claude Desktop and VS Code do not add a source of their
+# own while one for their repository exists, and Slack's cron job is kept from adding one by /etc/default/slack.
 #
 #
 # How the pins work
@@ -63,9 +79,11 @@
 #
 # Adding a new repository
 # -----------------------
-#   1. Add the source as the vendor instructs and run apt update. Some vendors ship the source inside a bootstrap
-#      .deb (Proton, Slack), so installing that .deb is what configures the repository, and the .deb itself is
-#      redundant afterwards.
+#   1. Add a deb822 file for it to sources.list.d/ in this repository, by copying an existing one: the vendor's URI,
+#      suite and components, and its key, verified against the fingerprint the vendor publishes, armored and with
+#      every line indented by one space and empty lines written as " .". gpg --show-keys prints the fingerprint.
+#      Run --apply, which installs the file and runs apt update. If the vendor's package or script adds a source of
+#      its own as well, add what it adds to REPLACED and make sure it does not come back.
 #   2. Run --audit. A new origin shows every package allowed (N / N), because nothing pins it yet and everything
 #      sits at the default priority of 500. That is the signal that it is unprotected.
 #   3. Copy an existing block in generate(), an allow stanza followed by "Package: *" at -1, and place it before
@@ -109,6 +127,37 @@ ${distro_id}:${distro_codename}-security               *.ubuntu.com
 ${distro_id}ESMApps:${distro_codename}-apps-security   esm.ubuntu.com
 ${distro_id}ESM:${distro_codename}-infra-security      esm.ubuntu.com
 '
+REPO_DIR=$(dirname "$(readlink -f "$0")")
+# The sources of the third-party repositories: deb822 files kept in this repository, each with its signing key
+# embedded, installed into /etc/apt/sources.list.d. Ubuntu's own sources, ubuntu.sources and the ESM ones, are left
+# to Ubuntu, local.list to install-rebuild-patched-packages.sh, and protonvpn-stable.sources to Proton's package.
+SOURCES_SRC=$REPO_DIR/sources.list.d
+SOURCES_DEST=/etc/apt/sources.list.d
+# What those sources replace: the files the repositories were configured with before, and the keys these named.
+# Two of the keys sat in /etc/apt/trusted.gpg.d, where APT trusts a key for every repository. Each is moved into
+# the backup directory. claude-desktop and code write their keys under /usr/share/keyrings again at every upgrade,
+# so those two are left alone.
+REPLACED='
+/etc/apt/sources.list.d/claude-desktop.list
+/etc/apt/sources.list.d/mozilla.list
+/etc/apt/sources.list.d/naps2.list
+/etc/apt/sources.list.d/slack.list
+/etc/apt/trusted.gpg.d/packagecloud.gpg
+/etc/apt/trusted.gpg.d/slack-desktop.gpg
+/etc/apt/keyrings/packages.mozilla.org.asc
+/etc/apt/keyrings/naps2.gpg
+/usr/share/keyrings/nodesource.gpg
+/usr/share/keyrings/signal-desktop-keyring.gpg
+'
+# Read by the daily cron job of slack-desktop, which otherwise adds a slack.list of its own and puts Slack's key
+# into /etc/apt/trusted.gpg.d. No package owns the file.
+SLACK_DEFAULTS=/etc/default/slack
+# ProtonVPN's repository is configured by Proton's protonvpn-stable-release package, whose protonvpn-stable.sources
+# is a conffile, so a file from this repository in its place would make dpkg ask at every upgrade of that package.
+# Once installed, the package updates itself from that repository, so only a missing one is installed, from this
+# exact file. When Proton removes it, take the newer one's path and SHA256 from that repository's Packages index.
+PROTON_RELEASE_URL=https://repo.protonvpn.com/debian/dists/stable/main/binary-all/protonvpn-stable-release_1.0.10_all.deb
+PROTON_RELEASE_SHA256=c8a9fffb4ebdd63db08ce7f11c9b0ac394064ae6a210feb9ab63a0f7d8d060a7
 
 MODE=dry-run
 case "${1:-}" in
@@ -563,6 +612,104 @@ print("\n".join("   %-34s %-24s also in %s" % r for r in sorted(shadowed)) or " 
 PY_EOF
 }
 
+# Emit /etc/default/slack on stdout.
+slack_defaults() {
+cat <<'SLACK_EOF'
+# Written by lockdown-apt-sources.sh, which overwrites edits made here. slack.sources configures Slack's repository,
+# with its key trusted for that repository only, so the daily cron job of slack-desktop must neither add a source
+# of its own nor put the key into /etc/apt/trusted.gpg.d.
+repo_add_once="false"
+repo_reenable_on_distupgrade="false"
+SLACK_EOF
+}
+
+proton_release_installed() {
+  dpkg-query -W -f='${Status}' protonvpn-stable-release 2>/dev/null | grep -q 'ok installed'
+}
+
+# Print one line for each change the sources from this repository make, and fail when there is none.
+sources_changes() {
+  local src dst f none=true
+  for src in "$SOURCES_SRC"/*.sources; do
+    dst=$SOURCES_DEST/$(basename "$src")
+    if [ ! -e "$dst" ]; then
+      echo "install $dst"; none=false
+    elif ! cmp -s "$src" "$dst"; then
+      echo "replace $dst"; none=false
+    fi
+  done
+  for f in $REPLACED; do
+    if [ -e "$f" ]; then
+      echo "move $f into the backup directory"; none=false
+    fi
+  done
+  if ! slack_defaults | cmp -s - "$SLACK_DEFAULTS"; then
+    echo "write $SLACK_DEFAULTS"; none=false
+  fi
+  if ! proton_release_installed; then
+    echo "install protonvpn-stable-release from $PROTON_RELEASE_URL"; none=false
+  fi
+  [ "$none" = false ]
+}
+
+# Make the changes sources_changes lists. What is replaced or overwritten is copied into $BACKUP first.
+sources_apply() {
+  local src dst f tmpdir
+  mkdir -p "$BACKUP"
+  cp -a "$SOURCES_DEST" "$BACKUP/"
+  if [ -e "$SLACK_DEFAULTS" ]; then
+    cp -a "$SLACK_DEFAULTS" "$BACKUP/"
+  fi
+  for src in "$SOURCES_SRC"/*.sources; do
+    dst=$SOURCES_DEST/$(basename "$src")
+    if ! cmp -s "$src" "$dst"; then
+      install -o root -g root -m 0644 "$src" "$dst"
+      echo "installed $dst"
+    fi
+  done
+  for f in $REPLACED; do
+    if [ -e "$f" ]; then
+      mkdir -p "$BACKUP/replaced$(dirname "$f")"
+      mv "$f" "$BACKUP/replaced$f"
+      echo "moved $f to $BACKUP/replaced$f"
+    fi
+  done
+  if ! slack_defaults | cmp -s - "$SLACK_DEFAULTS"; then
+    slack_defaults > "$SLACK_DEFAULTS"
+    chmod 0644 "$SLACK_DEFAULTS"
+    echo "wrote $SLACK_DEFAULTS"
+  fi
+  if ! proton_release_installed; then
+    tmpdir=$(mktemp -d)
+    # apt-helper checks the hash before anything is installed. It downloads as root, as _apt cannot write into the
+    # temporary directory.
+    /usr/lib/apt/apt-helper -o APT::Sandbox::User=root download-file "$PROTON_RELEASE_URL" \
+      "$tmpdir/protonvpn-stable-release.deb" "SHA256:$PROTON_RELEASE_SHA256"
+    dpkg -i "$tmpdir/protonvpn-stable-release.deb"
+    rm -rf "$tmpdir"
+  fi
+}
+
+# List the source files in /etc/apt/sources.list.d which come from neither this repository nor Ubuntu, and which
+# this script does not replace. Something else added them, so they are not under this repository's control.
+other_sources() {
+  local f name found=false
+  for f in "$SOURCES_DEST"/*.list "$SOURCES_DEST"/*.sources; do
+    [ -e "$f" ] || continue
+    name=$(basename "$f")
+    [ -e "$SOURCES_SRC/$name" ] && continue
+    case "$name" in
+      ubuntu.sources|ubuntu-esm-*.sources|local.list|protonvpn-stable.sources) continue ;;
+    esac
+    case " $(echo $REPLACED) " in
+      *" $f "*) continue ;;
+    esac
+    echo "   $f"
+    found=true
+  done
+  [ "$found" = true ] || echo "   none"
+}
+
 case "$MODE" in
   audit)
     audit
@@ -573,6 +720,18 @@ case "$MODE" in
     build_candidate "$tmp"
     generate_uu > "$uu"
 
+    echo "=== sources, from $SOURCES_SRC ==="
+    sources_pending=false
+    if changes=$(sources_changes); then
+      sources_pending=true
+      echo "$changes" | sed 's/^/   would /'
+    else
+      echo "   (no change)"
+    fi
+    echo
+    echo "=== other sources in $SOURCES_DEST, from neither this repository nor Ubuntu ==="
+    other_sources
+    echo
     echo "=== would write $PREF_DEST ($(grep -c '^Package:' "$tmp/$PREF_NAME") rules) ==="
     if [ -e "$PREF_DEST" ]; then
       diff -u "$PREF_DEST" "$tmp/$PREF_NAME" && echo "   (no change)"
@@ -589,6 +748,10 @@ case "$MODE" in
     scan_conflicts
     echo
     echo "=== verification against the candidate configuration ==="
+    if [ "$sources_pending" = true ]; then
+      echo "   (with the sources installed now: a package from a repository the sources above add fails its check"
+      echo "   until --apply has added the repository)"
+    fi
     verify "$tmp"
     echo
     echo "=== would write $UU_DEST ==="
@@ -607,6 +770,20 @@ case "$MODE" in
   apply)
     [ "$(id -u)" -eq 0 ] || { echo "--apply needs root, re-run with sudo" >&2; exit 1; }
 
+    # The sources come first, so that CHECKS for a repository they add can be satisfied. A repository whose key
+    # does not verify fails apt-get update, which stops here before any pin is written.
+    sources_updated=false
+    if changes=$(sources_changes); then
+      echo "=== sources ==="
+      sources_apply
+      apt-get update -qq
+      sources_updated=true
+      echo
+    fi
+    echo "=== other sources in $SOURCES_DEST, from neither this repository nor Ubuntu ==="
+    other_sources
+    echo
+
     tmp=$(mktemp -d); uu=$(mktemp); trap 'rm -rf "$tmp" "$uu"' EXIT
     build_candidate "$tmp"
     generate_uu > "$uu"
@@ -615,10 +792,13 @@ case "$MODE" in
       echo
       echo "refusing to write: the generated config does not satisfy CHECKS." >&2
       echo "Either the allowlist needs the package adding, or CHECKS needs updating to match it." >&2
+      if [ "$sources_updated" = true ]; then
+        echo "The sources are installed already, the pins are not." >&2
+      fi
       exit 1
     fi
 
-    changed=false
+    changed=$sources_updated
     cmp -s "$tmp/$PREF_NAME" "$PREF_DEST" || changed=true
     cmp -s "$uu" "$UU_DEST" || changed=true
     for f in $SUPERSEDED; do

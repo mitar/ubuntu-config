@@ -81,11 +81,19 @@ Ptyxis, Ubuntu's terminal, is patched and configured (`patches/ptyxis/`, `config
 
 ### Third-party APT repositories pinned to their packages
 
+Every third-party repository is configured from this repository (`sources.list.d/`), each with its signing key
+embedded in its source, so that APT trusts the key for that repository only. Keys which vendors had put where APT
+trusts them for every repository, as Slack's daily cron job does, are removed and kept from coming back. ProtonVPN's
+repository is the exception: Proton's own package configures it, and the script installs that package when missing.
+
 Third-party repositories are pinned by hostname, with an allowlist of the packages actually in use and a default
 deny for everything else from them, so a vendor repository cannot replace an Ubuntu package by publishing a higher
 version under the same name (`lockdown-apt-sources.sh`). Unattended upgrades are likewise tied to Ubuntu's own
 hosts, so a vendor repository cannot have its packages installed unattended by claiming to be Ubuntu's security
 pocket.
+
+A vendor's new signing key does not arrive with its packages: `apt update` fails for that repository until the key
+in its file in `sources.list.d/` is replaced and the script is applied again.
 
 ### Patched packages kept up to date
 
@@ -408,11 +416,10 @@ settings in `gnome-extensions/`. Custom extensions are installed from the reposi
 Run each script first without `--apply` to see what it would change. The general order is:
 
 1. In the BIOS, set the battery charge limit to 99%[^charge-limit] and disable Battery Extender.
-2. Add the Mozilla Team PPA with its source, from which Firefox is rebuilt, then lock down APT sources. The
-   lockdown's checks expect the PPA, so it comes first:
+2. Configure and lock down the third-party APT repositories, including the Mozilla Team PPA with its source, from
+   which Firefox is rebuilt:
 
    ```sh
-   sudo add-apt-repository --enable-source ppa:mozillateam/ppa
    sudo ./lockdown-apt-sources.sh --apply
    ```
 
