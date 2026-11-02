@@ -246,8 +246,9 @@ names. Three things stand in the way on Ubuntu 26.04, each patched until the fix
   (`patches/firefox/`).
 
 Firefox therefore comes from the Mozilla Team PPA, which publishes the source to rebuild it with, unlike Mozilla's
-own repository. Its build is also brought closer to Mozilla's: the libraries Mozilla runs in a WebAssembly sandbox,
-for fonts, spell checking, XML and audio, are sandboxed here too, where the PPA's build leaves them out.
+own repository (requested in [Mozilla bug 2087959](https://bugzilla.mozilla.org/show_bug.cgi?id=2087959)). Its build
+is also brought closer to Mozilla's: the libraries Mozilla runs in a WebAssembly sandbox, for fonts, spell checking,
+XML and audio, are sandboxed here too, where the PPA's build leaves them out.
 
 ### Firefox's sandbox has its user namespaces
 

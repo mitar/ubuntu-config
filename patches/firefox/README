@@ -1,8 +1,9 @@
 Source package: firefox, from the Mozilla Team PPA (https://launchpad.net/~mozillateam/+archive/ubuntu/ppa)
 
-Ubuntu's own firefox package only installs the snap, and Mozilla's APT repository publishes no source, so
-Firefox comes from the Mozilla Team PPA, run by Ubuntu's Mozilla team, which builds Mozilla's release source
-with Ubuntu's packaging. Its source has to be enabled with the binaries:
+Ubuntu's own firefox package only installs the snap, and Mozilla's APT repository publishes no source
+(requested in https://bugzilla.mozilla.org/show_bug.cgi?id=2087959), so Firefox comes from the Mozilla Team
+PPA, run by Ubuntu's Mozilla team, which builds Mozilla's release source with Ubuntu's packaging. Its source
+has to be enabled with the binaries:
 
   sudo add-apt-repository --enable-source ppa:mozillateam/ppa
 
@@ -54,13 +55,13 @@ wayland-session-restore-on-gnome.patch
     does not place it yet, since the profile has no IDs saved. From the next start on, windows return to their
     workspaces.
 
-    Firefox's tests do not run in the package build, so there is no test here. The patches were checked with a
-    headless mutter and Firefox driven through Marionette: with them, restoring from the menu no longer crashes,
-    a profile without IDs shows all its windows, and the next start restores each window under the ID it was
-    added under. The first two are proposed in comment 21 of bug 2064100. The third undoes bug 2070815, which
-    disabled the protocol on GNOME until bug 2064100 is fixed. Drop them once the PPA's Firefox contains the fix
-    for bug 2064100 and no longer disables the protocol on GNOME, in widget/gtk/nsWindowWayland.cpp
-    (MoveToWorkspace) and widget/gtk/nsAppShell.cpp (IsSessionRestoreSupported).
+    Firefox's tests do not run in the package build. tests/run-session.sh checks the patches by hand, with a
+    headless mutter and Firefox driven through Marionette (see tests/README): with them, restoring from the menu
+    no longer crashes, a profile without IDs shows all its windows, and the next start restores each window under
+    the ID it was added under. The first two are proposed in comment 21 of bug 2064100. The third undoes bug
+    2070815, which disabled the protocol on GNOME until bug 2064100 is fixed. Drop them once the PPA's Firefox
+    contains the fix for bug 2064100 and no longer disables the protocol on GNOME, in
+    widget/gtk/nsWindowWayland.cpp (MoveToWorkspace) and widget/gtk/nsAppShell.cpp (IsSessionRestoreSupported).
 
 wasm-sandboxed-libraries.patch (debian-series)
     Builds graphite, ogg, hunspell, expat, woff2 and soundtouch as wasm sandboxed libraries, as Mozilla's own
@@ -71,8 +72,8 @@ wasm-sandboxed-libraries.patch (debian-series)
     dependencies and the removed --without-wasm-sandboxed-libraries are needed. After a version bump, check that
     debian/config/mozconfig.in still disables the sandbox the same way, or the patch stops applying.
 
-    With it, the rebuild behaved like Mozilla's build in a test loading each library: parsing XML, spell
-    checking, decoding Ogg, loading a WOFF2 and a Graphite font, and playing audio at a changed rate.
+    With it, the rebuild behaves like Mozilla's build in tests/test_wasm.py, which loads each library: parsing
+    XML, spell checking, decoding Ogg, loading a WOFF2 and a Graphite font, and playing audio at a changed rate.
 
 drop-apparmor-profile.patch (debian-series)
     Stops installing /etc/apparmor.d/usr.bin.firefox. It is an enforcing profile written for Ubuntu 14.10 and

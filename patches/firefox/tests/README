@@ -1,0 +1,59 @@
+Tests for the patches in patches/firefox/, run by hand. Firefox's own tests do not run in the package build.
+
+Both drive Firefox through Marionette, with a new profile in a directory of their own and on a port of their
+own, so they run next to your own Firefox without touching it. Pass the Firefox to test, usually the installed
+/usr/lib/firefox/firefox, or one extracted from a package with dpkg-deb -x.
+
+Session restore: run-session.sh and driver.py
+    Starts a headless mutter with one virtual monitor in a D-Bus session of its own and runs Firefox three
+    times against it: the first run opens three windows and quits, the second starts again and restores that
+    session, and the third restores the session the second one saved. It covers the three fixes of the session
+    patches and mutter's side of the protocol, but not whether windows return to their workspaces, which needs
+    a desktop.
+
+    Only the mutter package has mutter's binary. Instead of installing it, extract it with its library from the
+    local repository, or from any build to test:
+
+      mkdir /tmp/mutter-root
+      for p in mutter libmutter-18-0; do dpkg-deb -x /usr/local/lib/debs/${p}_*.deb /tmp/mutter-root; done
+      ./run-session.sh /tmp/mutter-root - /usr/lib/firefox/firefox ubuntu:GNOME /tmp/session-test menu-restore
+
+    The second argument is "-" for the installed GTK, or a directory libgtk-3-0t64 was extracted into. The
+    fourth is XDG_CURRENT_DESKTOP: ubuntu:GNOME is what Firefox sees on this desktop, and an unpatched Firefox
+    disables session restore for it, while any value without GNOME, like test, gets past that check. The last
+    argument is the scenario, described at the top of driver.py:
+
+      menu-restore     the second run restores from the History menu; Firefox 159 crashes with "Name of
+                       toplevel is already in use" when the check is passed
+      startup-restore  the second run restores at startup
+      startup-no-ids   like startup-restore, from a profile saved without IDs; Firefox 159 shows none of
+                       its windows when the check is passed
+
+    With the patches, every run reports 3 windows, 3 windows shown and exit status 0 (the second run of
+    menu-restore first reports the 1 window it starts with), and the script exits with 0. The session requests
+    are in the WAYLAND_DEBUG output of each run in the output directory:
+
+      grep -h -o -E '(add|restore)_toplevel\([^)]*"[^"]*"|toplevel_session_v1#[0-9]+\.restored\(\)' /tmp/session-test/run*.log
+
+    The second run adds its windows under new IDs, and the third restores exactly those, each answered with
+    restored(). The D-Bus and portal messages printed on the way are expected in the private session.
+
+Wasm sandboxed libraries: test_wasm.py
+    Runs Firefox headless and makes each of the six libraries do some work: expat parses XML, hunspell checks
+    spelling, ogg decodes and soundtouch plays a short tone ffmpeg generates, woff2 loads a WOFF2 font, and
+    graphite lays out text in a Graphite font. Needs ffmpeg and fonts-sil-andika, which has both fonts.
+
+      python3 -I test_wasm.py /usr/lib/firefox/firefox /tmp/wasm-test
+
+    Every library should report a result and none an error:
+
+      expat      root, parsererror elements: 0
+      hunspell   en-US: hello=true helo=false
+      ogg        decoded 2.00 s
+      woff2      loaded
+      graphite   loaded, laid out width 459.9
+      soundtouch played to 2.00 s at rate 1.5
+      still running afterwards: True
+
+    The test shows that the libraries work, not that they run sandboxed. That they are built sandboxed is
+    shown by the check in ../README, which lists the rlbox_wasm2c_ symbols in libxul.so and liblgpllibs.so.

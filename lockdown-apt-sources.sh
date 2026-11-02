@@ -281,11 +281,12 @@ Pin-Priority: -1
 # file exists to prevent, so they are opt-in per package.
 
 # Firefox from ppa:mozillateam/ppa, because Mozilla's own repository publishes no source to rebuild with the local
-# patches in patches/firefox/. The local rebuild outranks the PPA (1001 above), so the PPA's build is what installs
-# only until the first rebuild, and a newer PPA release waits for its rebuild. Hostname pins cannot tell the PPAs on
-# this host apart, but ppa:xtradeb/apps also carries a firefox, and Ubuntu's firefox is a snap wrapper. Both carry
-# epoch 1:, which the Mozilla Team's builds do not, so the version deny refuses both without naming either. 1000 is
-# needed because replacing an installed snap wrapper counts as a downgrade, and it stays below the local repository.
+# patches in patches/firefox/ (requested in https://bugzilla.mozilla.org/show_bug.cgi?id=2087959). The local rebuild
+# outranks the PPA (1001 above), so the PPA's build is what installs only until the first rebuild, and a newer PPA
+# release waits for its rebuild. Hostname pins cannot tell the PPAs on this host apart, but ppa:xtradeb/apps also
+# carries a firefox, and Ubuntu's firefox is a snap wrapper. Both carry epoch 1:, which the Mozilla Team's builds do
+# not, so the version deny refuses both without naming either. 1000 is needed because replacing an installed snap
+# wrapper counts as a downgrade, and it stays below the local repository.
 Package: firefox
 Pin: version 1:*
 Pin-Priority: -1
