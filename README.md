@@ -269,6 +269,18 @@ from the portal through which GNOME announces it, which would let them exit befo
 [Chromium issue 580443832](https://issues.chromium.org/issues/580443832) and
 [Electron issue 55551](https://github.com/electron/electron/issues/55551).
 
+### snapd's desktop helper starts with the desktop
+
+snapd generates the user service of snapd-desktop-integration, which installs theme snaps and shows notifications
+about snap updates, to start with the user's service manager instead of with the graphical session. It started before
+there was a display, failed with "Failed to open display" until its restarts reached the session, and failed again at
+every logout when the display went away. A drop-in and a link in `graphical-session.target.wants` start it with the
+session instead, skip its start without a display, and stop it with the session while the display is still there
+(`systemd/user/snap.snapd-desktop-integration.snapd-desktop-integration.service.d/`, installed by
+`configure-gnome-desktop.sh`). snapd is changing its user services this way in
+[snapd pull request 16687](https://github.com/canonical/snapd/pull/16687), and the drop-in can go once that is
+released.
+
 ### GDM does not fail at shutdown
 
 GDM lists the users for the login screen through accountsservice, but its unit is not ordered relative to

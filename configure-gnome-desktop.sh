@@ -425,6 +425,18 @@ install_user_unit() {
   return 0
 }
 
+# Has every user's service manager also start a unit with a target, through sudo, with a link in the target's .wants
+# directory under /etc/systemd/user, as systemctl --global enable adds for the target the unit names itself.
+add_global_wants() {
+  local target=$1 name=$2
+  [ -e "/etc/systemd/user/$target.wants/$name" ] && return 0
+  echo "  start $name with $target for every user"
+  CHANGED=$((CHANGED+1))
+  [ "$MODE" = apply ] || return 0
+  sudo systemctl --global add-wants "$target" "$name"
+  return 0
+}
+
 # Installs a drop-in for units of the user service manager from systemd/user/ in this repository into the root-owned
 # /etc/systemd/user through sudo, where it applies to every user, then has your service manager reload, which applies
 # it also to the units already running.
@@ -678,6 +690,13 @@ install_apparmor_local transmission-gtk transmission
 install_user_dropin app-.scope.d/50-graphical-session.conf
 install_user_dropin app-gnome-.scope.d/50-after-application-scopes.conf
 install_user_unit stop-application-scopes.service
+# snapd starts snapd-desktop-integration before there is a display, see the drop-in. The snap is optional, so this is
+# done only when it is installed.
+SNAP_DESKTOP_UNIT=snap.snapd-desktop-integration.snapd-desktop-integration.service
+if [ -e "/etc/systemd/user/$SNAP_DESKTOP_UNIT" ]; then
+  install_user_dropin "$SNAP_DESKTOP_UNIT.d/50-graphical-session.conf"
+  add_global_wants graphical-session.target "$SNAP_DESKTOP_UNIT"
+fi
 
 echo "=== file manager sidebar ==="
 # The folders in the Files sidebar are the entries of the GTK bookmarks file. xdg-user-dirs-gtk-update adds the
