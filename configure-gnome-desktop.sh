@@ -33,7 +33,8 @@
 # packages, the console's boot-time unit, the udev rules, the module options, and the login screen settings need
 # root, as do the rules added to AppArmor profiles and the option added to AppArmor's parser configuration, the
 # drop-ins for GDM's unit and for application scopes, the user service which stops application scopes and its script,
-# and the option added to /etc/crypttab, so those parts call sudo themselves and will ask for a password.
+# the script which starts applications at login once there is a tray, and the option added to /etc/crypttab, so those
+# parts call sudo themselves and will ask for a password.
 
 set -euo pipefail
 
@@ -484,6 +485,23 @@ install_user_dropin() {
   return 0
 }
 
+# Replaces an application's own entry in ~/.config/autostart with the one from autostart/ in this repository. Only an
+# entry which is there is replaced, so the application's own setting still decides whether it starts at login. A link,
+# as Slack makes to its launcher, is replaced with a copy of the file.
+install_autostart() {
+  local name=$1 src=$REPO_DIR/autostart/$1 dst=${XDG_CONFIG_HOME:-$HOME/.config}/autostart/$1
+  # A link whose target is gone is left alone too, since its application is no longer installed.
+  [ -e "$dst" ] || return 0
+  [ ! -L "$dst" ] && cmp -s "$src" "$dst" && return 0
+  echo "  install $dst"
+  CHANGED=$((CHANGED+1))
+  [ "$MODE" = apply ] || return 0
+  # mv replaces a link itself, not the file it points to.
+  cp "$src" "$dst.new"
+  mv -f "$dst.new" "$dst"
+  return 0
+}
+
 # Gives the crypttab entries of the encrypted devices which hold the root filesystem the option x-initrd.attach, through
 # sudo, keeping the previous file as /etc/crypttab.bak. Then has systemd regenerate the units of these devices and
 # rebuilds the initramfs, which keeps a copy of crypttab. Only the options field of such an entry changes, and an
@@ -733,6 +751,11 @@ install_libexec stop-application-scopes.sh stop-application-scopes
 install_user_unit stop-application-scopes.service
 install_libexec stop-application-scopes-before-shutdown.py stop-application-scopes-before-shutdown
 install_user_unit stop-application-scopes-before-shutdown.service
+# Chromium checks for the tray only once, so the Electron applications started at login would otherwise sometimes
+# show no tray icon, see the script. Signal, which starts at login too, needs the same once its tray icon is turned on.
+install_libexec wait-for-status-notifier-watcher.sh wait-for-status-notifier-watcher
+install_autostart claude-desktop.desktop
+install_autostart slack.desktop
 # snapd starts snapd-desktop-integration before there is a display, see the drop-in. The snap is optional, so this is
 # done only when it is installed.
 SNAP_DESKTOP_UNIT=snap.snapd-desktop-integration.snapd-desktop-integration.service

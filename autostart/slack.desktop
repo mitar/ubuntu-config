@@ -1,0 +1,10 @@
+# Installed as ~/.config/autostart/slack.desktop by configure-gnome-desktop.sh, in place of the link to
+# /usr/share/applications/slack.desktop which Slack makes when its setting to launch at login is turned on. It starts
+# Slack through wait-for-status-notifier-watcher, so that it shows its tray icon, see the script. Slack counts the
+# setting as on while this file exists, removes it when the setting is turned off, and makes its link again when the
+# setting is turned on.
+[Desktop Entry]
+Type=Application
+Name=Slack
+Icon=/usr/share/pixmaps/slack.png
+Exec=/usr/local/libexec/wait-for-status-notifier-watcher /usr/bin/slack

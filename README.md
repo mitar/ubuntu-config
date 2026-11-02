@@ -321,6 +321,26 @@ from the portal through which GNOME announces it, which would let them exit befo
 [Chromium issue 580443832](https://issues.chromium.org/issues/580443832) and
 [Electron issue 55551](https://github.com/electron/electron/issues/55551).
 
+### Claude Desktop and Slack show their tray icon after every login
+
+Claude Desktop and Slack often started at login without their icon in the top bar, while they kept running. The icon
+is shown through the StatusNotifierItem protocol, for which the Ubuntu AppIndicators extension owns the name
+`org.kde.StatusNotifierWatcher` on the session bus. Chromium, on which both are built, checks whether that name has an
+owner only when the application creates its tray icon, and without one uses a GTK status icon, which is not shown
+under Wayland, and does not check again. GNOME Shell enables the AppIndicators extension only after every extension in
+the user's own directory, one after another, while gnome-session starts the applications at login as soon as the Shell
+reports it is ready, which it does before it has enabled its extensions. So whichever application created its tray
+icon a fraction of a second too early had no icon until it was restarted, or until its tray icon was turned off and on
+in its settings, which creates the icon again. Their entries in `~/.config/autostart` start them only once the name
+has an owner (`wait-for-status-notifier-watcher.sh`, `autostart/`, installed by `configure-gnome-desktop.sh`). An entry
+is installed only in place of one the application wrote itself, when its setting to start at login is on, and the
+application writes its own entry again when that setting is turned off and on, until the script runs again.
+
+The entries and the script can go once Chromium waits for the name to have an owner, as libayatana-appindicator does,
+or once GNOME Shell enables its extensions before it reports that it is ready. Extensions being enabled only after
+the Shell started up is also why they cannot change its startup animation any more,
+[GNOME Shell issue 8917](https://gitlab.gnome.org/GNOME/gnome-shell/-/issues/8917).
+
 ### snapd's desktop helper starts with the desktop
 
 snapd generates the user service of snapd-desktop-integration, which installs theme snaps and shows notifications
