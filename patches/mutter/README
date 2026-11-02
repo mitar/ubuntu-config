@@ -14,12 +14,53 @@ tap-key.patch
     together with another key, which must send nothing, and then taps it on its own, which must
     trigger a keybinding bound to the combination it sends.
 
-The tap is detected by process_special_modifier_key in src/core/keybindings.c, shared by all three
-keys, and the settings are read in src/core/prefs.c next to the other two. After a version bump,
-check that both still handle the overlay and locate-pointer keys this way, since the patch follows
-them.
+    The tap is detected by process_special_modifier_key in src/core/keybindings.c, shared by all
+    three keys, and the settings are read in src/core/prefs.c next to the other two. After a version
+    bump, check that both still handle the overlay and locate-pointer keys this way, since the patch
+    follows them.
 
-Check by hand after a rebuild and a new login:
+    Check by hand after a rebuild and a new login:
 
-  tap the right Super on its own     should send XF86Launch9, which opens Claude Quick Entry
-  right Super with another key       should act as Super, for example Ctrl+Super+L locks
+      tap the right Super on its own     should send XF86Launch9, which opens Claude Quick Entry
+      right Super with another key       should act as Super, for example Ctrl+Super+L locks
+
+xdg-session-management.patch
+    Backport of https://gitlab.gnome.org/GNOME/mutter/-/merge_requests/4806 from mutter 51. Mutter
+    50 has the session management protocol only under its draft name xx_session_manager_v1, and
+    offers it only when gnome-shell runs with MUTTER_DEBUG_SESSION_MANAGEMENT_PROTOCOL=1. The patch
+    renames it to the final xdg_session_manager_v1 and offers it to every client. A client which
+    names its windows then has mutter restore their workspace, monitor, position, size and state.
+
+    It is for Firefox, which binds only xdg_session_manager_v1 since version 154. Firefox restores
+    its windows with it only together with the patches in patches/firefox/, which fix Mozilla bug
+    2064100 and enable the protocol on GNOME again, and the one in patches/gtk+3.0/, which adds the
+    xdg-toplevel-realized signal Firefox needs. Without them, MOZ_LOG=WidgetWayland:4 shows which
+    check in IsSessionRestoreSupported (Firefox's widget/gtk/nsAppShell.cpp) disabled it.
+
+    Firefox sends get_session at every start, even where it does not register its windows. Mutter
+    50.1 and 51.1 crash when a client sends get_session after the session manager could not be
+    created, which happens when ~/.local/share/gnome-shell/session.gvdb cannot be read (mutter
+    issue 5168, open). This patch makes that crash reachable. If gnome-shell ever crashes when
+    Firefox starts, look in the journal for "Could not create session manager" and move that file
+    away.
+
+    session.gvdb only grows, by about 270 bytes for every window Firefox ever had. Firefox never
+    removes a window from its session, and mutter never prunes stored windows on its own. Mutter
+    also cannot remove a window stored in an earlier run of a session, so a client could not clean
+    up even if it tried (mutter issue 5174, open, with patches). Moving the file away resets all
+    stored window places, of every application.
+
+    The patch is the four commits of the merge request. Only the test change of the last one
+    differs: upstream it edits src/tests/wayland-xdg-session-management-tests.c, which was split
+    out of src/tests/wayland-unit-tests.c after 50.1, so here the same line is removed from
+    wayland-unit-tests.c. The existing session management tests in wayland-unit-tests.c run during
+    the build against the renamed protocol.
+
+    Drop the patch once Ubuntu ships mutter 51 or newer. Before that, after a version bump, check
+    that src/meson.build still has no xdg-session-management entry of its own, and note that with
+    wayland-protocols 1.48 or newer the build uses the protocol XML from wayland-protocols instead of
+    the copy in src/wayland/protocol/.
+
+    Check by hand after a rebuild and a new login, with wayland-info from the wayland-utils package:
+
+      wayland-info | grep session        should list xdg_session_manager_v1 and no xx_session_manager_v1

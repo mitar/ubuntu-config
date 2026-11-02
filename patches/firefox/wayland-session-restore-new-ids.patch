@@ -1,0 +1,50 @@
+Description: Do not add a toplevel to the Wayland session under an ID from a previous session.
+ nsWindowWaylandToplevel::MoveToWorkspace() stored the passed ID also for a window which does not wait for session
+ restore, as when a previous session is restored from the History menu or a closed window is reopened. Such a
+ window is shown already, so GetWorkspaceID() then added it to the session with xdg_session_v1.add_toplevel under
+ that old ID. Mutter still stores state for it and raises name_in_use, as the protocol requires, and Firefox
+ crashes. It also replaced the ID of a window already added under its own, so the session store saved an ID
+ under which the compositor did not know the window. The ID is now stored only for a window which waits for
+ session restore, the only case in which the window is restored under it.
+Author: Mitar
+Bug: https://bugzilla.mozilla.org/show_bug.cgi?id=2064100
+Forwarded: https://bugzilla.mozilla.org/attachment.cgi?id=9672742
+Last-Update: 2026-11-02
+diff --git a/widget/gtk/nsWindowWayland.cpp b/widget/gtk/nsWindowWayland.cpp
+index e45d513..37a3793 100644
+--- a/widget/gtk/nsWindowWayland.cpp
++++ b/widget/gtk/nsWindowWayland.cpp
+@@ -55,6 +55,11 @@ using namespace mozilla::widget;
+ 
+   Likewise we use GetWorkspaceID() to create/save the xdg_toplevel session
+   for later restore.
++
++  A window which does not wait for session restore cannot be restored, so it
++  ignores MoveToWorkspace() and is added to the session under a new ID instead.
++  This happens when a previous session is restored from the menu or a closed
++  window is reopened.
+ */
+ 
+ static nsCString GenerateWorkspaceID() {
+@@ -168,13 +173,19 @@ void nsWindowWayland::MoveToWorkspace(const nsAString& aWorkspaceIDStr) {
+   if (!nsAppShell::IsSessionRestoreSupported()) {
+     return;
+   }
+-  mWorkspaceID = NS_ConvertUTF16toUTF8(aWorkspaceIDStr);
+   LOG("nsWindowWayland::MoveToWorkspace() session ID %s "
+       "mWaitingToSessionRestore %d mNeedsShow %d",
+-      mWorkspaceID.get(), mWaitingToSessionRestore, mNeedsShow);
++      NS_ConvertUTF16toUTF8(aWorkspaceIDStr).get(), mWaitingToSessionRestore,
++      mNeedsShow);
++  // A window which does not wait for session restore is already shown or it is
++  // shown without restore, and it is added to the session under its own ID.
++  // The passed ID is from a previous session and the compositor may still
++  // store state for it, so add_toplevel with it would fail with a name_in_use
++  // protocol error (Bug 2064100).
+   if (!mWaitingToSessionRestore) {
+     return;
+   }
++  mWorkspaceID = NS_ConvertUTF16toUTF8(aWorkspaceIDStr);
+   mWaitingToSessionRestore = false;
+   if (mNeedsShow) {
+     NativeShow(/* show */ true);

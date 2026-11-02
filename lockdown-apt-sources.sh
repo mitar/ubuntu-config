@@ -164,17 +164,18 @@ Package: thunderbird-esr thunderbird-esr-l10n-*
 Pin: origin packages.mozilla.org
 Pin-Priority: -1
 
-# Firefox and Thunderbird come from Mozilla on purpose, because the Ubuntu packages of the same name are snap
-# wrappers. Ubuntu carries a higher epoch on both (1: on firefox, 2: on thunderbird), so the snap wrapper sorts
-# above the Mozilla build and replacing it counts as a downgrade. Only a priority above 1000 permits that, so
-# anything lower cannot recover once a snap wrapper has been pulled back in. Safe this high because it names
-# specific packages from one origin rather than the whole repository.
-Package: firefox firefox-l10n-* thunderbird thunderbird-l10n-*
+# Thunderbird comes from Mozilla on purpose, because the Ubuntu package of the same name is a snap wrapper. Ubuntu
+# carries a higher epoch on it (2:), so the snap wrapper sorts above the Mozilla build and replacing it counts as a
+# downgrade. Only a priority above 1000 permits that, so anything lower cannot recover once a snap wrapper has been
+# pulled back in. Safe this high because it names specific packages from one origin rather than the whole
+# repository.
+Package: thunderbird thunderbird-l10n-*
 Pin: origin packages.mozilla.org
 Pin-Priority: 1001
 
 # Mozilla publishes around 800 names across the stable, beta, nightly and devedition channels, including
-# mozillavpn. Everything not allowed above is refused.
+# mozillavpn. Everything not allowed above is refused, firefox among them, which comes from the Mozilla Team PPA
+# instead, see the ppa.launchpadcontent.net block.
 Package: *
 Pin: origin packages.mozilla.org
 Pin-Priority: -1
@@ -279,6 +280,20 @@ Pin-Priority: -1
 # PPAs routinely rebuild core Ubuntu libraries and applications under the names Ubuntu uses, which is the case this
 # file exists to prevent, so they are opt-in per package.
 
+# Firefox from ppa:mozillateam/ppa, because Mozilla's own repository publishes no source to rebuild with the local
+# patches in patches/firefox/. The local rebuild outranks the PPA (1001 above), so the PPA's build is what installs
+# only until the first rebuild, and a newer PPA release waits for its rebuild. Hostname pins cannot tell the PPAs on
+# this host apart, but ppa:xtradeb/apps also carries a firefox, and Ubuntu's firefox is a snap wrapper. Both carry
+# epoch 1:, which the Mozilla Team's builds do not, so the version deny refuses both without naming either. 1000 is
+# needed because replacing an installed snap wrapper counts as a downgrade, and it stays below the local repository.
+Package: firefox
+Pin: version 1:*
+Pin-Priority: -1
+
+Package: firefox
+Pin: origin ppa.launchpadcontent.net
+Pin-Priority: 1000
+
 # Chromium from ppa:xtradeb/apps, because Ubuntu's chromium-browser is a snap wrapper. Ubuntu has none of these
 # names, so the default priority is enough. The PPA carries more than 200 other packages, among them transmission
 # at a higher version than Ubuntu's, which it would otherwise replace.
@@ -301,14 +316,20 @@ import re, subprocess, sys
 prefs = sys.argv[1]
 
 # pkg, kind, expected. origin: candidate must come from this host, which can be followed by a path to name one
-# repository on a host serving many, such as a PPA. version: candidate must be exactly this.
-# none: package must have no installable candidate. installed: candidate must equal the installed version.
+# repository on a host serving many, such as a PPA, or from any of a tuple of them. version: candidate must be
+# exactly this. none: package must have no installable candidate. installed: candidate must equal the installed
+# version. denied-from: every version from this repository must be refused, which also holds when it offers none
+# apart from the installed one.
 CHECKS = [
     ("libfido2-1",               "origin",    "archive.ubuntu.com"),
     ("python3-dbus-fast",        "origin",    "archive.ubuntu.com"),
     ("transmission-gtk",         "origin",    "archive.ubuntu.com"),
     ("thunderbird-esr",          "version",   "1:140.15.0esr~build1"),
-    ("firefox",                  "origin",    "packages.mozilla.org"),
+    # The local rebuild once there is one, the PPA's build until then.
+    ("firefox",                  "origin",    ("/usr/local/lib/debs", "ppa.launchpadcontent.net/mozillateam/ppa")),
+    ("firefox",                  "denied-from", "ppa.launchpadcontent.net/xtradeb/apps"),
+    ("firefox",                  "denied-from", "archive.ubuntu.com"),
+    ("firefox",                  "denied-from", "packages.mozilla.org"),
     ("thunderbird",              "origin",    "packages.mozilla.org"),
     ("nodejs",                   "origin",    "deb.nodesource.com"),
     ("code",                     "origin",    "packages.microsoft.com"),
@@ -330,30 +351,38 @@ CHECKS = [
 ]
 
 def policy(pkg):
-    """Return (installed, candidate, {version: [source strings]}) as apt-cache policy reports it."""
+    """Return (installed, candidate, {version: [source strings]}, {version: priority}) as apt-cache policy reports it."""
     out = subprocess.run(["apt-cache", "-o", "Dir::Etc::PreferencesParts=" + prefs, "policy", pkg],
                          capture_output=True, text=True).stdout
     inst = cand = None
-    sources, cur = {}, None
+    sources, priorities, cur = {}, {}, None
     for line in out.splitlines():
         m = re.match(r"^  Installed: (.+)$", line)
         if m: inst = m.group(1); continue
         m = re.match(r"^  Candidate: (.+)$", line)
         if m: cand = m.group(1); continue
         m = re.match(r"^ (?:\*\*\*)?\s*(\S+) (-?\d+)$", line)
-        if m: cur = m.group(1); sources.setdefault(cur, []); continue
+        if m: cur = m.group(1); sources.setdefault(cur, []); priorities[cur] = int(m.group(2)); continue
         m = re.match(r"^\s+(-?\d+) (\S+)", line)
         if m and cur: sources[cur].append(m.group(2))
-    return inst, cand, sources
+    return inst, cand, sources, priorities
 
 fails = 0
 print("%-26s %-34s %s" % ("package", "candidate", "result"))
 print("-" * 92)
 for pkg, kind, want in CHECKS:
-    inst, cand, sources = policy(pkg)
+    inst, cand, sources, priorities = policy(pkg)
     if cand is None:
         print("%-26s %-34s SKIP (unknown package)" % (pkg, "-")); continue
-    if kind == "none":
+    if kind == "denied-from":
+        # The installed version keeps a priority of 100 from the dpkg status whatever its origin's pin, but apt never
+        # moves to the version already installed, so it is left out.
+        offered = [v for v, srcs in sources.items() if any(want in s for s in srcs) and v != inst]
+        allowed = [v for v in offered if priorities.get(v, 0) >= 0]
+        ok = not allowed
+        detail = ("denied from " if offered else "not offered by ") + want if ok else \
+                 "ALLOWED from %s: %s" % (want, ", ".join(allowed))
+    elif kind == "none":
         ok = cand == "(none)"
         detail = "denied" if ok else "INSTALLABLE, expected denied"
     elif kind == "version":
@@ -364,8 +393,10 @@ for pkg, kind, want in CHECKS:
         detail = "unchanged" if ok else "expected installed " + str(inst)
     else:
         src = " ".join(sources.get(cand, []))
-        ok = want in src
-        detail = want if ok else "from " + (src or "?") + ", expected " + want
+        wants = want if isinstance(want, tuple) else (want,)
+        match = next((w for w in wants if w in src), None)
+        ok = match is not None
+        detail = match if ok else "from " + (src or "?") + ", expected " + " or ".join(wants)
     fails += 0 if ok else 1
     print("%-26s %-34s %s %s" % (pkg, cand, "ok  " if ok else "FAIL", detail))
 

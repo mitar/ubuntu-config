@@ -1,0 +1,2 @@
+wasm-sandboxed-libraries.patch
+drop-apparmor-profile.patch

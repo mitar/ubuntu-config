@@ -1,0 +1,25 @@
+Description: Enable Wayland session restore on GNOME again.
+ Mozilla bug 2070815 disabled it on GNOME because of the name_in_use protocol error from Mutter, which
+ wayland-session-restore-new-ids.patch fixes. Session restore stays disabled where GTK 3 lacks the
+ xdg-toplevel-realized signal, by the check right after the removed one.
+Author: Mitar
+Bug: https://bugzilla.mozilla.org/show_bug.cgi?id=2064100
+Forwarded: no
+Last-Update: 2026-11-02
+diff --git a/widget/gtk/nsAppShell.cpp b/widget/gtk/nsAppShell.cpp
+index 84f3b84..5c4cfc2 100644
+--- a/widget/gtk/nsAppShell.cpp
++++ b/widget/gtk/nsAppShell.cpp
+@@ -626,12 +626,6 @@ bool nsAppShell::IsSessionRestoreSupported() {
+       LOGW("nsAppShell::IsSessionRestoreSupported(): disabled by pref.");
+       return false;
+     }
+-    if (IsGnomeDesktopEnvironment()) {
+-      LOGW(
+-          "nsAppShell::IsSessionRestoreSupported(): disabled due to Bug "
+-          "2064100.");
+-      return false;
+-    }
+ 
+     GType waylandWindowType = g_type_from_name("GdkWaylandWindow");
+     bool supported =

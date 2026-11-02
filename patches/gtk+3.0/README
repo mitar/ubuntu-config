@@ -1,0 +1,26 @@
+Source package: gtk+3.0
+
+wayland-export-xdg-toplevel.patch
+    Backport of GTK commit edc9d508c3 (merge request 9852), which is on the gtk-3-24 branch but in no
+    release yet, while Ubuntu 26.04 ships 3.24.52. A GdkWaylandWindow emits xdg-toplevel-realized when
+    its xdg_toplevel is created, before it is committed, and gdk_wayland_window_get_xdg_toplevel()
+    returns it. Firefox needs both for Wayland session restore, to name a window to the compositor
+    before the window is first shown, and turns session restore off when the signal is missing
+    (IsSessionRestoreSupported in its widget/gtk/nsAppShell.cpp). It works together with the patches
+    in patches/firefox/ and patches/mutter/.
+
+    The commit adds no test, and none is added here. GTK's test suite runs during the build, which
+    shows the patch breaks nothing existing; that the signal works is shown by Firefox registering its
+    windows, see patches/firefox/README.
+
+wayland-export-xdg-toplevel-symbols.patch (debian-series)
+    Lists the new function in debian/libgtk-3-0t64.symbols. dh_makeshlibs runs with -c4, which fails
+    the build on any exported symbol the file does not list. It changes the packaging, so it is
+    applied from debian-series rather than series.
+
+Drop both once Ubuntu ships a GTK 3 with the commit, which is any 3.24.53 or newer, after checking
+that its symbols file lists gdk_wayland_window_get_xdg_toplevel.
+
+Check by hand after an upgrade:
+
+  nm -D /usr/lib/x86_64-linux-gnu/libgdk-3.so.0 | grep xdg_toplevel     should list gdk_wayland_window_get_xdg_toplevel

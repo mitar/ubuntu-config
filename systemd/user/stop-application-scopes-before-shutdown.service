@@ -1,0 +1,22 @@
+# Installed as /etc/systemd/user/stop-application-scopes-before-shutdown.service by configure-gnome-desktop.sh, which
+# overwrites edits made there, and enabled for every user.
+#
+# Has logind start a shutdown or a reboot only once stop-application-scopes.service let each Chromium-based application
+# quit by itself, see stop-application-scopes-before-shutdown.py.
+#
+# It is not part of the graphical session: gnome-session exits right after logind announces a shutdown, which ends the
+# graphical session, while this service has to hold its inhibitor until the applications exited. It keeps running
+# after a logout, until the user's service manager stops.
+#
+# Not needed any more once Chromium keeps its helpers in its own scope: https://issues.chromium.org/issues/580525223
+
+[Unit]
+Description=Let applications quit before a shutdown starts
+
+[Service]
+Type=exec
+ExecStart=/usr/local/libexec/stop-application-scopes-before-shutdown
+Restart=on-failure
+
+[Install]
+WantedBy=graphical-session.target

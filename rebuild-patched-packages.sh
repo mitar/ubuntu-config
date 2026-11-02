@@ -55,6 +55,10 @@
 # package's own build scripts and test suite can change neither the system nor anything outside the chroot. Root
 # only fetches the source, applies the patches and publishes the result, none of which runs code from the package.
 #
+# Builds run in /tmp, a tmpfs, both the work directory and sbuild's chroot. A Firefox build holds more files there
+# than systemd's default tmpfs limit allows, which install-rebuild-patched-packages.sh raises with
+# systemd/tmp.mount.d/50-nr-inodes.conf.
+#
 # The chroot tarball is created with mmdebstrap from the system's own Ubuntu sources, so it follows the same
 # mirror, release and pockets, and it is created again once it is older than a week. sbuild also updates the
 # chroot before every build. It is kept in /var/cache/patched-packages, owned by the build user, which
@@ -69,6 +73,23 @@
 # are how a stale patch is caught. Parallelism does not belong there either, it is passed as -j from BUILD_JOBS.
 # A README in that directory is a good place to record what the patch does and what to re-check after a version
 # bump. Then install the patches with install-rebuild-patched-packages.sh.
+#
+# The patches in series are applied with quilt by dpkg-source, which allows them to change only the upstream source.
+# A quilt patch which changes debian/ is refused here, because dpkg-source treats it as already applied when sbuild
+# builds the source package again and fails with a misleading message. Changes to the packaging itself go into
+# patches listed in a "debian-series" file instead. Those are applied directly to the unpacked source, before the
+# quilt patches and without fuzz, and may change nothing outside debian/.
+#
+# A few more optional files cover packages which do not come from the Ubuntu archive or which build differently:
+#
+#   source-from          a substring of the URL of the repository the source has to come from, for example
+#                        ppa.launchpadcontent.net/mozillateam/ppa. The repository has to offer deb-src, which this
+#                        script does not enable for it (see ensure_deb_src). Without the file, the highest version
+#                        any deb-src entry offers is rebuilt, which in practice is Ubuntu's.
+#   extra-repositories   repositories added to the build chroot, for build dependencies the Ubuntu archive does not
+#                        have, one per line as "<key file> deb <URL> <suite> <components>", with the key file in
+#                        the same directory.
+#   sbuild-options       further sbuild options, one per line.
 #
 # A patch that applies is not a patch that works, and the build itself is what says so. Two things catch a patch
 # that has gone stale, and neither needs any machinery here:
@@ -99,8 +120,9 @@
 # Ubuntu version again, because its patches changed or with --force, counts the suffix up to +patched2 and so on,
 # so that apt sees the new build as an upgrade too.
 #
-# Patch changes are noticed through a fingerprint of the series, the patches it lists and build-options, recorded
-# with every build. The README is not part of it, so editing only the documentation does not cause a rebuild.
+# Patch changes are noticed through a fingerprint of everything a build reads from patches/<source-package>/: both
+# series files, the patches they list, the optional files above and the keys extra-repositories names, recorded with
+# every build. The README is not part of it, so editing only the documentation does not cause a rebuild.
 
 set -euo pipefail
 
@@ -277,20 +299,41 @@ warn() {
 # this script reporting the package as current while the local build stayed behind, which is the one failure the
 # whole arrangement exists to prevent. Comparing against the binary versions catches it.
 #
-# Prints the newer binary version when there is one, nothing otherwise. Local builds are excluded by matching
-# ubuntu.com origins rather than by version, since a local build carries the suffix anyway.
+# Prints the newer binary version when there is one, nothing otherwise. Local builds are excluded by matching the
+# origin rather than by version, since a local build carries the suffix anyway: ubuntu.com, or the repository
+# source-from names for a package taken from elsewhere.
 unfetchable_update() {
-  local src=$1 srcver=$2 bins bin ver origin best=""
+  local src=$1 srcver=$2 from bins bin ver origin best=""
+  from=$(source_from "$src")
   bins=$(apt-cache showsrc "$src" 2>/dev/null | awk '/^Binary:/{ $1=""; gsub(/,/," "); print; exit }')
   for bin in $bins; do
     while IFS='|' read -r _ ver origin; do
       ver=${ver// /}
-      case "$origin" in *ubuntu.com*) ;; *) continue ;; esac
-      if [ -z "$best" ] || dpkg --compare-versions "$ver" gt "$best"; then best=$ver; fi
+      case "$origin" in *" Sources") continue ;; esac
+      if [ -n "$from" ]; then
+        case "$origin" in *"$from"*) ;; *) continue ;; esac
+      else
+        case "$origin" in *ubuntu.com*) ;; *) continue ;; esac
+      fi
+      dpkg --compare-versions "$ver" gt "$srcver" || continue
+      if [ -z "$best" ] || dpkg --compare-versions "$ver" gt "$best"; then
+        # A binary package can move to another source package, as gtk-update-icon-cache moved from gtk+3.0 to
+        # gtk4, and its newer version from there says nothing about this source.
+        [ "$(binary_source "$bin" "$ver")" = "$src" ] || continue
+        best=$ver
+      fi
     done < <(apt-cache madison "$bin" 2>/dev/null)
   done
-  [ -n "$best" ] && dpkg --compare-versions "$best" gt "$srcver" && echo "$best"
+  [ -n "$best" ] && echo "$best"
   return 0
+}
+
+# The source package a version of a binary package is built from. The Source field names it when it differs from
+# the binary package's own name.
+binary_source() {
+  local name
+  name=$(apt-cache show "$1=$2" 2>/dev/null | awk '/^$/{ exit } /^Source:/{ print $2; exit }')
+  echo "${name:-$1}"
 }
 
 # The source package names of everything with a patch directory.
@@ -311,9 +354,33 @@ selected_packages() {
   fi
 }
 
-# The version Ubuntu currently offers for a source package. Only archive origins are considered, so that our own
-# rebuild sitting in the local repository is not mistaken for the upstream version and cannot suppress a rebuild.
+# An optional per-package setting from patches/<source-package>/, one entry per line, without comments and blank
+# lines. Prints nothing when the file does not exist.
+package_setting() {
+  local file=$PATCH_DIR/$1/$2
+  [ -r "$file" ] || return 0
+  grep -vE '^[[:space:]]*(#|$)' "$file" || true
+}
+
+# The substring of the repository URL a package's source has to come from, or nothing for the default.
+source_from() {
+  package_setting "$1" source-from | head -1
+}
+
+# The version currently offered for a source package, from the repository source-from names, or else from every
+# deb-src entry. Versions carrying our suffix are left out, so that our own rebuild is never mistaken for the
+# upstream version and cannot suppress a rebuild.
 official_version() {
+  local from
+  from=$(source_from "$1")
+  if [ -n "$from" ]; then
+    # madison lists the source package's versions as lines ending in "Sources", each naming its repository URL.
+    apt-cache madison "$1" 2>/dev/null \
+      | awk -F'|' -v from="$from" '$3 ~ / Sources$/ && index($3, from) { gsub(/ /, "", $2); print $2 }' \
+      | grep -v "$VERSION_SUFFIX" \
+      | sort -V | tail -1 || true
+    return 0
+  fi
   apt-cache showsrc "$1" 2>/dev/null \
     | awk '/^Package:/{p=$2} /^Version:/{v=$2} /^$/{if (p && v) print v; p=v=""} END{if (p && v) print v}' \
     | grep -v "$VERSION_SUFFIX" \
@@ -325,10 +392,10 @@ built_version() {
   cat "$STATE_DIR/$1.built" 2>/dev/null || true
 }
 
-# A fingerprint of what a build takes from patches/<source-package>/: the series, the patches it lists in order,
-# and build-options.
+# A fingerprint of what a build reads from patches/<source-package>/: both series files and the patches they list
+# in order, the optional settings, and the keys extra-repositories names.
 patches_digest() {
-  local dir=$PATCH_DIR/$1 p
+  local src=$1 dir=$PATCH_DIR/$1 p f line
   {
     cat "$dir/series"
     while read -r p; do
@@ -337,10 +404,20 @@ patches_digest() {
       echo "=== $p"
       cat "$dir/$p" 2>/dev/null || true
     done < "$dir/series"
-    if [ -r "$dir/build-options" ]; then
-      echo "=== build-options"
-      cat "$dir/build-options"
-    fi
+    while read -r p; do
+      echo "=== debian-series $p"
+      cat "$dir/$p" 2>/dev/null || true
+    done < <(package_setting "$src" debian-series)
+    for f in build-options debian-series source-from extra-repositories sbuild-options; do
+      if [ -r "$dir/$f" ]; then
+        echo "=== $f"
+        cat "$dir/$f"
+      fi
+    done
+    while read -r line; do
+      echo "=== key ${line%% *}"
+      cat "$dir/${line%% *}" 2>/dev/null || true
+    done < <(package_setting "$src" extra-repositories)
   } | sha256sum | cut -d' ' -f1
 }
 
@@ -355,7 +432,7 @@ rebuild_reason() {
   if [ -z "$blt" ]; then
     echo "never built"
   elif [ "$off" != "$blt" ]; then
-    echo "Ubuntu moved from $blt to $off"
+    echo "the source moved from $blt to $off"
   else
     was=$(built_digest "$src")
     if [ -z "$was" ]; then
@@ -386,6 +463,27 @@ last_build_number() {
   echo "$best"
 }
 
+# The paths a patch changes, relative to the source tree as patch -p1 sees them, one per line. Only a "---" line
+# directly followed by a "+++" line is a file header: a removed line whose content starts with "--" also begins
+# with "---". /dev/null, which stands in for a created or deleted file, is left out.
+patch_paths() {
+  awk '
+    function strip(line) {
+      line = substr(line, 5)
+      sub(/\t.*/, "", line)
+      if (line == "/dev/null") return ""
+      sub(/^[^\/]*\//, "", line)
+      return line
+    }
+    /^\+\+\+ / && previous ~ /^--- / {
+      old = strip(previous); new = strip($0)
+      if (old != "") print old
+      if (new != "") print new
+    }
+    { previous = $0 }
+  ' "$1" | sort -u
+}
+
 # Add our patches to the package's own series and let dpkg-source apply them, which is exactly what the build
 # does. Running it here, before the build dependencies are installed, means a broken patch is reported in seconds
 # instead of after a long dependency install, and the message is dpkg's own rather than a reinterpretation.
@@ -393,8 +491,26 @@ last_build_number() {
 # dpkg-source applies with patch -t -F 0, so a patch needing any fuzz is refused outright. There is nothing to
 # configure about that and no point detecting it separately: a hunk that no longer matches its context stops the
 # build either way.
+#
+# The patches in debian-series are applied first, directly and also without fuzz, since they change the packaging,
+# which quilt cannot. Each patch is checked to stay on its side: a quilt patch may not touch debian/, and a packaging
+# patch may touch nothing else.
 stage_patches() {
-  local src=$1 tree=$2 p out
+  local src=$1 tree=$2 p out path
+  while read -r p; do
+    [ -r "$PATCH_DIR/$src/$p" ] || fail "$src: debian-series lists $p but the file is missing"
+    while read -r path; do
+      case "$path" in
+        debian/*) ;;
+        *) fail "$src: $p in debian-series changes $path, which is outside debian/, so it belongs in series" ;;
+      esac
+    done < <(patch_paths "$PATCH_DIR/$src/$p")
+    out=$(patch --batch --forward -p1 -F 0 --no-backup-if-mismatch -d "$tree" -i "$PATCH_DIR/$src/$p" 2>&1) || {
+      printf '%s\n' "$out" >&2
+      fail "$src: $p from debian-series does not apply, rebuild skipped and the installed version left alone"
+    }
+  done < <(package_setting "$src" debian-series)
+
   mkdir -p "$tree/debian/patches"
   touch "$tree/debian/patches/series"
 
@@ -402,6 +518,11 @@ stage_patches() {
     [ -n "$p" ] || continue
     case "$p" in \#*) continue ;; esac
     [ -r "$PATCH_DIR/$src/$p" ] || fail "$src: series lists $p but the file is missing"
+    while read -r path; do
+      case "$path" in
+        debian/*) fail "$src: $p in series changes $path, so it belongs in debian-series" ;;
+      esac
+    done < <(patch_paths "$PATCH_DIR/$src/$p")
     cp "$PATCH_DIR/$src/$p" "$tree/debian/patches/$p"
     echo "$p" >> "$tree/debian/patches/series"
   done < "$PATCH_DIR/$src/series"
@@ -456,6 +577,8 @@ rebuild() {
   local_version=$version$VERSION_SUFFIX$(( $(last_build_number "$src" "$version") + 1 ))
   work=$(mktemp -d "$BUILD_ROOT/rebuild-$src.XXXXXX")
   CLEANUP="$CLEANUP $work"
+  # Nothing else is printed until the build ends, which for a large package is an hour later.
+  echo "$src: rebuilding $version as $local_version ($reason) in $work"
 
   ( cd "$work" && apt-get source --only-source "$src=$version" ) >/dev/null 2>&1 \
     || fail "$src: apt-get source failed for $version (is deb-src enabled?)"
@@ -469,6 +592,24 @@ rebuild() {
   local opts="" email status=0
   [ -r "$PATCH_DIR/$src/build-options" ] && opts=$(cat "$PATCH_DIR/$src/build-options")
   email=${DEBEMAIL:-root@$(hostname -f 2>/dev/null || hostname)}
+
+  # Extra repositories and their keys, then further sbuild options. Key files are named relative to the package's
+  # patch directory, so a line cannot point sbuild at a key elsewhere on the system.
+  local extra=() line key
+  while read -r line; do
+    key=${line%% *}
+    case "$key" in
+      */*|"$line") fail "$src: extra-repositories line \"$line\" has to start with a key file name in $PATCH_DIR/$src" ;;
+    esac
+    [ -f "$PATCH_DIR/$src/$key" ] || fail "$src: extra-repositories names the key $key but the file is missing"
+    extra+=("--extra-repository=${line#* }" "--extra-repository-key=$PATCH_DIR/$src/$key")
+  done < <(package_setting "$src" extra-repositories)
+  while read -r line; do
+    case "$line" in
+      --*) extra+=("$line") ;;
+      *) fail "$src: sbuild-options line \"$line\" is not an option" ;;
+    esac
+  done < <(package_setting "$src" sbuild-options)
 
   mkdir "$work/home"
   # sbuild would otherwise create a tarball it considers outdated again by itself, with its own default mmdebstrap
@@ -484,7 +625,7 @@ rebuild() {
       && as_builder "$work" SBUILD_CONFIG="$work/sbuild.conf" DEB_BUILD_OPTIONS="$opts" \
            sbuild --chroot-mode=unshare --chroot="$CHROOT_TARBALL" --dist="$CODENAME" --arch-all --arch-any \
              --no-clean-source --apt-update --apt-distupgrade --no-run-lintian --no-run-piuparts --no-run-autopkgtest \
-             --jobs="$BUILD_JOBS" --build-dir="$work" "$tree" \
+             --jobs="$BUILD_JOBS" --build-dir="$work" "${extra[@]}" "$tree" \
   ) >"$work/build.log" 2>&1 || status=$?
 
   # A test suite can start processes, such as a daemon, which would otherwise outlive the build.
@@ -551,7 +692,7 @@ case "$MODE" in
     ;;
 
   status)
-    printf '%-20s %-22s %-22s %s\n' "package" "ubuntu offers" "built from" "state"
+    printf '%-20s %-22s %-22s %s\n' "package" "offered" "built from" "state"
     printf -- '-%.0s' {1..80}; echo
     for src in $(selected_packages); do
       off=$(official_version "$src"); blt=$(built_version "$src")
@@ -571,7 +712,7 @@ case "$MODE" in
     n=0
     for src in $(selected_packages); do
       off=$(official_version "$src"); blt=$(built_version "$src")
-      [ -n "$off" ] || { echo "$src: cannot determine the Ubuntu version, is deb-src enabled?"; n=$((n+1)); continue; }
+      [ -n "$off" ] || { echo "$src: cannot determine the version to rebuild, is deb-src enabled for its repository?"; n=$((n+1)); continue; }
       reason=$(rebuild_reason "$src" "$off" "$blt")
       [ -z "$reason" ] && [ "$FORCE" = yes ] && reason="forced"
       if [ -n "$reason" ]; then
@@ -608,7 +749,7 @@ case "$MODE" in
     built=0
     for src in $(selected_packages); do
       off=$(official_version "$src")
-      [ -n "$off" ] || fail "$src: cannot determine the Ubuntu version, is deb-src enabled?"
+      [ -n "$off" ] || fail "$src: cannot determine the version to rebuild, is deb-src enabled for its repository?"
       blt=$(built_version "$src")
       newer=$(unfetchable_update "$src" "$off")
       [ -n "$newer" ] && warn "$src: binary $newer is available but its source is not, so the rebuild is made" \

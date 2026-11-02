@@ -2,12 +2,13 @@
 # made there, and enabled for every user.
 #
 # Chromium, and every Electron application built on it, moves its browser process into a scope of its own,
-# app-<name>-<pid>.scope, while its helpers stay in the app-gnome-*.scope GNOME launched it in. When both scopes are
-# stopped at once, the helpers can die before the browser process starts to shut down, and it then crashes with "GPU
-# process isn't usable. Goodbye.", or stalls without its renderer until the user service manager is killed at
-# shutdown. GNOME's scopes are ordered before this service (app-gnome-.scope.d/50-after-application-scopes.conf), so
-# at logout systemd stops them only after this service has stopped. Stopping it stops every other application scope
-# first and waits until they are stopped, so the browser processes shut down while their helpers still run.
+# app-<name>-<pid>.scope, while its zygotes and GPU process stay in the app-gnome-*.scope GNOME launched it in. When
+# these scopes are stopped, the helpers can die before the browser process starts to shut down, and it then crashes
+# with "GPU process isn't usable. Goodbye.", or stalls without its renderer until the user service manager is killed
+# at shutdown. Every application scope is ordered before this service (app-.scope.d/50-graphical-session.conf), so at
+# logout systemd stops them only after this service has stopped. Stopping it runs stop-application-scopes, which
+# sends SIGTERM to each browser process alone and waits for it to exit, so that it shuts its helpers down itself. At a
+# shutdown, stop-application-scopes-before-shutdown.service stops this service before logind starts the shutdown.
 #
 # Not needed any more once Chromium keeps its helpers in its own scope: https://issues.chromium.org/issues/580525223
 
@@ -19,11 +20,9 @@ PartOf=graphical-session.target
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=/bin/true
-# Scopes which failed are listed with a marker in front of their name, but they need no stopping, so only active
-# scopes, and those already being stopped, are listed.
-ExecStop=/bin/sh -c 'units=$$(systemctl --user list-units --plain --no-legend --full --state=active,deactivating \
-  "app-*.scope" | cut -d " " -f 1 | grep -v "^app-gnome-"); [ -z "$$units" ] || exec systemctl --user stop $$units'
-# Bounds how long GNOME's scopes wait at logout when an application does not exit.
+ExecStop=/usr/local/libexec/stop-application-scopes
+# Bounds how long GNOME's scopes wait at logout when an application does not exit. The script waits for the browser
+# processes for less than this.
 TimeoutStopSec=10s
 
 [Install]

@@ -1,0 +1,105 @@
+Source package: firefox, from the Mozilla Team PPA (https://launchpad.net/~mozillateam/+archive/ubuntu/ppa)
+
+Ubuntu's own firefox package only installs the snap, and Mozilla's APT repository publishes no source, so
+Firefox comes from the Mozilla Team PPA, run by Ubuntu's Mozilla team, which builds Mozilla's release source
+with Ubuntu's packaging. Its source has to be enabled with the binaries:
+
+  sudo add-apt-repository --enable-source ppa:mozillateam/ppa
+
+source-from makes this script rebuild the PPA's source rather than Ubuntu's, and lockdown-apt-sources.sh pins
+firefox to the PPA, below the local repository, so the rebuilt package is what is installed.
+
+The PPA's packaging differs from Mozilla's own build mainly in that it disables the wasm sandboxed libraries,
+which wasm-sandboxed-libraries.patch turns back on, in shipping an AppArmor profile, which
+drop-apparmor-profile.patch removes, and in building without PGO and with Ubuntu's compilers.
+The remaining differences, partner and distribution settings and add-on sideloading for its language packs, are
+left as they are.
+
+Building
+    Launchpad builds the PPA against two more PPAs, as the override-sources-list line at the top of its build
+    logs shows, and extra-repositories adds them to the build chroot the same way:
+
+      ricotz/mozilla           an older cdbs, 0.4.182+really0.4.181~mt1, which still has the makefile class the
+                               packaging includes. Ubuntu's cdbs 0.4.182 dropped it, and the packaging includes it
+                               with -include, so without it the build silently skips compiling Firefox at all.
+      rust-toolchain/staging   Rust 1.97, the first alternative of the packaging's Rust build dependency. Ubuntu
+                               26.04 has 1.93.
+
+    Trusting them adds nothing beyond trusting the PPA's own binaries, which are built with them. The keys are
+    the PPAs' signing keys as Launchpad lists them (fingerprints 9BE528DCBA6F4EAA89326FFBB998E53B7BCC7DB8 and
+    AF2410F8B34671DD8C331787A1FBDCECDC193CE1). The lines name the release, resolute, so they have to be updated
+    on a release upgrade.
+
+    A build produces 99 packages of about 900 MiB together, mostly the debug symbols in firefox-dbg and
+    firefox-mozsymbols, and the language packs. All of them are published to the local repository, which keeps
+    only the latest build of each.
+
+wayland-session-restore-new-ids.patch
+wayland-session-restore-show-waiting-windows.patch
+wayland-session-restore-on-gnome.patch
+    Make Firefox restore its windows to their workspaces under GNOME on Wayland. Firefox implements the
+    xdg-session-management protocol, but disables it on GNOME (Mozilla bug 2070815) because of Mozilla bug
+    2064100: when a previous session is restored from the History menu or a closed window is reopened, Firefox
+    adds the shown window to the session under its ID from the previous session, which mutter rejects with a
+    name_in_use protocol error, as the protocol requires, and Firefox crashes. The first patch keeps such windows
+    under a new ID, the third enables the protocol on GNOME again.
+
+    The second fixes what enabling it exposed: a window restored at startup without a saved ID was never shown,
+    because only MoveToWorkspace() shows a window waiting for session restore and the session store calls it only
+    for a window with a saved ID. Every profile used while the protocol was disabled saves its windows without
+    IDs, so the first start after enabling it showed no window at all, apart from one which requested focus.
+
+    They need mutter with the final protocol (xdg-session-management.patch in patches/mutter/) and GTK with the
+    xdg-toplevel-realized signal (patches/gtk+3.0/). The first start after switching shows every window but
+    does not place it yet, since the profile has no IDs saved. From the next start on, windows return to their
+    workspaces.
+
+    Firefox's tests do not run in the package build, so there is no test here. The patches were checked with a
+    headless mutter and Firefox driven through Marionette: with them, restoring from the menu no longer crashes,
+    a profile without IDs shows all its windows, and the next start restores each window under the ID it was
+    added under. The first two are proposed in comment 21 of bug 2064100. The third undoes bug 2070815, which
+    disabled the protocol on GNOME until bug 2064100 is fixed. Drop them once the PPA's Firefox contains the fix
+    for bug 2064100 and no longer disables the protocol on GNOME, in widget/gtk/nsWindowWayland.cpp
+    (MoveToWorkspace) and widget/gtk/nsAppShell.cpp (IsSessionRestoreSupported).
+
+wasm-sandboxed-libraries.patch (debian-series)
+    Builds graphite, ogg, hunspell, expat, woff2 and soundtouch as wasm sandboxed libraries, as Mozilla's own
+    builds do, where the packaging disables them. Ubuntu 26.04's wasm32 toolchain has two bugs which block that,
+    and the patch works around both with a clang resource directory in the build tree, see its description:
+    Launchpad bug 2152147 (compiler-rt builtins installed where clang does not look) and Launchpad bug 2169046
+    (libc++ references C++ runtime functions no library defines). Once both are fixed, only the build
+    dependencies and the removed --without-wasm-sandboxed-libraries are needed. After a version bump, check that
+    debian/config/mozconfig.in still disables the sandbox the same way, or the patch stops applying.
+
+    With it, the rebuild behaved like Mozilla's build in a test loading each library: parsing XML, spell
+    checking, decoding Ogg, loading a WOFF2 and a Graphite font, and playing audio at a changed rate.
+
+drop-apparmor-profile.patch (debian-series)
+    Stops installing /etc/apparmor.d/usr.bin.firefox. It is an enforcing profile written for Ubuntu 14.10 and
+    named firefox, the same name as the profile Ubuntu's apparmor package ships in /etc/apparmor.d/firefox, which
+    allows everything and grants the user namespaces Firefox's sandbox needs. The PPA's preinst disables its
+    profile only on a fresh install, so switching from Mozilla's package, an upgrade for dpkg, enabled it. Under
+    it Firefox crashed at startup: it could not lock its profile directory, create its Wayland proxy socket or
+    run bwrap for glycin's image loaders, and GTK aborted when it failed to load an icon.
+
+    The patch drops everything the maintainer scripts do for the profile too, so the package does not touch
+    /etc/apparmor.d at all and leaves nothing there. It does not clean up after a build which installed the
+    profile: such a system has to purge that build first (apt purge firefox, whose postrm removes the files),
+    reload /etc/apparmor.d/firefox and then install this one. Reported as Launchpad bug 2172775. Drop the patch
+    once the PPA stops shipping the profile.
+
+Check by hand after a rebuild and a restart of Firefox:
+
+  strings /usr/lib/firefox/libxul.so /usr/lib/firefox/liblgpllibs.so | grep -o 'rlbox_wasm2c_[a-z0-9]*' | sort -u
+                                     should list expat, graphite, hunspell, ogg, soundtouch and woff2
+  MOZ_LOG=WidgetWayland:4 firefox 2>&1 | grep IsSessionRestoreSupported
+                                     should print nothing, as the line appears only when it is disabled
+  windows on several workspaces      should return to them after the second restart
+  cat /proc/$(pgrep -o -x firefox)/attr/current
+                                     should print "firefox (unconfined)", Ubuntu's profile. Ubuntu's 7.0 kernel prints
+                                     "unconfined": its attachment matcher mishandles the diff-encoded state the
+                                     parser emits for that profile's pattern (Launchpad bug 2172229, fixed in mainline
+                                     by e667fc72f7f4). "Optimize=no-diff-encode" in /etc/apparmor/parser.conf, which
+                                     configure-gnome-desktop.sh adds, works around it.
+  find /etc/apparmor.d -name '*firefox*'
+                                     should print only /etc/apparmor.d/firefox, Ubuntu's profile

@@ -1,0 +1,16 @@
+Description: List gdk_wayland_window_get_xdg_toplevel in the symbols file.
+ wayland-export-xdg-toplevel.patch adds the function to libgdk-3, and dh_makeshlibs runs with -c4, which fails the
+ build on any symbol the symbols file does not list.
+Author: Mitar
+Forwarded: not-needed
+Last-Update: 2026-11-02
+--- a/debian/libgtk-3-0t64.symbols
++++ b/debian/libgtk-3-0t64.symbols
+@@ -504,6 +504,7 @@
+  (arch=linux-any)gdk_wayland_window_export_handle@Base 3.21.5
+  (arch=linux-any)gdk_wayland_window_get_type@Base 3.9.10
+  (arch=linux-any)gdk_wayland_window_get_wl_surface@Base 3.9.10
++ (arch=linux-any)gdk_wayland_window_get_xdg_toplevel@Base 3.24.52
+  (arch=linux-any)gdk_wayland_window_remove_frame_callback_surface@Base 3.24.25
+  (arch=linux-any)gdk_wayland_window_set_application_id@Base 3.24.22
+  (arch=linux-any)gdk_wayland_window_set_dbus_properties_libgtk_only@Base 3.10.0

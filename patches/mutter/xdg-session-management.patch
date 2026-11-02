@@ -1,0 +1,1627 @@
+Description: Offer the xdg-session-management-v1 Wayland protocol.
+ Backport of mutter merge request 4806 to 50.1. Mutter 50 has the session management protocol only under its
+ draft name xx_session_manager_v1, and offers it only when gnome-shell runs with
+ MUTTER_DEBUG_SESSION_MANAGEMENT_PROTOCOL=1. Clients which implement the final protocol, like Firefox since 154,
+ bind only xdg_session_manager_v1, so they never find it. With this patch mutter offers xdg_session_manager_v1
+ to every client, and a client which names its windows has their workspace, monitor, position, size and
+ maximized, tiled or fullscreen state restored by mutter the next time it opens a window with that name.
+ .
+ The four commits are cherry-picked unchanged except for the test change of the last one. Upstream it edits
+ src/tests/wayland-xdg-session-management-tests.c, which was split out of src/tests/wayland-unit-tests.c after
+ 50.1, so here the same line is removed from wayland-unit-tests.c instead. The protocol XML is mutter's own copy,
+ which src/meson.build uses when wayland-protocols is older than 1.48, as it is in Ubuntu 26.04.
+Author: Carlos Garnacho <carlosg@gnome.org>
+Origin: backport, https://gitlab.gnome.org/GNOME/mutter/-/merge_requests/4806
+Applied-Upstream: 51.beta, commits e14fc49862d0c1f7b8f66be42a7912bf5cdda71c 8366f508916e4e71426400b499568c2e4d01af86
+ 10043bf53367092e1b753dfb0c4325a508628c73 81875dabd439fe2be19ccce82407575b9ee188e9
+Last-Update: 2026-11-02
+diff --git a/src/core/meta-debug-control-private.h b/src/core/meta-debug-control-private.h
+index eee760685..96a655417 100644
+--- a/src/core/meta-debug-control-private.h
++++ b/src/core/meta-debug-control-private.h
+@@ -24,8 +24,6 @@ gboolean meta_debug_control_is_linear_blending_forced (MetaDebugControl *debug_c
+ 
+ gboolean meta_debug_control_is_hdr_forced (MetaDebugControl *debug_control);
+ 
+-gboolean meta_debug_control_is_session_management_protocol_enabled (MetaDebugControl *debug_control);
+-
+ gboolean meta_debug_control_is_hw_cursor_inhibited (MetaDebugControl *debug_control);
+ 
+ gboolean meta_debug_control_is_a11y_manager_without_access_control (MetaDebugControl *debug_control);
+diff --git a/src/core/meta-debug-control.c b/src/core/meta-debug-control.c
+index bdf59d0fa..ad6e5ad70 100644
+--- a/src/core/meta-debug-control.c
++++ b/src/core/meta-debug-control.c
+@@ -169,7 +169,6 @@ meta_debug_control_init (MetaDebugControl *debug_control)
+   MetaDBusDebugControl *dbus_debug_control =
+     META_DBUS_DEBUG_CONTROL (debug_control);
+   gboolean force_hdr, force_linear_blending;
+-  gboolean session_management_protocol;
+   gboolean inhibit_hw_cursor;
+   gboolean a11y_manager_without_access_control;
+ 
+@@ -181,11 +180,6 @@ meta_debug_control_init (MetaDebugControl *debug_control)
+   meta_dbus_debug_control_set_force_linear_blending (dbus_debug_control,
+                                                      force_linear_blending);
+ 
+-  session_management_protocol =
+-    g_strcmp0 (getenv ("MUTTER_DEBUG_SESSION_MANAGEMENT_PROTOCOL"), "1") == 0;
+-  meta_dbus_debug_control_set_session_management_protocol (dbus_debug_control,
+-                                                           session_management_protocol);
+-
+   inhibit_hw_cursor =
+     g_strcmp0 (getenv ("MUTTER_DEBUG_INHIBIT_HW_CURSOR"), "1") == 0;
+   meta_dbus_debug_control_set_inhibit_hw_cursor (dbus_debug_control,
+@@ -215,15 +209,6 @@ meta_debug_control_is_hdr_forced (MetaDebugControl *debug_control)
+   return meta_dbus_debug_control_get_force_hdr (dbus_debug_control);
+ }
+ 
+-gboolean
+-meta_debug_control_is_session_management_protocol_enabled (MetaDebugControl *debug_control)
+-{
+-  MetaDBusDebugControl *dbus_debug_control =
+-    META_DBUS_DEBUG_CONTROL (debug_control);
+-
+-  return meta_dbus_debug_control_get_session_management_protocol (dbus_debug_control);
+-}
+-
+ void
+ meta_debug_control_set_exported (MetaDebugControl *debug_control,
+                                  gboolean          exported)
+diff --git a/src/core/meta-session-state.c b/src/core/meta-session-state.c
+index dbaf98f3c..992c52ea5 100644
+--- a/src/core/meta-session-state.c
++++ b/src/core/meta-session-state.c
+@@ -99,6 +99,13 @@ meta_session_state_remove_window (MetaSessionState *state,
+   META_SESSION_STATE_GET_CLASS (state)->remove_window (state, name);
+ }
+ 
++gboolean
++meta_session_state_has_window (MetaSessionState *state,
++                               const char       *name)
++{
++  return META_SESSION_STATE_GET_CLASS (state)->has_window (state, name);
++}
++
+ static void
+ meta_session_state_set_property (GObject      *object,
+                                  guint         prop_id,
+diff --git a/src/core/meta-session-state.h b/src/core/meta-session-state.h
+index 986563d86..138b5ffad 100644
+--- a/src/core/meta-session-state.h
++++ b/src/core/meta-session-state.h
+@@ -53,6 +53,9 @@ struct _MetaSessionStateClass
+ 
+   void (* remove_window) (MetaSessionState *state,
+                           const char       *name);
++
++  gboolean (* has_window) (MetaSessionState *state,
++                           const char       *name);
+ };
+ 
+ const char * meta_session_state_get_name (MetaSessionState *state);
+@@ -74,3 +77,6 @@ gboolean meta_session_state_restore_window (MetaSessionState *state,
+ 
+ void meta_session_state_remove_window (MetaSessionState *state,
+                                        const char       *name);
++
++gboolean meta_session_state_has_window (MetaSessionState *state,
++                                        const char       *name);
+diff --git a/src/meson.build b/src/meson.build
+index 22d0188f8..e4868c5b8 100644
+--- a/src/meson.build
++++ b/src/meson.build
+@@ -1072,7 +1072,6 @@ wayland_protocols = [
+   ['presentation-time', 'stable', ],
+   ['primary-selection', 'unstable', 1, ],
+   ['relative-pointer', 'unstable', 1, ],
+-  ['session-management-v1', 'private', ],
+   ['single-pixel-buffer', 'staging', 1, ],
+   ['tablet', 'stable', 2, ],
+   ['text-input', 'unstable', 3, ],
+@@ -1101,6 +1100,16 @@ if have_wayland_eglstream
+   wayland_eglstream_protocols_dir = wayland_eglstream_protocols_dep.get_variable('pkgdatadir')
+ endif
+ 
++if wayland_protocols_dep.version().version_compare('>=1.48')
++  wayland_protocols += [
++    ['xdg-session-management', 'staging', 1, ],
++  ]
++else
++  wayland_protocols += [
++    ['xdg-session-management-v1', 'private', 1, ],
++  ]
++endif
++
+ protocol_xmls = files()
+ 
+ foreach p: wayland_protocols
+diff --git a/src/tests/wayland-test-clients/xdg-session-management-replace.c b/src/tests/wayland-test-clients/xdg-session-management-replace.c
+index 89cd87d1a..d7f6c654b 100644
+--- a/src/tests/wayland-test-clients/xdg-session-management-replace.c
++++ b/src/tests/wayland-test-clients/xdg-session-management-replace.c
+@@ -21,7 +21,7 @@
+ 
+ #include "wayland-test-client-utils.h"
+ 
+-#include "session-management-v1-client-protocol.h"
++#include "xdg-session-management-v1-client-protocol.h"
+ 
+ 
+ typedef enum _TestState
+@@ -33,7 +33,7 @@ typedef enum _TestState
+ 
+ typedef struct _TestDisplayState
+ {
+-  struct xx_session_manager_v1 *session_manager;
++  struct xdg_session_manager_v1 *session_manager;
+   TestState state;
+ } TestDisplayState;
+ 
+@@ -47,10 +47,10 @@ handle_registry_global (void               *user_data,
+   WaylandDisplay *display = user_data;
+   TestDisplayState *test_state = display->test_state;
+ 
+-  if (strcmp (interface, "xx_session_manager_v1") == 0)
++  if (strcmp (interface, "xdg_session_manager_v1") == 0)
+     {
+       test_state->session_manager =
+-        wl_registry_bind (registry, id, &xx_session_manager_v1_interface, 1);
++        wl_registry_bind (registry, id, &xdg_session_manager_v1_interface, 1);
+     }
+ }
+ 
+@@ -81,9 +81,9 @@ typedef struct
+ } ToplevelSessionState;
+ 
+ static void
+-test_create_created (void                 *user_data,
+-                     struct xx_session_v1 *xdg_session_v1,
+-                     const char           *id)
++test_create_created (void                  *user_data,
++                     struct xdg_session_v1 *xdg_session_v1,
++                     const char            *id)
+ {
+   TestCreateState *state = user_data;
+ 
+@@ -92,8 +92,8 @@ test_create_created (void                 *user_data,
+ }
+ 
+ static void
+-test_create_restored (void                 *user_data,
+-                      struct xx_session_v1 *xdg_session_v1)
++test_create_restored (void                  *user_data,
++                      struct xdg_session_v1 *xdg_session_v1)
+ {
+   TestCreateState *state = user_data;
+ 
+@@ -101,31 +101,30 @@ test_create_restored (void                 *user_data,
+ }
+ 
+ static void
+-test_create_replaced (void                 *user_data,
+-                      struct xx_session_v1 *xdg_session_v1)
++test_create_replaced (void                  *user_data,
++                      struct xdg_session_v1 *xdg_session_v1)
+ {
+   TestCreateState *state = user_data;
+ 
+   state->received_replaced = TRUE;
+ }
+ 
+-static struct xx_session_v1_listener test_create_session_listener = {
++static struct xdg_session_v1_listener test_create_session_listener = {
+   test_create_created,
+   test_create_restored,
+   test_create_replaced,
+ };
+ 
+ static void
+-toplevel_restored (void                          *user_data,
+-                   struct xx_toplevel_session_v1 *toplevel_session,
+-                   struct xdg_toplevel           *toplevel)
++toplevel_restored (void                           *user_data,
++                   struct xdg_toplevel_session_v1 *toplevel_session)
+ {
+   ToplevelSessionState *toplevel_state = user_data;
+ 
+   toplevel_state->restored = TRUE;
+ }
+ 
+-static struct xx_toplevel_session_v1_listener toplevel_session_listener = {
++static struct xdg_toplevel_session_v1_listener toplevel_session_listener = {
+   toplevel_restored,
+ };
+ 
+@@ -144,8 +143,8 @@ main (int    argc,
+   struct wl_registry *registry1, *registry2;
+   TestDisplayState *test_state1, *test_state2;
+   g_autoptr (WaylandSurface) toplevel1 = NULL, toplevel2 = NULL;
+-  struct xx_session_v1 *session1, *session2;
+-  struct xx_toplevel_session_v1 *toplevel_session1, *toplevel_session2;
++  struct xdg_session_v1 *session1, *session2;
++  struct xdg_toplevel_session_v1 *toplevel_session1, *toplevel_session2;
+   TestCreateState state1 = {};
+   TestCreateState state2 = {};
+   ToplevelSessionState toplevel_state1 = {};
+@@ -169,22 +168,22 @@ main (int    argc,
+                     &toplevel_state1);
+ 
+   session1 =
+-    xx_session_manager_v1_get_session (test_state1->session_manager,
+-                                       XX_SESSION_MANAGER_V1_REASON_LAUNCH,
+-                                       NULL);
+-  xx_session_v1_add_listener (session1, &test_create_session_listener, &state1);
++    xdg_session_manager_v1_get_session (test_state1->session_manager,
++                                        XDG_SESSION_MANAGER_V1_REASON_LAUNCH,
++                                        NULL);
++  xdg_session_v1_add_listener (session1, &test_create_session_listener, &state1);
+ 
+   while (!state1.received_created)
+     wayland_display_dispatch (display1);
+   g_assert_nonnull (state1.id);
+ 
+   /* Test add before committing initial state. */
+-  toplevel_session1 = xx_session_v1_add_toplevel (session1,
+-                                                  toplevel1->xdg_toplevel,
+-                                                  "toplevel");
+-  xx_toplevel_session_v1_add_listener (toplevel_session1,
+-                                       &toplevel_session_listener,
+-                                       &toplevel_state1);
++  toplevel_session1 = xdg_session_v1_add_toplevel (session1,
++                                                   toplevel1->xdg_toplevel,
++                                                   "toplevel");
++  xdg_toplevel_session_v1_add_listener (toplevel_session1,
++                                        &toplevel_session_listener,
++                                        &toplevel_state1);
+   wl_surface_commit (toplevel1->wl_surface);
+ 
+   while (!toplevel_state1.configured)
+@@ -209,21 +208,21 @@ main (int    argc,
+                     &toplevel_state2);
+ 
+   session2 =
+-    xx_session_manager_v1_get_session (test_state2->session_manager,
+-                                       XX_SESSION_MANAGER_V1_REASON_LAUNCH,
+-                                       state1.id);
+-  xx_session_v1_add_listener (session2, &test_create_session_listener, &state2);
++    xdg_session_manager_v1_get_session (test_state2->session_manager,
++                                        XDG_SESSION_MANAGER_V1_REASON_LAUNCH,
++                                        state1.id);
++  xdg_session_v1_add_listener (session2, &test_create_session_listener, &state2);
+ 
+   while (!state2.received_restored)
+     wayland_display_dispatch (display2);
+ 
+   /* Test add before committing initial state. */
+-  toplevel_session2 = xx_session_v1_restore_toplevel (session2,
+-                                                      toplevel2->xdg_toplevel,
+-                                                      "toplevel");
+-  xx_toplevel_session_v1_add_listener (toplevel_session2,
+-                                       &toplevel_session_listener,
+-                                       &toplevel_state2);
++  toplevel_session2 = xdg_session_v1_restore_toplevel (session2,
++                                                       toplevel2->xdg_toplevel,
++                                                       "toplevel");
++  xdg_toplevel_session_v1_add_listener (toplevel_session2,
++                                        &toplevel_session_listener,
++                                        &toplevel_state2);
+   wl_surface_commit (toplevel2->wl_surface);
+ 
+   while (!toplevel_state2.configured)
+diff --git a/src/tests/wayland-test-clients/xdg-session-management-restore.c b/src/tests/wayland-test-clients/xdg-session-management-restore.c
+index 7654eca8f..20e0ebdfb 100644
+--- a/src/tests/wayland-test-clients/xdg-session-management-restore.c
++++ b/src/tests/wayland-test-clients/xdg-session-management-restore.c
+@@ -21,11 +21,11 @@
+ 
+ #include "wayland-test-client-utils.h"
+ 
+-#include "session-management-v1-client-protocol.h"
++#include "xdg-session-management-v1-client-protocol.h"
+ 
+ typedef struct _TestDisplayState
+ {
+-  struct xx_session_manager_v1 *session_manager;
++  struct xdg_session_manager_v1 *session_manager;
+ } TestDisplayState;
+ 
+ static gboolean running = FALSE;
+@@ -40,10 +40,10 @@ handle_registry_global (void               *user_data,
+   WaylandDisplay *display = user_data;
+   TestDisplayState *test_state = display->test_state;
+ 
+-  if (strcmp (interface, "xx_session_manager_v1") == 0)
++  if (strcmp (interface, "xdg_session_manager_v1") == 0)
+     {
+       test_state->session_manager =
+-        wl_registry_bind (registry, id, &xx_session_manager_v1_interface, 1);
++        wl_registry_bind (registry, id, &xdg_session_manager_v1_interface, 1);
+     }
+ }
+ 
+@@ -72,9 +72,9 @@ typedef struct
+ } ToplevelSessionState;
+ 
+ static void
+-test_create_created (void                 *user_data,
+-                     struct xx_session_v1 *xdg_session_v1,
+-                     const char           *id)
++test_create_created (void                  *user_data,
++                     struct xdg_session_v1 *xdg_session_v1,
++                     const char            *id)
+ {
+   TestCreateState *state = user_data;
+ 
+@@ -82,8 +82,8 @@ test_create_created (void                 *user_data,
+ }
+ 
+ static void
+-test_create_restored (void                 *user_data,
+-                      struct xx_session_v1 *xdg_session_v1)
++test_create_restored (void                  *user_data,
++                      struct xdg_session_v1 *xdg_session_v1)
+ {
+   TestCreateState *state = user_data;
+ 
+@@ -91,28 +91,27 @@ test_create_restored (void                 *user_data,
+ }
+ 
+ static void
+-test_create_replaced (void                 *user_data,
+-                      struct xx_session_v1 *xdg_session_v1)
++test_create_replaced (void                  *user_data,
++                      struct xdg_session_v1 *xdg_session_v1)
+ {
+ }
+ 
+-static struct xx_session_v1_listener test_create_session_listener = {
++static struct xdg_session_v1_listener test_create_session_listener = {
+   test_create_created,
+   test_create_restored,
+   test_create_replaced,
+ };
+ 
+ static void
+-toplevel_restored (void                          *user_data,
+-                   struct xx_toplevel_session_v1 *toplevel_session,
+-                   struct xdg_toplevel           *toplevel)
++toplevel_restored (void                           *user_data,
++                   struct xdg_toplevel_session_v1 *toplevel_session)
+ {
+   ToplevelSessionState *toplevel_state = user_data;
+ 
+   toplevel_state->restored = TRUE;
+ }
+ 
+-static struct xx_toplevel_session_v1_listener toplevel_session_listener = {
++static struct xdg_toplevel_session_v1_listener toplevel_session_listener = {
+   toplevel_restored,
+ };
+ 
+@@ -129,8 +128,8 @@ simple (WaylandDisplay *display,
+ {
+   TestDisplayState *test_state = display->test_state;
+   g_autoptr (WaylandSurface) toplevel1 = NULL;
+-  struct xx_session_v1 *session;
+-  struct xx_toplevel_session_v1 *toplevel_session1;
++  struct xdg_session_v1 *session;
++  struct xdg_toplevel_session_v1 *toplevel_session1;
+   TestCreateState state = {};
+   ToplevelSessionState toplevel_state1 = {};
+ 
+@@ -141,10 +140,10 @@ simple (WaylandDisplay *display,
+                     &toplevel_state1);
+ 
+   session =
+-    xx_session_manager_v1_get_session (test_state->session_manager,
+-                                       XX_SESSION_MANAGER_V1_REASON_LAUNCH,
+-                                       session_id);
+-  xx_session_v1_add_listener (session, &test_create_session_listener, &state);
++    xdg_session_manager_v1_get_session (test_state->session_manager,
++                                        XDG_SESSION_MANAGER_V1_REASON_LAUNCH,
++                                        session_id);
++  xdg_session_v1_add_listener (session, &test_create_session_listener, &state);
+ 
+   while (!state.received_created && !state.received_restored)
+     wayland_display_dispatch (display);
+@@ -154,12 +153,12 @@ simple (WaylandDisplay *display,
+   else
+     g_assert_true (state.received_created);
+ 
+-  toplevel_session1 = xx_session_v1_restore_toplevel (session,
+-                                                      toplevel1->xdg_toplevel,
+-                                                      "toplevel1");
+-  xx_toplevel_session_v1_add_listener (toplevel_session1,
+-                                       &toplevel_session_listener,
+-                                       &toplevel_state1);
++  toplevel_session1 = xdg_session_v1_restore_toplevel (session,
++                                                       toplevel1->xdg_toplevel,
++                                                       "toplevel1");
++  xdg_toplevel_session_v1_add_listener (toplevel_session1,
++                                        &toplevel_session_listener,
++                                        &toplevel_state1);
+ 
+   wl_surface_commit (toplevel1->wl_surface);
+ 
+@@ -167,8 +166,8 @@ simple (WaylandDisplay *display,
+   while (running)
+     wayland_display_dispatch (display);
+ 
+-  xx_toplevel_session_v1_destroy (toplevel_session1);
+-  xx_session_v1_destroy (session);
++  xdg_toplevel_session_v1_destroy (toplevel_session1);
++  xdg_session_v1_destroy (session);
+ }
+ 
+ static void
+diff --git a/src/tests/wayland-test-clients/xdg-session-management.c b/src/tests/wayland-test-clients/xdg-session-management.c
+index 9da519755..a32e1d39f 100644
+--- a/src/tests/wayland-test-clients/xdg-session-management.c
++++ b/src/tests/wayland-test-clients/xdg-session-management.c
+@@ -21,11 +21,11 @@
+ 
+ #include "wayland-test-client-utils.h"
+ 
+-#include "session-management-v1-client-protocol.h"
++#include "xdg-session-management-v1-client-protocol.h"
+ 
+ typedef struct _TestDisplayState
+ {
+-  struct xx_session_manager_v1 *session_manager;
++  struct xdg_session_manager_v1 *session_manager;
+ } TestDisplayState;
+ 
+ static void
+@@ -38,10 +38,10 @@ handle_registry_global (void               *user_data,
+   WaylandDisplay *display = user_data;
+   TestDisplayState *test_state = display->test_state;
+ 
+-  if (strcmp (interface, "xx_session_manager_v1") == 0)
++  if (strcmp (interface, "xdg_session_manager_v1") == 0)
+     {
+       test_state->session_manager =
+-        wl_registry_bind (registry, id, &xx_session_manager_v1_interface, 1);
++        wl_registry_bind (registry, id, &xdg_session_manager_v1_interface, 1);
+     }
+ }
+ 
+@@ -69,9 +69,9 @@ typedef struct
+ } ToplevelSessionState;
+ 
+ static void
+-test_create_created (void                 *user_data,
+-                     struct xx_session_v1 *xdg_session_v1,
+-                     const char           *id)
++test_create_created (void                  *user_data,
++                     struct xdg_session_v1 *xdg_session_v1,
++                     const char            *id)
+ {
+   TestCreateState *state = user_data;
+ 
+@@ -79,34 +79,33 @@ test_create_created (void                 *user_data,
+ }
+ 
+ static void
+-test_create_restored (void                 *user_data,
+-                      struct xx_session_v1 *xdg_session_v1)
++test_create_restored (void                  *user_data,
++                      struct xdg_session_v1 *xdg_session_v1)
+ {
+ }
+ 
+ static void
+-test_create_replaced (void                 *user_data,
+-                      struct xx_session_v1 *xdg_session_v1)
++test_create_replaced (void                  *user_data,
++                      struct xdg_session_v1 *xdg_session_v1)
+ {
+ }
+ 
+-static struct xx_session_v1_listener test_create_session_listener = {
++static struct xdg_session_v1_listener test_create_session_listener = {
+   test_create_created,
+   test_create_restored,
+   test_create_replaced,
+ };
+ 
+ static void
+-toplevel_restored (void                          *user_data,
+-                   struct xx_toplevel_session_v1 *toplevel_session,
+-                   struct xdg_toplevel           *toplevel)
++toplevel_restored (void                           *user_data,
++                   struct xdg_toplevel_session_v1 *toplevel_session)
+ {
+   ToplevelSessionState *toplevel_state = user_data;
+ 
+   toplevel_state->restored = TRUE;
+ }
+ 
+-static struct xx_toplevel_session_v1_listener toplevel_session_listener = {
++static struct xdg_toplevel_session_v1_listener toplevel_session_listener = {
+   toplevel_restored,
+ };
+ 
+@@ -123,9 +122,9 @@ basic (WaylandDisplay *display)
+   TestDisplayState *test_state = display->test_state;
+   g_autoptr (WaylandSurface) toplevel1 = NULL;
+   g_autoptr (WaylandSurface) toplevel2 = NULL;
+-  struct xx_session_v1 *session;
+-  struct xx_toplevel_session_v1 *toplevel_session1;
+-  struct xx_toplevel_session_v1 *toplevel_session2;
++  struct xdg_session_v1 *session;
++  struct xdg_toplevel_session_v1 *toplevel_session1;
++  struct xdg_toplevel_session_v1 *toplevel_session2;
+   TestCreateState state = {};
+   ToplevelSessionState toplevel_state1 = {};
+   ToplevelSessionState toplevel_state2 = {};
+@@ -137,21 +136,21 @@ basic (WaylandDisplay *display)
+                     &toplevel_state1);
+ 
+   session =
+-    xx_session_manager_v1_get_session (test_state->session_manager,
+-                                       XX_SESSION_MANAGER_V1_REASON_LAUNCH,
+-                                       NULL);
+-  xx_session_v1_add_listener (session, &test_create_session_listener, &state);
++    xdg_session_manager_v1_get_session (test_state->session_manager,
++                                        XDG_SESSION_MANAGER_V1_REASON_LAUNCH,
++                                        NULL);
++  xdg_session_v1_add_listener (session, &test_create_session_listener, &state);
+ 
+   while (!state.received_created)
+     wayland_display_dispatch (display);
+ 
+   /* Test add before committing initial state. */
+-  toplevel_session1 = xx_session_v1_add_toplevel (session,
+-                                                  toplevel1->xdg_toplevel,
+-                                                  "toplevel1");
+-  xx_toplevel_session_v1_add_listener (toplevel_session1,
+-                                       &toplevel_session_listener,
+-                                       &toplevel_state1);
++  toplevel_session1 = xdg_session_v1_add_toplevel (session,
++                                                   toplevel1->xdg_toplevel,
++                                                   "toplevel1");
++  xdg_toplevel_session_v1_add_listener (toplevel_session1,
++                                        &toplevel_session_listener,
++                                        &toplevel_state1);
+   wl_surface_commit (toplevel1->wl_surface);
+ 
+   while (!toplevel_state1.configured)
+@@ -166,20 +165,20 @@ basic (WaylandDisplay *display)
+                     &toplevel_state2);
+   wl_surface_commit (toplevel1->wl_surface);
+ 
+-  toplevel_session2 = xx_session_v1_add_toplevel (session,
+-                                                  toplevel2->xdg_toplevel,
+-                                                  "toplevel2");
+-  xx_toplevel_session_v1_add_listener (toplevel_session2,
+-                                       &toplevel_session_listener,
+-                                       &toplevel_state2);
++  toplevel_session2 = xdg_session_v1_add_toplevel (session,
++                                                   toplevel2->xdg_toplevel,
++                                                   "toplevel2");
++  xdg_toplevel_session_v1_add_listener (toplevel_session2,
++                                        &toplevel_session_listener,
++                                        &toplevel_state2);
+ 
+   while (!toplevel_state2.configured)
+     wayland_display_dispatch (display);
+   g_assert_false (toplevel_state2.restored);
+ 
+-  xx_toplevel_session_v1_destroy (toplevel_session1);
+-  xx_toplevel_session_v1_destroy (toplevel_session2);
+-  xx_session_v1_destroy (session);
++  xdg_toplevel_session_v1_destroy (toplevel_session1);
++  xdg_toplevel_session_v1_destroy (toplevel_session2);
++  xdg_session_v1_destroy (session);
+ }
+ 
+ static void
+@@ -187,33 +186,33 @@ toplevel_inert (WaylandDisplay *display)
+ {
+   TestDisplayState *test_state = display->test_state;
+   g_autoptr (WaylandSurface) toplevel = NULL;
+-  struct xx_session_v1 *session;
+-  struct xx_toplevel_session_v1 *toplevel_session;
++  struct xdg_session_v1 *session;
++  struct xdg_toplevel_session_v1 *toplevel_session;
+   TestCreateState state = {};
+   ToplevelSessionState toplevel_state = {};
+ 
+   toplevel = wayland_surface_new (display, "toplevel",
+-                                 100, 100, 0xff50ff50);
++                                  100, 100, 0xff50ff50);
+   g_signal_connect (toplevel, "configure",
+                     G_CALLBACK (on_toplevel_configured),
+                     &toplevel_state);
+ 
+   session =
+-    xx_session_manager_v1_get_session (test_state->session_manager,
+-                                       XX_SESSION_MANAGER_V1_REASON_LAUNCH,
+-                                       NULL);
+-  xx_session_v1_add_listener (session, &test_create_session_listener, &state);
++    xdg_session_manager_v1_get_session (test_state->session_manager,
++                                        XDG_SESSION_MANAGER_V1_REASON_LAUNCH,
++                                        NULL);
++  xdg_session_v1_add_listener (session, &test_create_session_listener, &state);
+ 
+   while (!state.received_created)
+     wayland_display_dispatch (display);
+ 
+   /* Test add before committing initial state. */
+-  toplevel_session = xx_session_v1_add_toplevel (session,
+-                                                 toplevel->xdg_toplevel,
+-                                                 "toplevel");
+-  xx_toplevel_session_v1_add_listener (toplevel_session,
+-                                       &toplevel_session_listener,
+-                                       &toplevel_state);
++  toplevel_session = xdg_session_v1_add_toplevel (session,
++                                                  toplevel->xdg_toplevel,
++                                                  "toplevel");
++  xdg_toplevel_session_v1_add_listener (toplevel_session,
++                                        &toplevel_session_listener,
++                                        &toplevel_state);
+   wl_surface_commit (toplevel->wl_surface);
+ 
+   while (!toplevel_state.configured)
+@@ -224,9 +223,9 @@ toplevel_inert (WaylandDisplay *display)
+   g_clear_object (&toplevel);
+ 
+   /* toplevel_session should be inert now and remove should have no effect */
+-  xx_toplevel_session_v1_remove (toplevel_session);
++  xdg_session_v1_remove_toplevel (session, "toplevel");
+ 
+-  xx_session_v1_destroy (session);
++  xdg_session_v1_destroy (session);
+ }
+ 
+ int
+diff --git a/src/tests/wayland-unit-tests.c b/src/tests/wayland-unit-tests.c
+index 21c36ceb2..d233e0a26 100644
+--- a/src/tests/wayland-unit-tests.c
++++ b/src/tests/wayland-unit-tests.c
+@@ -2454,8 +2454,6 @@ main (int   argc,
+   g_autoptr (MetaContext) context = NULL;
+   MetaTestRunFlags test_run_flags;
+ 
+-  g_setenv ("MUTTER_DEBUG_SESSION_MANAGEMENT_PROTOCOL", "1", TRUE);
+-
+ #ifdef MUTTER_PRIVILEGED_TEST
+   context = meta_create_test_context (META_CONTEXT_TEST_TYPE_VKMS,
+                                       META_CONTEXT_TEST_FLAG_NO_X11 |
+diff --git a/src/wayland/meta-wayland-xdg-session-manager.c b/src/wayland/meta-wayland-xdg-session-manager.c
+index e88bf47fb..fe7115bcd 100644
+--- a/src/wayland/meta-wayland-xdg-session-manager.c
++++ b/src/wayland/meta-wayland-xdg-session-manager.c
+@@ -28,7 +28,7 @@
+ #include "core/meta-debug-control-private.h"
+ #include "core/meta-session-manager.h"
+ 
+-#include "session-management-v1-server-protocol.h"
++#include "xdg-session-management-v1-server-protocol.h"
+ 
+ #define TIMEOUT_DELAY_SECONDS 3
+ 
+@@ -254,7 +254,7 @@ xdg_session_manager_get_session (struct wl_client   *client,
+           if (meta_wayland_xdg_session_is_same_client (prev_session, client))
+             {
+               wl_resource_post_error (resource,
+-                                      XX_SESSION_MANAGER_V1_ERROR_IN_USE,
++                                      XDG_SESSION_MANAGER_V1_ERROR_IN_USE,
+                                       "Session %s already in use",
+                                       session_id);
+               return;
+@@ -314,7 +314,7 @@ xdg_session_manager_get_session (struct wl_client   *client,
+                        g_steal_pointer (&session_state));
+ }
+ 
+-static const struct xx_session_manager_v1_interface meta_xdg_session_manager_interface = {
++static const struct xdg_session_manager_v1_interface meta_xdg_session_manager_interface = {
+   xdg_session_manager_destroy,
+   xdg_session_manager_get_session,
+ };
+@@ -328,44 +328,12 @@ bind_session_manager (struct wl_client *client,
+   MetaWaylandXdgSessionManager *session_manager = data;
+   struct wl_resource *resource;
+ 
+-  resource = wl_resource_create (client, &xx_session_manager_v1_interface,
++  resource = wl_resource_create (client, &xdg_session_manager_v1_interface,
+                                  version, id);
+   wl_resource_set_implementation (resource, &meta_xdg_session_manager_interface,
+                                   session_manager, NULL);
+ }
+ 
+-static void
+-update_enabled (MetaWaylandXdgSessionManager *session_manager)
+-{
+-  MetaWaylandCompositor *compositor = session_manager->compositor;
+-  MetaDebugControl *debug_control =
+-    meta_context_get_debug_control (compositor->context);
+-  gboolean is_enabled;
+-
+-  is_enabled =
+-    meta_debug_control_is_session_management_protocol_enabled (debug_control);
+-
+-  if (is_enabled && !session_manager->global)
+-    {
+-      struct wl_display *wayland_display;
+-
+-      wayland_display =
+-        meta_wayland_compositor_get_wayland_display (compositor);
+-
+-      session_manager->global =
+-        wl_global_create (wayland_display,
+-                          &xx_session_manager_v1_interface,
+-                          META_XDG_SESSION_MANAGER_V1_VERSION,
+-                          session_manager, bind_session_manager);
+-      if (!session_manager->global)
+-        g_error ("Could not create session manager global");
+-    }
+-  else if (!is_enabled)
+-    {
+-      g_clear_pointer (&session_manager->global, wl_global_destroy);
+-    }
+-}
+-
+ static MetaWaylandXdgSessionManager *
+ meta_wayland_session_manager_new (MetaWaylandCompositor *compositor)
+ {
+@@ -393,41 +361,28 @@ meta_wayland_session_manager_free (MetaWaylandXdgSessionManager *session_manager
+   g_free (session_manager);
+ }
+ 
+-static void
+-on_protocol_enabled_changed (GObject    *object,
+-                             GParamSpec *pspec,
+-                             gpointer    user_data)
+-{
+-  MetaWaylandXdgSessionManager *session_manager = user_data;
+-
+-  update_enabled (session_manager);
+-}
+-
+ void
+ meta_wayland_xdg_session_management_init (MetaWaylandCompositor *compositor)
+ {
+-  MetaDebugControl *debug_control =
+-    meta_context_get_debug_control (compositor->context);
++  struct wl_display *wayland_display;
+ 
+   compositor->session_manager = meta_wayland_session_manager_new (compositor);
+ 
+-  g_signal_connect (debug_control, "notify::session-management-protocol",
+-                    G_CALLBACK (on_protocol_enabled_changed),
+-                    compositor->session_manager);
++  wayland_display =
++    meta_wayland_compositor_get_wayland_display (compositor);
+ 
+-  update_enabled (compositor->session_manager);
++  compositor->session_manager->global =
++    wl_global_create (wayland_display,
++                      &xdg_session_manager_v1_interface,
++                      META_XDG_SESSION_MANAGER_V1_VERSION,
++                      compositor->session_manager, bind_session_manager);
++  if (!compositor->session_manager->global)
++    g_error ("Could not create session manager global");
+ }
+ 
+ void
+ meta_wayland_xdg_session_management_finalize (MetaWaylandCompositor *compositor)
+ {
+-  MetaDebugControl *debug_control =
+-    meta_context_get_debug_control (compositor->context);
+-
+-  g_signal_handlers_disconnect_by_func (debug_control,
+-                                        on_protocol_enabled_changed,
+-                                        compositor->session_manager);
+-
+   g_clear_pointer (&compositor->session_manager,
+                    meta_wayland_session_manager_free);
+ }
+diff --git a/src/wayland/meta-wayland-xdg-session-state.c b/src/wayland/meta-wayland-xdg-session-state.c
+index 4773e0bed..7945bcdd7 100644
+--- a/src/wayland/meta-wayland-xdg-session-state.c
++++ b/src/wayland/meta-wayland-xdg-session-state.c
+@@ -523,6 +523,16 @@ meta_wayland_xdg_session_state_remove_window (MetaSessionState *state,
+   g_hash_table_remove (xdg_session_state->toplevels, name);
+ }
+ 
++static gboolean
++meta_wayland_xdg_session_state_has_window (MetaSessionState *state,
++                                           const char       *name)
++{
++  MetaWaylandXdgSessionState *xdg_session_state =
++    META_WAYLAND_XDG_SESSION_STATE (state);
++
++  return g_hash_table_contains (xdg_session_state->toplevels, name);
++}
++
+ static void
+ meta_wayland_xdg_session_state_class_init (MetaWaylandXdgSessionStateClass *klass)
+ {
+@@ -538,6 +548,8 @@ meta_wayland_xdg_session_state_class_init (MetaWaylandXdgSessionStateClass *klas
+     meta_wayland_xdg_session_state_restore_window;
+   session_state_class->remove_window =
+     meta_wayland_xdg_session_state_remove_window;
++  session_state_class->has_window =
++    meta_wayland_xdg_session_state_has_window;
+ }
+ 
+ static void
+diff --git a/src/wayland/meta-wayland-xdg-session.c b/src/wayland/meta-wayland-xdg-session.c
+index 0863f463d..481e75da0 100644
+--- a/src/wayland/meta-wayland-xdg-session.c
++++ b/src/wayland/meta-wayland-xdg-session.c
+@@ -25,7 +25,7 @@
+ #include "wayland/meta-wayland-xdg-session-state.h"
+ #include "wayland/meta-wayland-xdg-shell.h"
+ 
+-#include "session-management-v1-server-protocol.h"
++#include "xdg-session-management-v1-server-protocol.h"
+ 
+ 
+ typedef struct _MetaWaylandXdgToplevelSession
+@@ -54,6 +54,7 @@ struct _MetaWaylandXdgSession
+ {
+   GObject parent;
+ 
++  MetaWaylandXdgSessionState *xdg_session_state;
+   char *id;
+   struct wl_resource *resource;
+   GHashTable *toplevels; /* name -> MetaWaylandXdgToplevelSession */
+@@ -103,26 +104,8 @@ xdg_toplevel_session_destroy (struct wl_client   *wl_client,
+   wl_resource_destroy (resource);
+ }
+ 
+-static void
+-xdg_toplevel_session_remove (struct wl_client   *wl_client,
+-                             struct wl_resource *resource)
+-{
+-  MetaWaylandXdgToplevelSession *toplevel_session =
+-    wl_resource_get_user_data (resource);
+-  MetaWaylandXdgSession *session = toplevel_session->session;
+-
+-  if (session)
+-    {
+-      g_signal_emit (session, signals[REMOVE_TOPLEVEL], 0, toplevel_session->name);
+-      g_hash_table_remove (session->toplevels, toplevel_session->name);
+-    }
+-
+-  wl_resource_destroy (resource);
+-}
+-
+-static const struct xx_toplevel_session_v1_interface meta_xdg_toplevel_session_interface = {
++static const struct xdg_toplevel_session_v1_interface meta_xdg_toplevel_session_interface = {
+   xdg_toplevel_session_destroy,
+-  xdg_toplevel_session_remove,
+ };
+ 
+ static void
+@@ -151,7 +134,7 @@ meta_wayland_xdg_toplevel_session_new (MetaWaylandXdgSession *xdg_session,
+   toplevel_session->name = g_strdup (name);
+   toplevel_session->resource =
+     wl_resource_create (wl_client,
+-                        &xx_toplevel_session_v1_interface,
++                        &xdg_toplevel_session_v1_interface,
+                         version, id);
+   wl_resource_set_implementation (toplevel_session->resource,
+                                   &meta_xdg_toplevel_session_interface,
+@@ -164,13 +147,7 @@ meta_wayland_xdg_toplevel_session_new (MetaWaylandXdgSession *xdg_session,
+ static void
+ meta_wayland_xdg_toplevel_session_emit_restored (MetaWaylandXdgToplevelSession *toplevel_session)
+ {
+-  MetaWaylandXdgToplevel *xdg_toplevel =
+-    META_WAYLAND_XDG_TOPLEVEL (toplevel_session->surface->role);
+-  struct wl_resource *xdg_toplevel_resource =
+-    meta_wayland_xdg_toplevel_get_resource (xdg_toplevel);
+-
+-  xx_toplevel_session_v1_send_restored (toplevel_session->resource,
+-                                        xdg_toplevel_resource);
++  xdg_toplevel_session_v1_send_restored (toplevel_session->resource);
+ }
+ 
+ static void
+@@ -178,6 +155,7 @@ meta_wayland_xdg_session_dispose (GObject *object)
+ {
+   MetaWaylandXdgSession *session = META_WAYLAND_XDG_SESSION (object);
+ 
++  g_clear_object (&session->xdg_session_state);
+   g_clear_pointer (&session->id, g_free);
+   g_clear_pointer (&session->toplevels, g_hash_table_unref);
+ 
+@@ -292,10 +270,11 @@ xdg_session_add_toplevel (struct wl_client   *wl_client,
+   MetaWaylandXdgToplevelSession *toplevel_session;
+   MetaWindow *window;
+ 
+-  if (g_hash_table_lookup (session->toplevels, name))
++  if (meta_session_state_has_window (META_SESSION_STATE (session->xdg_session_state),
++                                     name))
+     {
+-      wl_resource_post_error (resource, XX_SESSION_V1_ERROR_NAME_IN_USE,
+-                              "Name of toplevel was already in use");
++      wl_resource_post_error (resource, XDG_SESSION_V1_ERROR_NAME_IN_USE,
++                              "Name of toplevel is already in use");
+       return;
+     }
+ 
+@@ -335,7 +314,7 @@ xdg_session_restore_toplevel (struct wl_client   *wl_client,
+ 
+   if (g_hash_table_lookup (session->toplevels, name))
+     {
+-      wl_resource_post_error (resource, XX_SESSION_V1_ERROR_NAME_IN_USE,
++      wl_resource_post_error (resource, XDG_SESSION_V1_ERROR_NAME_IN_USE,
+                               "Name of toplevel was already in use");
+       return;
+     }
+@@ -344,7 +323,7 @@ xdg_session_restore_toplevel (struct wl_client   *wl_client,
+   surface = meta_wayland_surface_role_get_surface (surface_role);
+   if (meta_wayland_surface_has_initial_commit (surface))
+     {
+-      wl_resource_post_error (resource, XX_SESSION_V1_ERROR_ALREADY_MAPPED,
++      wl_resource_post_error (resource, XDG_SESSION_V1_ERROR_ALREADY_MAPPED,
+                               "Tried to restore an already mapped toplevel");
+       return;
+     }
+@@ -371,11 +350,27 @@ xdg_session_restore_toplevel (struct wl_client   *wl_client,
+     meta_wayland_xdg_toplevel_session_emit_restored (toplevel_session);
+ }
+ 
+-static const struct xx_session_v1_interface meta_xdg_session_interface = {
++static void
++xdg_session_remove_toplevel (struct wl_client   *wl_client,
++                             struct wl_resource *resource,
++                             const char         *name)
++{
++  MetaWaylandXdgSession *session =
++    META_WAYLAND_XDG_SESSION (wl_resource_get_user_data (resource));
++
++  if (g_hash_table_contains (session->toplevels, name))
++    {
++      g_signal_emit (session, signals[REMOVE_TOPLEVEL], 0, name);
++      g_hash_table_remove (session->toplevels, name);
++    }
++}
++
++static const struct xdg_session_v1_interface meta_xdg_session_interface = {
+   xdg_session_destroy,
+   xdg_session_remove,
+   xdg_session_add_toplevel,
+   xdg_session_restore_toplevel,
++  xdg_session_remove_toplevel,
+ };
+ 
+ static void
+@@ -408,6 +403,7 @@ meta_wayland_xdg_session_new (MetaWaylandXdgSessionState *session_state,
+   g_autoptr (MetaWaylandXdgSession) session = NULL;
+ 
+   session = g_object_new (META_TYPE_WAYLAND_XDG_SESSION, NULL);
++  g_set_object (&session->xdg_session_state, session_state);
+   session->id =
+     g_strdup (meta_session_state_get_name (META_SESSION_STATE (session_state)));
+   session->toplevels =
+@@ -415,7 +411,7 @@ meta_wayland_xdg_session_new (MetaWaylandXdgSessionState *session_state,
+                            g_free,
+                            (GDestroyNotify) meta_wayland_xdg_toplevel_session_unref);
+   session->resource = wl_resource_create (wl_client,
+-                                          &xx_session_v1_interface,
++                                          &xdg_session_v1_interface,
+                                           version, id);
+   wl_resource_set_implementation (session->resource,
+                                   &meta_xdg_session_interface,
+@@ -434,19 +430,19 @@ meta_wayland_xdg_session_get_id (MetaWaylandXdgSession *session)
+ void
+ meta_wayland_xdg_session_emit_created (MetaWaylandXdgSession *session)
+ {
+-  xx_session_v1_send_created (session->resource, session->id);
++  xdg_session_v1_send_created (session->resource, session->id);
+ }
+ 
+ void
+ meta_wayland_xdg_session_emit_replaced (MetaWaylandXdgSession *session)
+ {
+-  xx_session_v1_send_replaced (session->resource);
++  xdg_session_v1_send_replaced (session->resource);
+ }
+ 
+ void
+ meta_wayland_xdg_session_emit_restored (MetaWaylandXdgSession *session)
+ {
+-  xx_session_v1_send_restored (session->resource);
++  xdg_session_v1_send_restored (session->resource);
+ }
+ 
+ gboolean
+diff --git a/src/wayland/protocol/session-management-v1.xml b/src/wayland/protocol/session-management-v1.xml
+deleted file mode 100644
+index e21694424..000000000
+--- a/src/wayland/protocol/session-management-v1.xml
++++ /dev/null
+@@ -1,264 +0,0 @@
+-<?xml version="1.0" encoding="UTF-8"?>
+-<protocol name="xx_session_management_v1">
+-  <copyright>
+-    Copyright 2018 Mike Blumenkrantz
+-    Copyright 2018 Samsung Electronics Co., Ltd
+-    Copyright 2018 Red Hat Inc.
+-
+-    Permission is hereby granted, free of charge, to any person obtaining a
+-    copy of this software and associated documentation files (the "Software"),
+-    to deal in the Software without restriction, including without limitation
+-    the rights to use, copy, modify, merge, publish, distribute, sublicense,
+-    and/or sell copies of the Software, and to permit persons to whom the
+-    Software is furnished to do so, subject to the following conditions:
+-
+-    The above copyright notice and this permission notice (including the next
+-    paragraph) shall be included in all copies or substantial portions of the
+-    Software.
+-
+-    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+-    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+-    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+-    THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+-    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+-    FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+-    DEALINGS IN THE SOFTWARE.
+-  </copyright>
+-
+-  <description summary="Protocol for managing application sessions">
+-    This description provides a high-level overview of the interplay between
+-    the interfaces defined this protocol. For details, see the protocol
+-    specification.
+-
+-    The xx_session_manager protocol declares interfaces necessary to
+-    allow clients to restore toplevel state from previous executions. The
+-    xx_session_manager_v1.get_session request can be used to obtain a
+-    xx_session_v1 resource representing the state of a set of toplevels.
+-
+-    Clients may obtain the session string to use in future calls through
+-    the xx_session_v1.created event. Compositors will use this string
+-    as an identifiable token for future runs, possibly storing data about
+-    the related toplevels in persistent storage.
+-
+-    Toplevels are managed through the xx_session_v1.add_toplevel and
+-    xx_session_toplevel_v1.remove pair of requests. Clients will explicitly
+-    request a toplevel to be restored according to prior state through the
+-    xx_session_v1.restore_toplevel request before the toplevel is mapped.
+-
+-    Warning! The protocol described in this file is currently in the testing
+-    phase. Backward compatible changes may be added together with the
+-    corresponding interface version bump. Backward incompatible changes can
+-    only be done by creating a new major version of the extension.
+-  </description>
+-
+-  <interface name="xx_session_manager_v1" version="1">
+-    <description summary="manage sessions for applications">
+-      The xx_session_manager interface defines base requests for creating and
+-      managing a session for an application. Sessions persist across application
+-      and compositor restarts unless explicitly destroyed. A session is created
+-      for the purpose of maintaining an application's xdg_toplevel surfaces
+-      across compositor or application restarts. The compositor should remember
+-      as many states as possible for surfaces in a given session, but there is
+-      no requirement for which states must be remembered.
+-    </description>
+-
+-    <enum name="error">
+-      <entry name="in_use" summary="a requested session is already in use"
+-	value="1"/>
+-    </enum>
+-
+-    <enum name="reason">
+-      <description summary="reason for getting a session">
+-	The reason may determine in what way a session restores the window
+-	management state of associated toplevels.
+-
+-	For example newly launched applications might be launched on the active
+-	workspace with restored size and position, while a recovered
+-	applications might restore additional state such as active workspace and
+-	stacking order.
+-      </description>
+-      <entry name="launch" value="1">
+-	<description summary="an app is newly launched">
+-	  A new app instance is launched, for example from an app launcher.
+-	</description>
+-      </entry>
+-      <entry name="recover" value="2">
+-	<description summary="an app recovered">
+-	  A app instance is recovering from for example a compositor or app crash.
+-	</description>
+-      </entry>
+-      <entry name="session_restore" value="3">
+-	<description summary="an app restored">
+-	  A app instance is restored, for example part of a restored session, or
+-	  restored from having been temporarily terminated due to resource
+-	  constraints.
+-	</description>
+-      </entry>
+-    </enum>
+-
+-    <request name="destroy" type="destructor">
+-      <description summary="Destroy this object">
+-	This has no effect other than to destroy the xx_session_manager object.
+-      </description>
+-    </request>
+-
+-    <request name="get_session">
+-      <description summary="create or restore a session">
+-	Create a session object corresponding to either an existing session
+-	identified by the given session identifier string or a new session.
+-	While the session object exists, the session is considered to be "in
+-	use".
+-
+-	If a identifier string represents a session that is currently actively
+-	in use by the the same client, an 'in_use' error is raised. If some
+-	other client is currently using the same session, the new session will
+-	replace managing the associated state.
+-
+-	NULL is passed to initiate a new session. If an id is passed which does
+-	not represent a valid session, the compositor treats it as if NULL had
+-	been passed.
+-
+-	A client is allowed to have any number of in use sessions at the same
+-	time.
+-      </description>
+-      <arg name="id" type="new_id" interface="xx_session_v1"/>
+-      <arg name="reason" type="uint" enum="reason"
+-	   summary="reason for session"/>
+-      <arg name="session" type="string"
+-	   summary="the session to restore"
+-	   allow-null="true"/>
+-    </request>
+-  </interface>
+-
+-  <interface name="xx_session_v1" version="1">
+-    <description summary="A session for an application">
+-      A xx_session_v1 object represents a session for an application. While the
+-      object exists, all surfaces which have been added to the session will
+-      have states stored by the compositor which can be reapplied at a later
+-      time. Two sessions cannot exist for the same identifier string.
+-
+-      States for surfaces added to a session are automatically updated by the
+-      compositor when they are changed.
+-
+-      Surfaces which have been added to a session are automatically removed from
+-      the session if xdg_toplevel.destroy is called for the surface.
+-    </description>
+-
+-    <enum name="error">
+-      <entry name="invalid_restore"
+-	     summary="restore cannot be performed after initial toplevel commit"
+-	     value="1"/>
+-      <entry name="name_in_use"
+-	     summary="toplevel name is already in used"
+-	     value="2"/>
+-      <entry name="already_mapped"
+-	     summary="toplevel was already mapped when restored"
+-	     value="3"/>
+-    </enum>
+-
+-    <request name="destroy" type="destructor">
+-      <description summary="Destroy the session">
+-	Destroy a session object, preserving the current state but not continuing
+-	to make further updates if state changes occur. This makes the associated
+-	xx_toplevel_session_v1 objects inert.
+-      </description>
+-    </request>
+-
+-    <request name="remove" type="destructor">
+-      <description summary="Remove the session">
+-	Remove the session, making it no longer available for restoration. A
+-	compositor should in response to this request remove the data related to
+-	this session from its storage.
+-      </description>
+-    </request>
+-
+-    <request name="add_toplevel">
+-      <description summary="add a new surface to the session">
+-	Attempt to add a given surface to the session. The passed name is used
+-	to identify what window is being restored, and may be used store window
+-	specific state within the session.
+-
+-	Calling this with a toplevel that is already managed by the session with
+-	the same associated will raise an in_use error.
+-      </description>
+-      <arg name="id" type="new_id" interface="xx_toplevel_session_v1"/>
+-      <arg name="toplevel" type="object" interface="xdg_toplevel"/>
+-      <arg name="name" type="string"/>
+-    </request>
+-
+-    <request name="restore_toplevel">
+-      <description summary="restore a surface state">
+-	Inform the compositor that the toplevel associated with the passed name
+-	should have its window management state restored.
+-
+-	Calling this with a toplevel that is already managed by the session with
+-	the same associated will raise an in_use error.
+-
+-	This request must be called prior to the first commit on the associated
+-	wl_surface, otherwise an already_mapped error is raised.
+-
+-	As part of the initial configure sequence, if the toplevel was
+-	successfully restored, a xx_toplevel_session_v1.restored event is
+-	emitted. See the xx_toplevel_session_v1.restored event for further
+-	details.
+-      </description>
+-      <arg name="id" type="new_id" interface="xx_toplevel_session_v1"/>
+-      <arg name="toplevel" type="object" interface="xdg_toplevel"/>
+-      <arg name="name" type="string"/>
+-    </request>
+-
+-    <event name="created">
+-      <description summary="newly-created session id">
+-	Emitted at most once some time after getting a new session object. It
+-	means that no previous state was restored, and a new session was created.
+-	The passed id can be used to restore previous sessions.
+-      </description>
+-      <arg name="id" type="string"/>
+-    </event>
+-
+-    <event name="restored">
+-      <description summary="the session has been restored">
+-	Emitted at most once some time after getting a new session object. It
+-	means that previous state was at least partially restored. The same id
+-	can again be used to restore previous sessions.
+-      </description>
+-    </event>
+-
+-    <event name="replaced">
+-      <description summary="the session has been restored">
+-	Emitted at most once, if the session was taken over by some other
+-	client. When this happens, the session and all its toplevel session
+-	objects become inert, and should be destroyed.
+-      </description>
+-    </event>
+-  </interface>
+-
+-  <interface name="xx_toplevel_session_v1" version="1">
+-    <request name="destroy" type="destructor">
+-      <description summary="Destroy the object">
+-	Destroy the object. This has no effect window management of the
+-	associated toplevel.
+-      </description>
+-    </request>
+-
+-    <request name="remove" type="destructor">
+-      <description summary="remove a surface from the session">
+-	Remove a specified surface from the session and render any corresponding
+-	xx_toplevel_session_v1 object inert. The compositor should remove any
+-	data related to the toplevel in the corresponding session from its internal
+-	storage.
+-      </description>
+-    </request>
+-
+-    <event name="restored">
+-      <description summary="a toplevel's session has been restored">
+-	The "restored" event is emitted prior to the first
+-	xdg_toplevel.configure for the toplevel. It will only be emitted after
+-	xx_session_v1.restore_toplevel, and the initial empty surface state has
+-	been applied, and it indicates that the surface's session is being
+-	restored with this configure event.
+-      </description>
+-      <arg name="surface" type="object" interface="xdg_toplevel"/>
+-    </event>
+-  </interface>
+-</protocol>
+diff --git a/src/wayland/protocol/xdg-session-management-v1.xml b/src/wayland/protocol/xdg-session-management-v1.xml
+new file mode 100644
+index 000000000..03dd761b5
+--- /dev/null
++++ b/src/wayland/protocol/xdg-session-management-v1.xml
+@@ -0,0 +1,318 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<protocol name="xdg_session_management_v1">
++  <copyright>
++    Copyright 2018 Mike Blumenkrantz
++    Copyright 2018 Samsung Electronics Co., Ltd
++    Copyright 2018 Red Hat Inc.
++
++    Permission is hereby granted, free of charge, to any person obtaining a
++    copy of this software and associated documentation files (the "Software"),
++    to deal in the Software without restriction, including without limitation
++    the rights to use, copy, modify, merge, publish, distribute, sublicense,
++    and/or sell copies of the Software, and to permit persons to whom the
++    Software is furnished to do so, subject to the following conditions:
++
++    The above copyright notice and this permission notice (including the next
++    paragraph) shall be included in all copies or substantial portions of the
++    Software.
++
++    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
++    THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
++    FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
++    DEALINGS IN THE SOFTWARE.
++  </copyright>
++
++  <description summary="Protocol for managing application sessions">
++    This description provides a high-level overview of the interplay between
++    the interfaces defined this protocol. For details, see the protocol
++    specification.
++
++    The xdg_session_manager protocol declares interfaces necessary to
++    allow clients to restore toplevel state from previous executions. The
++    xdg_session_manager_v1.get_session request can be used to obtain a
++    xdg_session_v1 resource representing the state of a set of toplevels.
++
++    Clients may obtain the session string to use in future calls through
++    the xdg_session_v1.created event. Compositors will use this string
++    as an identifiable token for future runs, possibly storing data about
++    the related toplevels in persistent storage. Clients that wish to
++    track sessions in multiple environments may use the $XDG_CURRENT_DESKTOP
++    environment variable.
++
++    Toplevels are managed through the xdg_session_v1.add_toplevel and
++    xdg_session_v1.remove_toplevel pair of requests. Clients will explicitly
++    request a toplevel to be restored according to prior state through the
++    xdg_session_v1.restore_toplevel request before the toplevel is mapped.
++
++    Compositors may store session information up to any arbitrary level, and
++    apply any limits and policies to the amount of data stored and its lifetime.
++    Clients must account for missing sessions and partial session restoration.
++
++    Warning! The protocol described in this file is currently in the testing
++    phase. Backward compatible changes may be added together with the
++    corresponding interface version bump. Backward incompatible changes can
++    only be done by creating a new major version of the extension.
++  </description>
++
++  <interface name="xdg_session_manager_v1" version="1">
++    <description summary="manage sessions for applications">
++      The xdg_session_manager_v1 interface defines base requests for creating and
++      managing a session for an application. Sessions persist across application
++      and compositor restarts unless explicitly destroyed. A session is created
++      for the purpose of maintaining an application's xdg_toplevel surfaces
++      across compositor or application restarts. The compositor should remember
++      as many states as possible for surfaces in a given session, but there is
++      no requirement for which states must be remembered.
++
++      Policies such as cache eviction are declared an implementation detail of
++      the compositor. Clients should account for no longer existing sessions.
++    </description>
++
++    <enum name="error">
++      <entry name="in_use" summary="a requested session is already in use"
++             value="1"/>
++      <entry name="invalid_session_id" summary="invalid session identifier"
++             value="2"/>
++    </enum>
++
++    <enum name="reason">
++      <description summary="reason for getting a session">
++        The reason may determine in what way a session restores the window
++        management state of associated toplevels.
++
++        For example newly launched applications might be launched on the active
++        workspace with restored size and position, while a recovered
++        application might restore additional state such as active workspace and
++        stacking order.
++      </description>
++      <entry name="launch" value="1">
++        <description summary="an app is newly launched">
++          A new app instance is launched, for example from an app launcher.
++        </description>
++      </entry>
++      <entry name="recover" value="2">
++        <description summary="an app recovered">
++          A app instance is recovering from for example a compositor or app crash.
++        </description>
++      </entry>
++      <entry name="session_restore" value="3">
++        <description summary="an app restored">
++          A app instance is restored, for example part of a restored session, or
++          restored from having been temporarily terminated due to resource
++          constraints.
++        </description>
++      </entry>
++    </enum>
++
++    <request name="destroy" type="destructor">
++      <description summary="Destroy this object">
++        Destroy the manager object. The existing session objects will be
++        unaffected.
++      </description>
++    </request>
++
++    <request name="get_session">
++      <description summary="create or restore a session">
++        Create a session object corresponding to either an existing session
++        identified by the given session identifier string or a new session.
++        While the session object exists, the session is considered to be "in
++        use".
++
++        If an identifier string represents a session that is currently actively
++        in use by the the same client, an 'in_use' error is raised. If some
++        other client is currently using the same session, the new session will
++        replace managing the associated state.
++
++        NULL is passed to initiate a new session. If a session_id is passed
++        which does not represent a valid session, the compositor treats it as if
++        NULL had been passed.
++
++        The session id string must be UTF-8 encoded. It is also limited by the
++        maximum length of wayland messages (around 4KB). The 'invalid_session_id'
++        protocol error will be raised if an invalid string is provided.
++
++        A client is allowed to have any number of in use sessions at the same
++        time.
++      </description>
++      <arg name="id" type="new_id" interface="xdg_session_v1"/>
++      <arg name="reason" type="uint" enum="reason"
++           summary="reason for session"/>
++      <arg name="session_id" type="string"
++           summary="the session to restore"
++           allow-null="true"/>
++    </request>
++  </interface>
++
++  <interface name="xdg_session_v1" version="1">
++    <description summary="A session for an application">
++      A xdg_session_v1 object represents a session for an application. While the
++      object exists, all surfaces which have been added to the session will
++      have states stored by the compositor which can be reapplied at a later
++      time. Two sessions cannot exist for the same identifier string.
++
++      States for surfaces added to a session are automatically updated by the
++      compositor when they are changed.
++    </description>
++
++    <enum name="error">
++      <entry name="name_in_use"
++             summary="toplevel name is already in use"
++             value="1"/>
++      <entry name="already_mapped"
++             summary="toplevel was already mapped when restored"
++             value="2"/>
++      <entry name="invalid_name"
++             summary="provided toplevel name is invalid"
++             value="3"/>
++    </enum>
++
++    <request name="destroy" type="destructor">
++      <description summary="Destroy the session">
++        Destroy a session object, preserving the current state but not continuing
++        to make further updates if state changes occur. This makes the associated
++        xdg_toplevel_session_v1 objects inert.
++      </description>
++    </request>
++
++    <request name="remove" type="destructor">
++      <description summary="Remove the session">
++        Remove the session, making it no longer available for restoration. A
++        compositor should in response to this request remove the data related to
++        this session from its storage.
++      </description>
++    </request>
++
++    <request name="add_toplevel">
++      <description summary="add a new surface to the session">
++        Attempt to add a given surface to the session. The passed name is used
++        to identify what window is being restored, and may be used to store
++        window specific state within the session.
++
++        The name given to the toplevel must not correspond to any previously
++        existing toplevel names in the session. If the name matches an already
++        known toplevel name in the session, a 'name_in_use' protocol error will
++        be raised.
++
++        This request will return a xdg_toplevel_session_v1 for later
++        manipulation. As this resource is created from an empty initial state,
++        compositors must not emit a xdg_toplevel_session_v1.restored event for
++        resources created through this request.
++
++        The name string must be UTF-8 encoded. It is also limited by the maximum
++        length of wayland messages (around 4KB). The 'invalid_name' protocol
++        error will be raised if an invalid string is provided.
++      </description>
++      <arg name="id" type="new_id" interface="xdg_toplevel_session_v1"/>
++      <arg name="toplevel" type="object" interface="xdg_toplevel"/>
++      <arg name="name" type="string" summary="name identifying the toplevel"/>
++    </request>
++
++    <request name="restore_toplevel">
++      <description summary="restore a surface state">
++        Inform the compositor that the toplevel associated with the passed name
++        should have its window management state restored.
++
++        If the toplevel name was previously granted to another xdg_toplevel,
++        the 'name_in_use' protocol error will be raised.
++
++        This request must be called prior to the first commit on the associated
++        wl_surface after creating the toplevel, otherwise an 'already_mapped'
++        error is raised.
++
++        As part of the initial configure sequence, if the toplevel was
++        successfully restored, a xdg_toplevel_session_v1.restored event is
++        emitted. If the toplevel name was not known in the session, this request
++        will be equivalent to the xdg_toplevel_session_v1.add_toplevel request,
++        and no such event will be emitted. See the xdg_toplevel_session_v1.restored
++        event for further details.
++
++        The name string must be UTF-8 encoded. It is also limited by the maximum
++        length of wayland messages (around 4KB). The 'invalid_name' protocol
++        error will be raised if an invalid string is provided.
++      </description>
++      <arg name="id" type="new_id" interface="xdg_toplevel_session_v1"/>
++      <arg name="toplevel" type="object" interface="xdg_toplevel"/>
++      <arg name="name" type="string" summary="name identifying the toplevel"/>
++    </request>
++
++    <request name="remove_toplevel">
++      <description summary="remove a surface from the session">
++        Remove a specified surface from the session and render any related
++        xdg_toplevel_session_v1 object inert. The compositor should remove any
++        data related to the toplevel in the corresponding session from its internal
++        storage.
++
++        The window is specified by its name in the session. The name string
++        must be encoded in UTF-8, and it is limited in size by the maximum
++        length of wayland messages (around 4KB).
++      </description>
++      <arg name="name" type="string" summary="name identifying the toplevel"/>
++    </request>
++
++    <event name="created">
++      <description summary="newly-created session id">
++        Emitted at most once some time after getting a new session object. It
++        means that no previous state was restored, and a new session was created.
++        The passed id can be persistently stored and used to restore previous
++        sessions.
++      </description>
++      <arg name="session_id" type="string"/>
++    </event>
++
++    <event name="restored">
++      <description summary="the session has been restored">
++        Emitted at most once some time after getting a new session object. It
++        means that previous state was at least partially restored. The same id
++        can again be used to restore previous sessions.
++      </description>
++    </event>
++
++    <event name="replaced">
++      <description summary="the session has been replaced">
++        Emitted at most once, if the session was taken over by some other
++        client. When this happens, the session and all its toplevel session
++        objects become inert, and should be destroyed.
++      </description>
++    </event>
++  </interface>
++
++  <interface name="xdg_toplevel_session_v1" version="1">
++    <description summary="A session for an application">
++      A xdg_toplevel_session_v1 resource acts as a handle for the given
++      toplevel in the session. It allows for receiving events after a
++      toplevel state was restored, and has the requests to manage them.
++    </description>
++
++    <request name="destroy" type="destructor">
++      <description summary="Destroy the object">
++        Destroy the object. This has no effect over window management of the
++        associated toplevel.
++      </description>
++    </request>
++
++    <request name="rename">
++      <description summary="change the name of toplevel session">
++        Renames the toplevel session. The new name can be used in subsequent requests
++        to identify this session object. The state associated with this toplevel
++        session will be preserved.
++
++        If the xdg_session_v1 already contains a toplevel with the specified name,
++        the 'name_in_use' protocol error will be raised.
++      </description>
++      <arg name="name" type="string" summary="new name to identify the toplevel"/>
++    </request>
++
++    <event name="restored">
++      <description summary="a toplevel's session has been restored">
++        The "restored" event is emitted prior to the first
++        xdg_toplevel.configure for the toplevel. It will only be emitted after
++        xdg_session_v1.restore_toplevel, and the initial empty surface state has
++        been applied, and it indicates that the surface's session is being
++        restored with this configure event.
++      </description>
++    </event>
++  </interface>
++</protocol>

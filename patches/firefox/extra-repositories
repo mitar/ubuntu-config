@@ -1,0 +1,4 @@
+# The PPAs Launchpad builds the Mozilla Team PPA's Firefox against: an older cdbs whose makefile class the
+# packaging needs, and the Rust toolchain. See README.
+ricotz-mozilla.asc deb http://ppa.launchpadcontent.net/ricotz/mozilla/ubuntu resolute main
+rust-toolchain-staging.asc deb http://ppa.launchpadcontent.net/rust-toolchain/staging/ubuntu resolute main

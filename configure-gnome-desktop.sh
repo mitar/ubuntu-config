@@ -31,9 +31,9 @@
 #
 # Runs as your own user, because these settings live in your dconf and would land in root's under sudo. Installing
 # packages, the console's boot-time unit, the udev rules, the module options, and the login screen settings need
-# root, as do the rules added to AppArmor profiles, the drop-ins for GDM's unit and for application scopes, the user
-# service which stops application scopes, and the option added to /etc/crypttab, so those parts call sudo themselves
-# and will ask for a password.
+# root, as do the rules added to AppArmor profiles and the option added to AppArmor's parser configuration, the
+# drop-ins for GDM's unit and for application scopes, the user service which stops application scopes and its script,
+# and the option added to /etc/crypttab, so those parts call sudo themselves and will ask for a password.
 
 set -euo pipefail
 
@@ -387,6 +387,28 @@ install_apparmor_local() {
   return 0
 }
 
+# Adds an option to AppArmor's parser configuration, /etc/apparmor/parser.conf, through sudo, after the comment read
+# from standard input, unless the file already has the option. The parser has no directory for such additions, so it
+# goes into the file the apparmor package ships, and dpkg asks about it when a new version of the package changes the
+# file. The option applies to profiles compiled from then on, so the profiles of the given files in /etc/apparmor.d
+# are compiled again, bypassing and rewriting their cache, and replaced at once.
+apparmor_parser_option() {
+  local option=$1 conf=/etc/apparmor/parser.conf comment file
+  shift
+  comment=$(cat)
+  grep -qxF "$option" "$conf" && return 0
+  echo "  add $option to $conf"
+  CHANGED=$((CHANGED+1))
+  [ "$MODE" = apply ] || return 0
+  printf '\n%s\n%s\n' "$comment" "$option" | sudo tee -a "$conf" >/dev/null
+  for file in "$@"; do
+    if [ -e "/etc/apparmor.d/$file" ]; then
+      sudo apparmor_parser --replace --skip-read-cache --write-cache "/etc/apparmor.d/$file"
+    fi
+  done
+  return 0
+}
+
 # Installs a drop-in for a system unit from systemd/ in this repository into the root-owned /etc/systemd/system through
 # sudo, then has systemd reload. The unit is not restarted, so a changed ordering applies from the next time the unit
 # is started or stopped.
@@ -398,6 +420,17 @@ install_dropin() {
   [ "$MODE" = apply ] || return 0
   sudo install -D -m 644 "$src" "$dst"
   sudo systemctl daemon-reload
+  return 0
+}
+
+# Installs a program from this repository into the root-owned /usr/local/libexec through sudo, under the given name.
+install_libexec() {
+  local src=$REPO_DIR/$1 dst=/usr/local/libexec/$2
+  cmp -s "$src" "$dst" && return 0
+  echo "  install $dst"
+  CHANGED=$((CHANGED+1))
+  [ "$MODE" = apply ] || return 0
+  sudo install -D -o root -g root -m 755 "$src" "$dst"
   return 0
 }
 
@@ -685,11 +718,21 @@ set_key org.gnome.yelp show-cursor                      "true"
 # Without the added rules the AppArmor profile keeps a second Transmission from passing a magnet link or a torrent
 # file on to the one which already runs, so only links opened while Transmission is not running would be added.
 install_apparmor_local transmission-gtk transmission
+# Firefox otherwise runs without its sandbox's user namespaces, see the comment written into parser.conf.
+apparmor_parser_option Optimize=no-diff-encode firefox <<'EOF'
+# Added by configure-gnome-desktop.sh from ubuntu-config. Ubuntu's 7.0 kernel does not attach a profile whose
+# attachment pattern compiles to a differentially encoded state, as the pattern of the firefox profile does, which
+# grants Firefox the user namespaces of its sandbox: https://bugs.launchpad.net/bugs/2172229
+# Remove this once the running kernel has mainline commit e667fc72f7f4.
+EOF
 # Chromium and the Electron applications built on it otherwise crash at every logout and shutdown, see the drop-ins
-# and the service.
+# and the services.
 install_user_dropin app-.scope.d/50-graphical-session.conf
-install_user_dropin app-gnome-.scope.d/50-after-application-scopes.conf
+install_user_dropin org.gnome.Shell@.service.d/50-before-application-scopes.conf
+install_libexec stop-application-scopes.sh stop-application-scopes
 install_user_unit stop-application-scopes.service
+install_libexec stop-application-scopes-before-shutdown.py stop-application-scopes-before-shutdown
+install_user_unit stop-application-scopes-before-shutdown.service
 # snapd starts snapd-desktop-integration before there is a display, see the drop-in. The snap is optional, so this is
 # done only when it is installed.
 SNAP_DESKTOP_UNIT=snap.snapd-desktop-integration.snapd-desktop-integration.service

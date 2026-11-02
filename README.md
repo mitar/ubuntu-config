@@ -19,8 +19,8 @@ when run with `--apply`. They are idempotent, so they can be rerun at any time t
 configuration or to see how it has drifted from it.
 
 Where a setting is not enough, Ubuntu's own packages are patched. `patches/<source-package>/` contains patches
-which are applied on top of Ubuntu's source package, together with tests for the patched behavior which run during
-the build. `rebuild-patched-packages.sh` rebuilds a package whenever Ubuntu publishes a new version of it or its
+which are applied on top of Ubuntu's source package, or for Firefox the Mozilla Team PPA's, together with tests for
+the patched behavior which run during the build where the package has a test suite to add them to. `rebuild-patched-packages.sh` rebuilds a package whenever Ubuntu publishes a new version of it or its
 patches change, building it with sbuild as an unprivileged user in a throwaway chroot, and publishes the result to
 a local APT repository. That repository is pinned above the Ubuntu archive, so unattended-upgrades or the next
 ordinary `apt upgrade` installs the patched build. A daily cron job keeps patched packages current, running
@@ -231,6 +231,37 @@ in its settings (`gnome-extensions/smart-auto-move.dconf`). Positions are kept p
 connector, and are recorded for the laptop's own screen, where the windows also open while an external monitor is
 connected.
 
+### Firefox windows return to their workspaces
+
+Firefox restores its windows to the workspace, monitor, position and size they had when it quit. It names its
+windows to GNOME through the Wayland session management protocol, and GNOME remembers their places under those
+names. Three things stand in the way on Ubuntu 26.04, each patched until the fix ships:
+
+- Mutter 50 offers the protocol only under its draft name, behind a debug switch (`patches/mutter/`, a backport
+  from mutter 51).
+- GTK 3 lacks the signal Firefox needs to name a window before it is shown (`patches/gtk+3.0/`, a backport from
+  GTK's 3.24 branch).
+- Firefox turns the protocol off on GNOME, because of a bug of its own which makes it crash when a session is
+  restored from the History menu, and a second one which leaves windows hidden on the first start
+  (`patches/firefox/`).
+
+Firefox therefore comes from the Mozilla Team PPA, which publishes the source to rebuild it with, unlike Mozilla's
+own repository. Its build is also brought closer to Mozilla's: the libraries Mozilla runs in a WebAssembly sandbox,
+for fonts, spell checking, XML and audio, are sandboxed here too, where the PPA's build leaves them out.
+
+### Firefox's sandbox has its user namespaces
+
+Firefox isolates its content processes in user namespaces of their own. Ubuntu allows unprivileged user namespaces
+only to programs with an AppArmor profile which grants them, and the apparmor package has one for Firefox. Ubuntu's
+7.0 kernel never applies it: the parser compiles the profile's pattern for Firefox's path into a matcher with a
+differentially encoded state, which the kernel's matcher for attaching profiles mishandles, so Firefox runs
+unconfined, is denied the namespaces, and its content processes are isolated by seccomp alone. This happens with
+Mozilla's own package too. `configure-gnome-desktop.sh` adds `Optimize=no-diff-encode` to
+`/etc/apparmor/parser.conf`, so the parser does not use that encoding, and compiles the profile again. The kernel bug
+is [Ubuntu bug 2172229](https://bugs.launchpad.net/bugs/2172229), fixed in mainline by commit
+[e667fc72f7f4](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=e667fc72f7f4a54674962c324048ca2cc58bc703).
+Once the running kernel has it, the line in `parser.conf` and its call in the script can go.
+
 ### Magnet links open in a running Transmission
 
 Opening a magnet link or a torrent file while Transmission already runs starts a second Transmission, which passes
@@ -250,7 +281,7 @@ error without crashing (`patches/localsearch/`, `patches/tinysparql/`). The fixe
 [tinysparql merge request 819](https://gitlab.gnome.org/GNOME/tinysparql/-/merge_requests/819), and the patches can be
 dropped once Ubuntu ships versions which include them.
 
-### Chromium and Electron applications do not crash at logout
+### Chromium and Electron applications do not crash at logout and shutdown
 
 Signal, Slack, Claude Desktop and other applications built on Electron crashed at every logout and shutdown with
 "GPU process isn't usable. Goodbye.", and Chromium itself does the same. Chromium moves its browser process into a
@@ -259,12 +290,32 @@ helpers in the scope GNOME launched it in. Only GNOME's scopes are tied to the s
 the helpers while the browser process keeps running, fails to start its GPU process again, and crashes. A drop-in
 for the user service manager ties every application scope to the session, so that the application's own scope is
 stopped at logout too. Stopping both scopes at once is not enough, because the helpers can still die before the
-browser process starts to shut down, so a user service stops the scopes applications created for themselves first,
-and GNOME's scopes are ordered to stop only after it. The browser process then shuts down while its helpers still
-run, and ends them itself (`systemd/user/`, installed by `configure-gnome-desktop.sh`).
+browser process starts to shut down, and stopping the application's own scope first is not enough either, because
+Chromium starts its renderers in that scope, and a browser process whose renderers die under it can stall until it
+is killed. So at logout a user service sends SIGTERM to the browser process alone, which Chromium names its scope
+after, and waits for it to exit, and every application scope is ordered to stop only after that service. The browser
+process then shuts down while its helpers still run, and ends them itself (`stop-application-scopes.sh`,
+`systemd/user/`, installed by `configure-gnome-desktop.sh`).
+
+At a shutdown or a reboot that ordering is not enough. logind starts the shutdown as soon as gnome-session released
+its delay inhibitor, which it does right before it exits, and the helpers then sometimes died before the user's
+service manager even started to stop the graphical session. So a second user service holds a delay inhibitor of its
+own. When logind announces a shutdown or a reboot, the service stops the first one, which lets the browser processes
+exit, and releases its inhibitor only after that, so that logind starts the shutdown once the applications exited
+(`stop-application-scopes-before-shutdown.py`). logind waits for an inhibitor for at most `InhibitDelayMaxSec=`, 5
+seconds by default, which unattended-upgrades raises to 30 seconds. GNOME asks logind for the shutdown only once it is
+confirmed, so cancelling its confirmation dialog leaves the applications running. Electron offers logind's
+announcement to applications as `powerMonitor`'s `shutdown` event, but Signal, Slack and Claude Desktop do not listen
+for it.
+
+GNOME Shell is not ordered relative to the application scopes either, so at logout and at shutdown systemd stopped it
+while the applications were still quitting. GTK, which Chromium loads, ends a process whose Wayland connection breaks
+at once, with exit status 1, and Claude Desktop was cut off in the middle of its shutdown. A drop-in orders the Shell
+to stop only after the service which lets the browser processes exit, too, so that the Shell is still there while
+they quit (`systemd/user/org.gnome.Shell@.service.d/`).
 
 The cause is reported to Chromium as [issue 580525223](https://issues.chromium.org/issues/580525223), and the
-drop-ins and the service can go once that is fixed. Separately, Chromium and Electron do not learn about a logout
+drop-ins and the services can go once that is fixed. Separately, Chromium and Electron do not learn about a logout
 from the portal through which GNOME announces it, which would let them exit before anything is stopped:
 [Chromium issue 580443832](https://issues.chromium.org/issues/580443832) and
 [Electron issue 55551](https://github.com/electron/electron/issues/55551).
@@ -277,9 +328,14 @@ there was a display, failed with "Failed to open display" until its restarts rea
 every logout when the display went away. A drop-in and a link in `graphical-session.target.wants` start it with the
 session instead, skip its start without a display, and stop it with the session while the display is still there
 (`systemd/user/snap.snapd-desktop-integration.snapd-desktop-integration.service.d/`, installed by
-`configure-gnome-desktop.sh`). snapd is changing its user services this way in
-[snapd pull request 16687](https://github.com/canonical/snapd/pull/16687), and the drop-in can go once that is
-released.
+`configure-gnome-desktop.sh`). The snap's launcher also exits with status 2 whenever it wants to be started again,
+including when the session ends and when systemd stops it, so the drop-in counts that status as success and still
+restarts it after it. snapd is changing its user services this way in
+[snapd pull request 16687](https://github.com/canonical/snapd/pull/16687), which needs pull requests 16685 and 16686.
+Once a snapd with it is installed, the generated unit has `Requisite=` and `PartOf=graphical-session.target`, and the
+drop-in's `[Unit]` section, the link and their lines in `configure-gnome-desktop.sh` can go. The pull request does not
+change the launcher's exit status, so the `[Service]` section stays until snapd-desktop-integration does, as asked in
+[snapd-desktop-integration issue 174](https://github.com/canonical/snapd-desktop-integration/issues/174).
 
 ### GDM does not fail at shutdown
 
@@ -330,13 +386,17 @@ settings in `gnome-extensions/`. Custom extensions are installed from the reposi
 Run each script first without `--apply` to see what it would change. The general order is:
 
 1. In the BIOS, set the battery charge limit to 99%[^charge-limit] and disable Battery Extender.
-2. Lock down APT sources:
+2. Add the Mozilla Team PPA with its source, from which Firefox is rebuilt, then lock down APT sources. The
+   lockdown's checks expect the PPA, so it comes first:
 
    ```sh
+   sudo add-apt-repository --enable-source ppa:mozillateam/ppa
    sudo ./lockdown-apt-sources.sh --apply
    ```
 
-3. Build and install patched packages, then log out and back in:
+3. Build and install patched packages, then log out and back in. Between the previous step and the end of the build,
+   do not run `apt upgrade`, which would install the PPA's unpatched Firefox until the rebuild replaces it. The first
+   build takes about an hour, most of it Firefox:
 
    ```sh
    ./install-rebuild-patched-packages.sh --apply

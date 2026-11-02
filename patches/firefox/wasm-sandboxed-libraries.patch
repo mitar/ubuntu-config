@@ -1,0 +1,158 @@
+Description: Build the wasm sandboxed libraries, as Mozilla's own builds do.
+ The packaging builds with --without-wasm-sandboxed-libraries, so graphite, ogg, hunspell, expat, woff2 and
+ soundtouch run in the content process without the RLBox sandbox which Mozilla's builds put them in. This drops the
+ option, adds the wasm32 toolchain packages as build dependencies, and works around two bugs in Ubuntu 26.04's wasm32
+ toolchain with a clang resource directory in the build tree:
+ .
+  - clang 22 looks for the wasm32-wasip1 compiler-rt builtins under lib/wasm32-unknown-wasip1/, but the package
+    installs them as lib/wasi/libclang_rt.builtins-wasm32.a (Launchpad bug 2152147, fixed in Debian);
+  - the wasm32 libc++ is built with exceptions while libc++abi is not, so __cxa_throw and eight more C++ runtime
+    functions are referenced but defined nowhere (Launchpad bug 2169046). debian/wasm-cxa-stubs.c defines them to
+    abort, which is what a libc++ built without exceptions, like Mozilla's, does in their place.
+ .
+ WASM_CC and WASM_CXX point clang at the resource directory, whose builtins archive carries the stubs, so every wasm
+ link finds both.
+Author: Mitar
+Forwarded: not-needed
+Last-Update: 2026-11-02
+diff -ruN a/debian/build/rules.mk b/debian/build/rules.mk
+--- a/debian/build/rules.mk
++++ b/debian/build/rules.mk
+@@ -231,7 +231,24 @@
+ 
+ common-configure-arch common-configure-indep:: common-configure-impl
+ common-configure-impl:: debian/stamp-mach-configure
+-debian/stamp-mach-configure: cbindgen/bin/cbindgen dump_syms/bin/dump_syms
++# Ubuntu's clang 22 looks for the wasm32-wasip1 compiler-rt builtins under a path where the package does not
++# install them (Launchpad bug 2152147), and its wasm32 libc++ references C++ runtime functions no library defines
++# (Launchpad bug 2169046). A resource directory in the build tree provides both: the builtins under the expected
++# name, with abort stubs for the missing functions added to them. WASM_CC and WASM_CXX in the mozconfig use it.
++WASM_RESOURCE_DIR := $(CURDIR)/debian/wasm-resource
++WASM_CLANG_RESOURCE := /usr/lib/llvm-$(DEB_LLVM_VERSION)/lib/clang/$(DEB_LLVM_VERSION)
++debian/stamp-wasm-resource: debian/wasm-cxa-stubs.c
++	rm -rf $(WASM_RESOURCE_DIR)
++	mkdir -p $(WASM_RESOURCE_DIR)/lib/wasm32-unknown-wasip1
++	ln -s $(WASM_CLANG_RESOURCE)/include $(WASM_RESOURCE_DIR)/include
++	cp $(WASM_CLANG_RESOURCE)/lib/wasi/libclang_rt.builtins-wasm32.a $(WASM_RESOURCE_DIR)/lib/wasm32-unknown-wasip1/libclang_rt.builtins.a
++	clang-$(DEB_LLVM_VERSION) --target=wasm32-wasip1 -resource-dir=$(WASM_RESOURCE_DIR) -O2 -c debian/wasm-cxa-stubs.c -o $(WASM_RESOURCE_DIR)/wasm-cxa-stubs.o
++	llvm-ar-$(DEB_LLVM_VERSION) r $(WASM_RESOURCE_DIR)/lib/wasm32-unknown-wasip1/libclang_rt.builtins.a $(WASM_RESOURCE_DIR)/wasm-cxa-stubs.o
++	touch $@
++clean::
++	rm -rf $(WASM_RESOURCE_DIR) debian/stamp-wasm-resource
++
++debian/stamp-mach-configure: cbindgen/bin/cbindgen dump_syms/bin/dump_syms debian/stamp-wasm-resource
+ 	$(CURDIR)/mach configure && $(CURDIR)/mach build-backend
+ 	touch $@
+ clean::
+diff -ruN a/debian/config/mozconfig.in b/debian/config/mozconfig.in
+--- a/debian/config/mozconfig.in
++++ b/debian/config/mozconfig.in
+@@ -67,13 +67,14 @@
+ %%if DISTRIB == Ubuntu
+ #ac_add_options --with-ua-vendor=Ubuntu
+ %%endif
+-ac_add_options --without-wasm-sandboxed-libraries
+ %%if MOZ_UPDATE_CHANNEL == nightly
+ ac_add_options --enable-profiling
+ %%endif
+ mk_add_options "export MOZ_BUILD_DATE=@MOZ_BUILDID@"
+ ac_add_options CC=clang-@DEB_LLVM_VERSION@
+ ac_add_options CXX=clang++-@DEB_LLVM_VERSION@
++ac_add_options "WASM_CC=clang-@DEB_LLVM_VERSION@ -resource-dir=@TOPSRCDIR@/debian/wasm-resource"
++ac_add_options "WASM_CXX=clang++-@DEB_LLVM_VERSION@ -resource-dir=@TOPSRCDIR@/debian/wasm-resource"
+ ac_add_options RUSTC=rustc-@DEB_RUSTC_VERSION@
+ ac_add_options CARGO=cargo-@DEB_RUSTC_VERSION@
+ ac_add_options CBINDGEN=@TOPSRCDIR@/@DEB_BUILDDIR@/cbindgen/bin/cbindgen
+diff -ruN a/debian/control b/debian/control
+--- a/debian/control
++++ b/debian/control
+@@ -42,6 +42,10 @@
+ 	libclang-22-dev | libclang-21-dev | libclang-20-dev | libclang-19-dev,
+ 	llvm-22-dev | llvm-21-dev | llvm-20-dev | llvm-19-dev,
+ 	lld-22 | lld-21 | lld-20 | lld-19,
++	libc++-22-dev-wasm32,
++	libc++abi-22-dev-wasm32,
++	libclang-rt-22-dev-wasm32,
++	wasi-libc,
+ 	cargo-1.97 | cargo-1.94 | cargo-1.93 | cargo-1.90,
+ 	rustc-1.97 | rustc-1.94 | rustc-1.93 | rustc-1.90,
+ 	nodejs (>= 12.22.12)
+diff -ruN a/debian/control.in b/debian/control.in
+--- a/debian/control.in
++++ b/debian/control.in
+@@ -42,6 +42,10 @@
+ 	libclang-22-dev | libclang-21-dev | libclang-20-dev | libclang-19-dev,
+ 	llvm-22-dev | llvm-21-dev | llvm-20-dev | llvm-19-dev,
+ 	lld-22 | lld-21 | lld-20 | lld-19,
++	libc++-22-dev-wasm32,
++	libc++abi-22-dev-wasm32,
++	libclang-rt-22-dev-wasm32,
++	wasi-libc,
+ 	cargo-1.97 | cargo-1.94 | cargo-1.93 | cargo-1.90,
+ 	rustc-1.97 | rustc-1.94 | rustc-1.93 | rustc-1.90,
+ 	nodejs (>= 12.22.12)
+diff -ruN a/debian/wasm-cxa-stubs.c b/debian/wasm-cxa-stubs.c
+--- /dev/null
++++ b/debian/wasm-cxa-stubs.c
+@@ -0,0 +1,61 @@
++/*
++ * Ubuntu's wasm32 libc++ is built with exception support while its libc++abi and compiler-rt are not, so
++ * these C++ runtime functions are referenced but defined nowhere (Launchpad bug 2169046). Firefox builds its
++ * wasm sandboxed libraries without exceptions, so none of them is ever reached in a working program, and each
++ * aborts like libc++ built without exceptions does. The signatures match the real ones, as wasm-ld checks them.
++ */
++
++#include <stddef.h>
++#include <stdint.h>
++#include <stdlib.h>
++
++struct _Unwind_Context;
++
++void *__cxa_allocate_exception(size_t size) {
++  (void)size;
++  abort();
++}
++
++void __cxa_throw(void *exception, void *type_info, void (*destructor)(void *)) {
++  (void)exception;
++  (void)type_info;
++  (void)destructor;
++  abort();
++}
++
++void *__cxa_begin_catch(void *exception) {
++  (void)exception;
++  abort();
++}
++
++void __cxa_rethrow(void) {
++  abort();
++}
++
++uintptr_t _Unwind_GetIP(struct _Unwind_Context *context) {
++  (void)context;
++  abort();
++}
++
++uintptr_t _Unwind_GetLanguageSpecificData(struct _Unwind_Context *context) {
++  (void)context;
++  abort();
++}
++
++uintptr_t _Unwind_GetRegionStart(struct _Unwind_Context *context) {
++  (void)context;
++  abort();
++}
++
++void _Unwind_SetGR(struct _Unwind_Context *context, int index, uintptr_t value) {
++  (void)context;
++  (void)index;
++  (void)value;
++  abort();
++}
++
++void _Unwind_SetIP(struct _Unwind_Context *context, uintptr_t value) {
++  (void)context;
++  (void)value;
++  abort();
++}

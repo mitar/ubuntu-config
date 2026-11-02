@@ -1,0 +1,3 @@
+wayland-session-restore-new-ids.patch
+wayland-session-restore-show-waiting-windows.patch
+wayland-session-restore-on-gnome.patch

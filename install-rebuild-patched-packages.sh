@@ -2,14 +2,16 @@
 #
 # Install rebuild-patched-packages.sh, its patches and its daily cron job from this repository as the root-owned
 # copies that root runs, and give the sbuild user its builds run as the subordinate ids building in unshare mode
-# needs. Also set up the local repository the rebuilds are published to, and let unattended-upgrades install from
-# it. Only what differs from the installed copy is replaced.
+# needs. Also set up the local repository the rebuilds are published to, let unattended-upgrades install from it,
+# and let /tmp, where builds run, hold as many files as a Firefox build needs. Only what differs from the installed
+# copy is replaced.
 #
 #   rebuild-patched-packages.sh                         ->  /usr/local/bin/rebuild-patched-packages
 #   patches/                                            ->  /usr/local/share/patched-packages
 #   cron.daily/rebuild-patched-packages                 ->  /etc/cron.daily/rebuild-patched-packages
 #   sources.list.d/local.list                           ->  /etc/apt/sources.list.d/local.list
 #   apt.conf.d/52unattended-upgrades-local-repository   ->  /etc/apt/apt.conf.d/52unattended-upgrades-local-repository
+#   systemd/tmp.mount.d/50-nr-inodes.conf               ->  /etc/systemd/system/tmp.mount.d/50-nr-inodes.conf
 #
 # See Installing in rebuild-patched-packages.sh for why root does not run the repository directly.
 #
@@ -99,6 +101,29 @@ fi
 install_file "$REPO_DIR/sources.list.d/local.list" /etc/apt/sources.list.d/local.list 644
 install_file "$REPO_DIR/apt.conf.d/52unattended-upgrades-local-repository" \
              /etc/apt/apt.conf.d/52unattended-upgrades-local-repository 644
+
+echo "=== /tmp, where builds run ==="
+# The drop-in raises how many files /tmp holds, see its comment. systemd applies it when it mounts /tmp at boot, so
+# the mounted /tmp is also remounted with the new limit when it has a lower one, which keeps its contents.
+TMP_DROPIN_SRC=$REPO_DIR/systemd/tmp.mount.d/50-nr-inodes.conf
+TMP_DROPIN_DST=/etc/systemd/system/tmp.mount.d/50-nr-inodes.conf
+if ! cmp -s "$TMP_DROPIN_SRC" "$TMP_DROPIN_DST"; then
+  echo "  install $TMP_DROPIN_DST"
+  CHANGED=$((CHANGED+1))
+  if [ "$MODE" = apply ]; then
+    sudo install -D -o root -g root -m 644 "$TMP_DROPIN_SRC" "$TMP_DROPIN_DST"
+    sudo systemctl daemon-reload
+  fi
+fi
+want=$(grep '^Options=' "$TMP_DROPIN_SRC" | grep -o 'nr_inodes=[0-9]*[kKmMgG]\?' | cut -d= -f2)
+have=$(findmnt -no FSTYPE,OPTIONS /tmp | awk '$1 == "tmpfs"' | grep -o 'nr_inodes=[0-9]*' | cut -d= -f2)
+if [ -n "$have" ] && [ "$have" -lt "$(numfmt --from=iec "${want^^}")" ]; then
+  echo "  remount /tmp with nr_inodes=$want (now $have)"
+  CHANGED=$((CHANGED+1))
+  if [ "$MODE" = apply ]; then
+    sudo mount -o remount,nr_inodes="$want" /tmp
+  fi
+fi
 
 echo
 if [ "$CHANGED" -eq 0 ]; then

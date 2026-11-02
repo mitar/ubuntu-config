@@ -1,0 +1,204 @@
+Description: Ship no AppArmor profile, like Mozilla's own package.
+ The packaging installs /etc/apparmor.d/usr.bin.firefox, an enforcing profile named firefox written for Ubuntu
+ 14.10. Its preinst disables it only on a fresh install and on an upgrade from a version before 3.7, so an upgrade
+ from Mozilla's package, whose version is higher, enables it. It then replaces the profile of the same name which
+ Ubuntu's apparmor package ships in /etc/apparmor.d/firefox, which allows everything and grants the user namespaces
+ Firefox's sandbox needs. Under the old profile Firefox cannot lock its profile directory, create its Wayland
+ proxy socket or run bwrap for glycin's image loaders, and GTK aborts when it fails to load an icon.
+ .
+ This drops the profile and everything the maintainer scripts do for it: disabling it in preinst, creating its
+ local and abstraction include files and loading it in postinst, and removing those files in postrm, so the
+ package does not touch /etc/apparmor.d at all. It does not remove the profile from a system where an earlier
+ build installed it. README.Debian describes the profile and is replaced accordingly.
+Author: Mitar
+Forwarded: https://bugs.launchpad.net/ubuntu/+source/firefox/+bug/2172775
+Last-Update: 2026-11-02
+diff -ruN a/debian/firefox.dirs.in b/debian/firefox.dirs.in
+--- a/debian/firefox.dirs.in
++++ b/debian/firefox.dirs.in
+@@ -1,7 +1,6 @@
+ @MOZ_ADDONDIR@/distribution/extensions
+ @MOZ_ADDONDIR@/extensions
+ @MOZ_ADDONDIR@/plugins
+-etc/apparmor.d/disable
+ etc/apport/native-origins.d
+ etc/apport/blacklist.d
+ usr/share/icons/hicolor/16x16/apps
+diff -ruN a/debian/firefox.install.in b/debian/firefox.install.in
+--- a/debian/firefox.install.in
++++ b/debian/firefox.install.in
+@@ -29,5 +29,3 @@
+ debian/vendor-gre.js @MOZ_LIBDIR@/defaults/pref
+ debian/vendor-firefox.js @MOZ_LIBDIR@/browser/defaults/preferences
+ debian/syspref.js etc/@MOZ_PKG_NAME@
+-
+-debian/usr.bin.@MOZ_PKG_NAME@ etc/apparmor.d
+diff -ruN a/debian/firefox.postinst.in b/debian/firefox.postinst.in
+--- a/debian/firefox.postinst.in
++++ b/debian/firefox.postinst.in
+@@ -43,65 +43,6 @@
+ fi
+ 
+ if [ "$1" = "configure" ] ; then
+-    #
+-    # AppArmor
+-    #
+-    APP_PROFILE="/etc/apparmor.d/usr.bin.$MOZ_PKG_NAME"
+-    if [ -f "$APP_PROFILE" ]; then
+-        if [ -e /etc/lsb-release ] ; then
+-            ubuntu_version=`grep ^DISTRIB_RELEASE /etc/lsb-release | cut -d= -f2 | cut -d '.' -f-2 | tr -d '.'`
+-        else
+-            ubuntu_version=`lsb_release -rs | cut -d '.' -f-2 | tr -d '.'`
+-        fi
+-        # Setup the extra include files for Ubuntu 10.10 and higher
+-        # Add the local/ include
+-        LOCAL_APP_PROFILE="/etc/apparmor.d/local/usr.bin.$MOZ_PKG_NAME"
+-        test -e "$LOCAL_APP_PROFILE" || {
+-            tmp=`mktemp`
+-            cat <<EOM > "$tmp"
+-# Site-specific additions and overrides for usr.bin.firefox.
+-# For more details, please see /etc/apparmor.d/local/README.
+-EOM
+-            mkdir `dirname $LOCAL_APP_PROFILE` 2>/dev/null || true
+-            mv -f "$tmp" "$LOCAL_APP_PROFILE"
+-            chmod 644 "$LOCAL_APP_PROFILE"
+-        }
+-
+-        # Add the addons include
+-        ADDONS_APP_PROFILE="/etc/apparmor.d/abstractions/ubuntu-browsers.d/$MOZ_PKG_NAME"
+-        test -e "$ADDONS_APP_PROFILE" || {
+-            tmp=`mktemp`
+-            cat <<EOM > "$tmp"
+-# This file is updated by 'aa-update-browser' and may be overwritten on
+-# upgrades.
+-#
+-# For site-specific adjustments, please see /etc/apparmor.d/local/<binary>
+-
+-#include <abstractions/ubuntu-browsers.d/plugins-common>
+-#include <abstractions/ubuntu-browsers.d/mailto>
+-#include <abstractions/ubuntu-browsers.d/multimedia>
+-#include <abstractions/ubuntu-browsers.d/productivity>
+-#include <abstractions/ubuntu-browsers.d/java>
+-#include <abstractions/ubuntu-browsers.d/kde>
+-#include <abstractions/ubuntu-browsers.d/text-editors>
+-#include <abstractions/ubuntu-browsers.d/ubuntu-integration>
+-#include <abstractions/ubuntu-browsers.d/user-files>
+-EOM
+-            mkdir -p `dirname $ADDONS_APP_PROFILE` 2>/dev/null || true
+-            mv -f "$tmp" "$ADDONS_APP_PROFILE"
+-            chmod 644 "$ADDONS_APP_PROFILE"
+-        }
+-
+-        # Reload AppArmor profile
+-        DISABLE_APP_PROFILE="/etc/apparmor.d/disable/usr.bin.$MOZ_PKG_NAME"
+-        if [ ! -f "$DISABLE_APP_PROFILE" ] && aa-status --enabled 2>/dev/null; then
+-            apparmor_parser -r -T -W "$APP_PROFILE" || true
+-        fi
+-    fi
+-    #
+-    # End AppArmor
+-    #
+-
+     finish_rm_conffile "/etc/${MOZ_PKG_NAME}/profile/bookmarks.html"
+     finish_rm_conffile "/etc/${MOZ_PKG_NAME}/profile/localstore.rdf"
+     finish_rm_conffile "/etc/${MOZ_PKG_NAME}/profile/mimeTypes.rdf"
+diff -ruN a/debian/firefox.postrm.in b/debian/firefox.postrm.in
+--- a/debian/firefox.postrm.in
++++ b/debian/firefox.postrm.in
+@@ -33,13 +33,6 @@
+ }
+ 
+ if [ "$1" = "purge" ]; then
+-    APP_PROFILE="usr.bin.@MOZ_PKG_NAME@"
+-    rm -f /etc/apparmor.d/force-complain/$APP_PROFILE || true
+-    rm -f /etc/apparmor.d/disable/$APP_PROFILE || true
+-    rm -f /etc/apparmor.d/local/$APP_PROFILE || true
+-    rm -f "/etc/apparmor.d/abstractions/ubuntu-browsers.d/@MOZ_PKG_NAME@" || true
+-    rmdir /etc/apparmor.d/local 2>/dev/null || true
+-
+     purge_conffile "/etc/${MOZ_PKG_NAME}/profile/bookmarks.html"
+     purge_conffile "/etc/${MOZ_PKG_NAME}/profile/localstore.rdf"
+     purge_conffile "/etc/${MOZ_PKG_NAME}/profile/mimeTypes.rdf"
+diff -ruN a/debian/firefox.preinst.in b/debian/firefox.preinst.in
+--- a/debian/firefox.preinst.in
++++ b/debian/firefox.preinst.in
+@@ -2,10 +2,6 @@
+ 
+ set -e
+ 
+-APP_DIR="/etc/apparmor.d"
+-APP_PROFILE="usr.bin.@MOZ_PKG_NAME@"
+-APP_CONFFILE="$APP_DIR/$APP_PROFILE"
+-APP_DISABLE="$APP_DIR/disable/$APP_PROFILE"
+ MOZ_PKG_NAME=@MOZ_PKG_NAME@
+ MOZ_ADDONDIR=/@MOZ_ADDONDIR@
+ MOZ_LIBDIR=/@MOZ_LIBDIR@
+@@ -45,44 +41,7 @@
+     fi
+ }
+ 
+-disable_profile() {
+-    # Create a symlink to the yet-to-be-unpacked profile
+-    if [ ! -e "$APP_CONFFILE" ]; then
+-        mkdir -p `dirname $APP_DISABLE` 2>/dev/null || true
+-        ln -sf $APP_CONFFILE $APP_DISABLE
+-    fi
+-}
+-
+ if [ "$1" = "install" ] || [ "$1" = "upgrade" ] ; then
+-    # Unconditionally disable AppArmor profile for Ubuntu 9.04 and under, since
+-    # it requires abstractions found only in 9.10 and higher.
+-    major=`lsb_release -r | awk '{print $2}' | cut -d '.' -f 1`
+-    version=`lsb_release -r | awk '{print $2}'`
+-    if [ "$major" -lt 10 ] && [ "$version" != "9.10" ]; then
+-        disable_profile
+-    else
+-        if [ "$1" = "install" ]; then
+-            # Disable AppArmor profile on install, unless the last profile they
+-            # modified is enabled.
+-            base=`echo $APP_PROFILE | cut -d '-' -f 1`
+-            last_modified=`ls -rt $APP_DIR/$base* 2>/dev/null | grep -v '\.dpkg' | tail -n1`
+-            if [ -s "$last_modified" ]; then
+-                if [ -e "$APP_DIR/disable/`basename $last_modified`" ]; then
+-                    disable_profile
+-                fi
+-            else
+-	        # Fresh install and no other firefox profiles exist, so disable.
+-                disable_profile
+-            fi
+-        elif [ "$1" = "upgrade" ]; then
+-            # Disable AppArmor on upgrade from earlier than when we first shipped
+-            # the profile if the user does not already have a profile defined.
+-            if dpkg --compare-versions "$2" lt "3.7~a1~hg20091203" ; then
+-                disable_profile
+-            fi
+-        fi
+-    fi
+-
+     prepare_rm_conffile "${MOZ_PKG_NAME}" "/etc/${MOZ_PKG_NAME}/profile/bookmarks.html"
+     prepare_rm_conffile "${MOZ_PKG_NAME}" "/etc/${MOZ_PKG_NAME}/profile/localstore.rdf"
+     prepare_rm_conffile "${MOZ_PKG_NAME}" "/etc/${MOZ_PKG_NAME}/profile/mimeTypes.rdf"
+diff -ruN a/debian/README.Debian.in b/debian/README.Debian.in
+--- a/debian/README.Debian.in
++++ b/debian/README.Debian.in
+@@ -1,15 +1,5 @@
+-Apparmor Profile
+-----------------
+-If your system uses AppArmor, please note that the shipped profile is disabled
+-by default. The profile can be enabled by performing:
+-
+-$ sudo aa-enforce /etc/apparmor.d/usr.bin.@MOZ_PKG_NAME@
+-
+-The profile can be disabled by performing:
+-$ sudo apparmor_parser -R /etc/apparmor.d/usr.bin.@MOZ_PKG_NAME@
+-$ sudo ln -s /etc/apparmor.d/usr.bin.@MOZ_PKG_NAME@ /etc/apparmor.d/disable/usr.bin.@MOZ_PKG_NAME@
+-
+-This profile should work without modification for most plugins available in
+-Ubuntu, but may require adjusting for your environment. Please see
+-https://wiki.ubuntu.com/DebuggingApparmor before filing a bug against this
+-software.
++AppArmor
++--------
++This package ships no AppArmor profile of its own. Ubuntu's apparmor package
++confines Firefox with its firefox profile, which allows everything and lets
++Firefox's sandbox create the user namespaces it needs.
