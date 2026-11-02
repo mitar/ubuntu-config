@@ -6,9 +6,11 @@ Description: Build the wasm sandboxed libraries, as Mozilla's own builds do.
  .
   - clang 22 looks for the wasm32-wasip1 compiler-rt builtins under lib/wasm32-unknown-wasip1/, but the package
     installs them as lib/wasi/libclang_rt.builtins-wasm32.a (Launchpad bug 2152147, fixed in Debian);
-  - the wasm32 libc++ is built with exceptions while libc++abi is not, so __cxa_throw and eight more C++ runtime
-    functions are referenced but defined nowhere (Launchpad bug 2169046). debian/wasm-cxa-stubs.c defines them to
-    abort, which is what a libc++ built without exceptions, like Mozilla's, does in their place.
+  - the wasm32 libc++ and libc++abi are compiled with exceptions, as -fno-exceptions never reaches the compiler in
+    their build, so they call __cxa_throw and three more functions of the exception runtime, and compiler-rt's
+    gcc_personality_v0 calls five functions of the unwinder, none of which any wasm32 library defines (Launchpad
+    bug 2169046). debian/wasm-cxa-stubs.c defines them to abort, which is what a libc++ built without exceptions,
+    like Mozilla's, does in their place.
  .
  WASM_CC and WASM_CXX point clang at the resource directory, whose builtins archive carries the stubs, so every wasm
  link finds both.
@@ -94,12 +96,13 @@ diff -ruN a/debian/control.in b/debian/control.in
 diff -ruN a/debian/wasm-cxa-stubs.c b/debian/wasm-cxa-stubs.c
 --- /dev/null
 +++ b/debian/wasm-cxa-stubs.c
-@@ -0,0 +1,61 @@
+@@ -0,0 +1,62 @@
 +/*
-+ * Ubuntu's wasm32 libc++ is built with exception support while its libc++abi and compiler-rt are not, so
-+ * these C++ runtime functions are referenced but defined nowhere (Launchpad bug 2169046). Firefox builds its
-+ * wasm sandboxed libraries without exceptions, so none of them is ever reached in a working program, and each
-+ * aborts like libc++ built without exceptions does. The signatures match the real ones, as wasm-ld checks them.
++ * Ubuntu's wasm32 libc++ and libc++abi call the C++ exception runtime, as -fno-exceptions never reaches the
++ * compiler in their build, and compiler-rt's gcc_personality_v0 calls the unwinder, but no wasm32 library
++ * defines either (Launchpad bug 2169046). Firefox builds its wasm sandboxed libraries without exceptions, so none
++ * of these is ever reached in a working program, and each aborts like libc++ built without exceptions does. The
++ * signatures match the real ones, as wasm-ld checks them.
 + */
 +
 +#include <stddef.h>
