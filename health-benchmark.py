@@ -1032,7 +1032,6 @@ def report():
         first, highest = fan[0][0], max(rpm for rpm, _ in fan)
         print(f'{"Fan at a full duty cycle":<28}' + (f'{value:.0f} RPM' if value else '-').rjust(16) +
               f'{highest:.0f} RPM'.rjust(16) + '  highest, ' + f'{first:.0f} RPM first')
-        print('  falling over time: a wearing fan, rising: dust clogging the fins (less air to push)')
 
     performance_bests = section('Performance', PERFORMANCE)
     shares = [(performance_share(row, performance_bests), row) for row in rows]
