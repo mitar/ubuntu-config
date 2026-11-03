@@ -347,10 +347,13 @@ has an owner (`wait-for-status-notifier-watcher.sh`, `autostart/`, installed by 
 is installed only in place of one the application wrote itself, when its setting to start at login is on, and the
 application writes its own entry again when that setting is turned off and on, until the script runs again.
 
-The entries and the script can go once Chromium waits for the name to have an owner, as libayatana-appindicator does,
-or once GNOME Shell enables its extensions before it reports that it is ready. Extensions being enabled only after
-the Shell started up is also why they cannot change its startup animation any more,
-[GNOME Shell issue 8917](https://gitlab.gnome.org/GNOME/gnome-shell/-/issues/8917).
+The cause is reported to Chromium as [issue 580998950](https://issues.chromium.org/issues/580998950), and the entries
+and the script can go once Chromium waits for the name to have an owner, as libayatana-appindicator does, or once
+GNOME Shell enables its extensions before it reports that it is ready. Extensions being enabled only after the Shell
+started up is also why they cannot change its startup animation any more,
+[GNOME Shell issue 8917](https://gitlab.gnome.org/GNOME/gnome-shell/-/issues/8917). Claude Desktop is asked to wait for
+the name itself in [claude-code issue 106844](https://github.com/anthropics/claude-code/issues/106844), and its entry
+can go once it does.
 
 ### snapd's desktop helper starts with the desktop
 
