@@ -18,9 +18,10 @@
 # FrameworkComputer/EmbeddedController issue 69.
 ^kernel: cros_ec_lpcs \S+: (bad packet checksum|packet too long)
 
-# The embedded controller, which answers the kernel's USB-C questions (UCSI), does not support listing the power
-# offers of a charger or dock (-95 is EOPNOTSUPP), and answers some question with UCSI's undefined error, bit 8. Both
-# happen at every boot and every time the dock is plugged in. Charging is negotiated by the embedded controller and
-# works regardless. Rarer UCSI errors stay in the report.
+# The embedded controller, which answers the kernel's USB-C questions (UCSI), rejects reading the power offers of a
+# charger or dock as an incompatible partner (-95) when the kernel asks right after it is plugged in or the laptop
+# resumes, while later reads list them. It also answers some question with UCSI's undefined error, bit 8, at every
+# boot and every time the dock is plugged in. Charging is negotiated by the embedded controller and works regardless.
+# Rarer UCSI errors stay in the report.
 ^kernel: ucsi_acpi \S+: UCSI_GET_PDOS failed \(-95\)$
 ^kernel: ucsi_acpi \S+: unknown error 256$
