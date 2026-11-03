@@ -1,0 +1,7 @@
+{
+  "name": "local.chromium_quit",
+  "description": "Quits Chromium for the Quit with Ctrl+Q extension",
+  "path": "/usr/local/libexec/chromium-quit",
+  "type": "stdio",
+  "allowed_origins": ["chrome-extension://lngpjhcbmgodcghikmnfghlahjjikili/"]
+}

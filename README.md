@@ -266,6 +266,14 @@ backport no longer have, so mutter is also patched to offer the draft next to th
 which `configure-gnome-desktop.sh` enables for every user (`chromium.d/`), the same as
 `chrome://flags/#wayland-session-management`.
 
+### Chromium quits with Ctrl+Q
+
+Chromium binds no key to Exit on Linux. A small extension binds Ctrl+Q, which the thumb key sends where macOS has
+Command+Q (`chromium-extensions/quit-shortcut/`), and starts a native messaging host
+(`chromium-native-messaging-hosts/`), a script which ends Chromium with SIGTERM (`chromium-quit.sh`). Chromium handles
+that like the end of the desktop session and keeps its whole session, so all its windows return at the next start.
+`configure-gnome-desktop.sh` installs all three, and the shortcut can be changed in `chrome://extensions/shortcuts`.
+
 ### Firefox's sandbox has its user namespaces
 
 Firefox isolates its content processes in user namespaces of their own. Ubuntu allows unprivileged user namespaces
@@ -306,12 +314,9 @@ systemd scope of its own, so that xdg-desktop-portal can identify it, but leaves
 helpers in the scope GNOME launched it in. Only GNOME's scopes are tied to the session, so at logout systemd stops
 the helpers while the browser process keeps running, fails to start its GPU process again, and crashes. A drop-in
 for the user service manager ties every application scope to the session, so that the application's own scope is
-stopped at logout too. Stopping both scopes at once is not enough, because the helpers can still die before the
-browser process starts to shut down, and stopping the application's own scope first is not enough either, because
-Chromium starts its renderers in that scope, and a browser process whose renderers die under it can stall until it
-is killed. So at logout a user service sends SIGTERM to the browser process alone, which Chromium names its scope
-after, and waits for it to exit, and every application scope is ordered to stop only after that service. The browser
-process then shuts down while its helpers still run, and ends them itself (`stop-application-scopes.sh`,
+stopped at logout too. At logout a user service sends SIGTERM to the browser process alone, which Chromium names its
+scope after, and waits for it to exit, and every application scope is ordered to stop only after that service. The
+browser process then shuts down while its helpers still run, and ends them itself (`stop-application-scopes.sh`,
 `systemd/user/`, installed by `configure-gnome-desktop.sh`).
 
 At a shutdown or a reboot that ordering is not enough. logind starts the shutdown as soon as gnome-session released
@@ -321,9 +326,7 @@ own. When logind announces a shutdown or a reboot, the service stops the first o
 exit, and releases its inhibitor only after that, so that logind starts the shutdown once the applications exited
 (`stop-application-scopes-before-shutdown.py`). logind waits for an inhibitor for at most `InhibitDelayMaxSec=`, 5
 seconds by default, which unattended-upgrades raises to 30 seconds. GNOME asks logind for the shutdown only once it is
-confirmed, so cancelling its confirmation dialog leaves the applications running. Electron offers logind's
-announcement to applications as `powerMonitor`'s `shutdown` event, but Signal, Slack and Claude Desktop do not listen
-for it.
+confirmed, so cancelling its confirmation dialog leaves the applications running.
 
 GNOME Shell is not ordered relative to the application scopes either, so at logout and at shutdown systemd stopped it
 while the applications were still quitting. GTK, which Chromium loads, ends a process whose Wayland connection breaks

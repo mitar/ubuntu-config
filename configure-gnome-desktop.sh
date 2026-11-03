@@ -33,8 +33,9 @@
 # packages, the console's boot-time unit, the udev rules, the module options, and the login screen settings need
 # root, as do the rules added to AppArmor profiles and the option added to AppArmor's parser configuration, the
 # drop-ins for GDM's unit and for application scopes, the user service which stops application scopes and its script,
-# the script which starts applications at login once there is a tray, Chromium's flags, and the option added to
-# /etc/crypttab, so those parts call sudo themselves and will ask for a password.
+# the script which starts applications at login once there is a tray, Chromium's flags, its Ctrl+Q extension with the
+# native messaging host and script it uses, and the option added to /etc/crypttab, so those parts call sudo
+# themselves and will ask for a password.
 
 set -euo pipefail
 
@@ -397,6 +398,34 @@ install_chromium_flags() {
   CHANGED=$((CHANGED+1))
   [ "$MODE" = apply ] || return 0
   sudo install -m 644 "$src" "$dst"
+  return 0
+}
+
+# Installs a native messaging host for Chromium from chromium-native-messaging-hosts/ in this repository into the
+# root-owned /etc/chromium/native-messaging-hosts through sudo, where Chromium looks for it when an extension starts it.
+install_chromium_native_host() {
+  local name=$1 src=$REPO_DIR/chromium-native-messaging-hosts/$1 dst=/etc/chromium/native-messaging-hosts/$1
+  cmp -s "$src" "$dst" && return 0
+  echo "  install $dst"
+  CHANGED=$((CHANGED+1))
+  [ "$MODE" = apply ] || return 0
+  sudo install -D -m 644 "$src" "$dst"
+  return 0
+}
+
+# Installs an extension for Chromium from chromium-extensions/ in this repository, as a root-owned copy in
+# /usr/share/chromium/extensions through sudo. /etc/chromium.d/extensions of the chromium package loads every extension
+# there at Chromium's start, so Chromium already running picks it up when started again.
+install_chromium_extension() {
+  local name=$1 src=$REPO_DIR/chromium-extensions/$1 dst=/usr/share/chromium/extensions/$1
+  diff -rq "$src" "$dst" >/dev/null 2>&1 && return 0
+  echo "  install $dst"
+  CHANGED=$((CHANGED+1))
+  [ "$MODE" = apply ] || return 0
+  sudo rm -rf "$dst"
+  sudo install -d -m 755 "$(dirname "$dst")"
+  sudo cp -r "$src" "$dst"
+  sudo chmod -R u=rwX,go=rX "$dst"
   return 0
 }
 
@@ -775,6 +804,11 @@ install_autostart slack.desktop
 # done only when it is installed.
 if [ -d /etc/chromium.d ]; then
   install_chromium_flags wayland-session-management
+  # Chromium binds no key to Exit on Linux, so the extension quits it with Ctrl+Q through the native messaging host,
+  # which keeps its whole session, see the host's script.
+  install_libexec chromium-quit.sh chromium-quit
+  install_chromium_native_host local.chromium_quit.json
+  install_chromium_extension quit-shortcut
 fi
 # snapd starts snapd-desktop-integration before there is a display, see the drop-in. The snap is optional, so this is
 # done only when it is installed.

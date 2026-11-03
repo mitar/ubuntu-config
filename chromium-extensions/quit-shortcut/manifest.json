@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "Quit with Ctrl+Q",
+  "description": "Quits Chromium with Ctrl+Q and keeps its whole session, through the native messaging host local.chromium_quit.",
+  "version": "1.0",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAsHTXjIpZUdwwB+O+9nirvkSZe80jP6pUWbJmIkbsqCBH9eWMQ9pOIMJdSu+VOGP3L03wNLCBGsojRBC3hHKNGBHrxY89l3ashFiPixJ2LCMwRBOnARy4sVtwU19mf6opyDijRoxd8tmLhMPjFc5sC/o13Sc9r904svfo5glhdzcojWBFdWdAQ0dGt5xqMjoLgKgYtYqzegI1gpzGlr2uTug9oBocvnn63Iq2MABDmi34A50lSn2WUlO0q4tMW1pNYBY9jJtudtuWLZdxrb8ybfgOvVBSG/RH+pVKV+5X5pxVCKlZyDXgcSMhutqLVsNhxUyRr6sYcSBHpH3ZCRpeCQIDAQAB",
+  "permissions": ["nativeMessaging"],
+  "background": {"service_worker": "background.js"},
+  "commands": {
+    "quit": {
+      "suggested_key": {"default": "Ctrl+Q"},
+      "description": "Quit Chromium"
+    }
+  }
+}
