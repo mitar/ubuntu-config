@@ -146,7 +146,9 @@ combinations of speakers, headphones and microphones which differ in which of th
 
 An indicator appears in the top bar while the processor is being held below the speed it would otherwise run
 at, and names what is holding it there. Its menu breaks that down into the share of the last interval each
-limit accounted for, alongside the fan speed, the package power and the temperatures.
+limit accounted for, alongside the fan speed, the package power and the temperatures. It is always the first of the
+indicators on the right of the top bar, so the icons of applications, which the AppIndicators extension shows there,
+follow it whichever started first.
 
 The interfaces the usual tools read for this are Intel's and AMD publishes no equivalent, so the indicator
 reads the APU's own metrics table at `/sys/class/drm/card*/device/gpu_metrics` instead. That table counts the

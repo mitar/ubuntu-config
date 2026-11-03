@@ -450,9 +450,21 @@ export default class CpuThrottleIndicatorExtension extends Extension {
         this._indicator = new Indicator(`${this.path}/icons`, file, findApuSensorFile(), findFanFiles(),
             findBoardSensorFiles());
         Main.panel.addToStatusArea(this.uuid, this._indicator);
+        // The indicator stays the first one on the right of the top bar. Indicators added after it are mostly added at
+        // the start of that box as well, and AppIndicators adds the icons of applications at its second place, counting
+        // indicators which are hidden. So without moving back to the start, whether the icons of applications end up
+        // to the left or to the right of it would depend on the order in which extensions and applications started.
+        const {container} = this._indicator;
+        this._box = container.get_parent();
+        this._box.connectObject('child-added', () => {
+            if (container.get_previous_sibling())
+                this._box.set_child_at_index(container, 0);
+        }, this);
     }
 
     disable() {
+        this._box?.disconnectObject(this);
+        this._box = null;
         this._indicator?.destroy();
         this._indicator = null;
     }
