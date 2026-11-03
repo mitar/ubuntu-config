@@ -27,6 +27,12 @@ working-directory-from-proc.patch
     then read from /proc by ptyxis-agent, as Ubuntu's gnome-terminal did. Upstream relies on
     OSC 7 alone and leaves the agent's GetWorkingDirectory unused.
 
+register-app-id-before-gtk-init.patch
+    Makes the dialog shown before logging out or shutting down list Ptyxis while a program runs
+    in one of its tabs. Ptyxis registers a logout inhibitor for it, but the portal knows Ptyxis
+    by an empty application ID, because Ptyxis calls gtk_init before GTK registers the ID with
+    the portal, and GNOME Shell leaves out inhibitors whose ID names no application.
+
 None of this is reachable through settings, which is why the patches exist. A shortcut in Ptyxis
 is spread across four places, and only the first is visible from outside:
 
@@ -49,3 +55,5 @@ compile, and still behave wrongly. Check by hand after a rebuild.
   printf '\a', animations off  should colour the header for 150 ms
   cd /tmp, then printf '\e]7;\e\\'; sleep 60, and Control+N while sleep runs
                                should open in /tmp, not in the home directory
+  sleep 60, then Power Off in the system menu
+                               should list Terminal with "A foreground process is running"

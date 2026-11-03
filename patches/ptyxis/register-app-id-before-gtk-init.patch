@@ -1,0 +1,79 @@
+Description: Register the application ID with the portal before GTK is initialised.
+ GTK 4 sends gtk_application_inhibit through the Inhibit portal, which names the calling
+ application by the ID it has associated with the D-Bus connection. For an application outside a
+ sandbox the portal reads that ID from the systemd scope, but D-Bus activation starts Ptyxis in
+ dbus.service, which names no application, so the ID can come only from the host portal
+ registry. GTK registers there when the application starts up, while Ptyxis calls gtk_init in
+ main before that, and gtk_init already reads settings through the portal. The portal refuses a
+ registration after any portal call, so the connection keeps an empty ID. gnome-session records
+ the logout inhibitors with it, and GNOME Shell leaves them out of the dialog shown before
+ logging out or shutting down, as it does for every inhibitor whose ID names no application.
+ .
+ The ID is now registered in main before gtk_init, on the session bus connection which GTK and
+ GApplication then use. A standalone instance started with --gapplication-app-id is still
+ registered as org.gnome.Ptyxis.
+Author: Mitar
+Forwarded: no
+Last-Update: 2026-11-03
+--- a/src/main.c
++++ b/src/main.c
+@@ -201,6 +201,44 @@
+   return default_rlimit_nofile;
+ }
+ 
++/* Associates this process with APP_ID in the host portal registry, so that
++ * portal calls such as Inhibit are attributed to Ptyxis. It has to run before
++ * the first portal call of the process. Inside Flatpak it does nothing, as the
++ * sandbox already identifies the application there.
++ */
++static void
++register_host_app_id (void)
++{
++  /* The session bus connection is released with its last reference, and a
++   * new one would be unknown to the portal again. So this one is kept for the
++   * life of the process, which makes it the one GApplication and GTK use.
++   */
++  static GDBusConnection *bus;
++
++  if (ptyxis_get_process_kind () == PTYXIS_PROCESS_KIND_FLATPAK)
++    return;
++
++  if (!(bus = g_bus_get_sync (G_BUS_TYPE_SESSION, NULL, NULL)))
++    return;
++
++  /* No reply is awaited, as GTK does not await one for its own registration.
++   * The portal handles Register before any later portal call on the same
++   * connection, and when it fails the application ID stays empty.
++   */
++  g_dbus_connection_call (bus,
++                          "org.freedesktop.portal.Desktop",
++                          "/org/freedesktop/portal/desktop",
++                          "org.freedesktop.host.portal.Registry",
++                          "Register",
++                          g_variant_new ("(sa{sv})", APP_ID, NULL),
++                          NULL,
++                          G_DBUS_CALL_FLAGS_NONE,
++                          -1,
++                          NULL,
++                          NULL,
++                          NULL);
++}
++
+ int
+ main (int   argc,
+       char *argv[])
+@@ -225,6 +263,14 @@
+   default_rlimit_nofile = get_current_fd_limit ();
+   bump_to_max_fd_limit ();
+ 
++  /* GTK registers the application ID only when the application starts up,
++   * but gtk_init reads settings through the portal first, after which the
++   * portal refuses a registration. Without this the portal would know Ptyxis
++   * by an empty ID, and GNOME Shell would leave its inhibitors out of the
++   * logout dialog.
++   */
++  register_host_app_id ();
++
+   gtk_init ();
+ 
+   app = ptyxis_application_new (APP_ID, flags);

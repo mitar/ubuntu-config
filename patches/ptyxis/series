@@ -3,3 +3,4 @@ copy-as-html-shortcut.patch
 palette-highlight-colours.patch
 visual-bell-without-animations.patch
 working-directory-from-proc.patch
+register-app-id-before-gtk-init.patch

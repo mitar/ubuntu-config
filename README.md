@@ -78,6 +78,7 @@ Ptyxis, Ubuntu's terminal, is patched and configured (`patches/ptyxis/`, `config
 - A keyboard shortcut for copying as HTML.
 - Palettes can set the selection highlight colours.
 - The visual bell shows even with animations disabled.
+- The dialog shown before logging out or shutting down lists the terminal while a program runs in it.
 
 ### Third-party APT repositories pinned to their packages
 
