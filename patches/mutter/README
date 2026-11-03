@@ -91,3 +91,15 @@ xx-session-management.patch
 
     Mutter 51 drops the draft, so when Ubuntu ships it, this patch has to be ported to mutter 51's
     own code. Drop it once Chromium speaks xdg_session_manager_v1.
+
+xdg-toplevel-session-rename.patch
+    Implements the rename request of xdg_toplevel_session_v1, which mutter leaves unimplemented, also
+    in 51.1 and on main. libwayland-server aborts a compositor which receives a request without a
+    handler, so any client sending rename ended GNOME Shell and with it the session.
+    xdg-session-management.patch is what offers the protocol to every client, so the two go
+    together. A name already known to the session raises name_in_use, as add_toplevel does, and
+    otherwise the state stored under the old name moves to the new one.
+
+    Neither Firefox nor Chromium sends rename. tests/run-rename-check.sh checks it with a minimal
+    client, see tests/README. The crash is reported as mutter issue 5177. Drop the patch once mutter
+    implements rename.

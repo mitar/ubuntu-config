@@ -32,3 +32,16 @@ Chromium session restore: run-chromium-session.sh and chromium_session.py
 
     The full WAYLAND_DEBUG output of each run is in the output directory as runN.log. The D-Bus and portal
     messages printed on the way are expected in the private session.
+
+Toplevel session rename: run-rename-check.sh and rename_client.py
+    Checks xdg-toplevel-session-rename.patch. Starts a headless mutter as above and runs a minimal client which
+    speaks the Wayland wire protocol itself and needs nothing but Python. It adds a toplevel to a session as
+    toplevel-a, renames it to toplevel-b, adds a second toplevel as toplevel-a, which the rename freed, and renames
+    the first one back to toplevel-a, which mutter has to refuse with name_in_use:
+
+      ./run-rename-check.sh /tmp/mutter-root /tmp/rename-check
+
+    With the patch, the client reports the second toplevel added and then the name_in_use error, which ends its
+    connection as the protocol requires, and the script prints "mutter: still running" and exits with 0. Without
+    it, mutter aborts at the first rename and the script exits with 1. A third argument picks another scenario of
+    rename_client.py: rename sends only the rename, destroy sends destroy instead, which mutter survives either way.

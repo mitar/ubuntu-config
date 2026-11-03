@@ -1,3 +1,4 @@
 tap-key.patch
 xdg-session-management.patch
 xx-session-management.patch
+xdg-toplevel-session-rename.patch

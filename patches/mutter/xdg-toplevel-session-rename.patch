@@ -1,0 +1,110 @@
+Description: Implement xdg_toplevel_session_v1.rename.
+ Mutter leaves the rename request of xdg-session-management-v1 unimplemented, also in 51.1 and on main, so its
+ handler is NULL, and libwayland-server aborts mutter, and with it GNOME Shell and the session, when any client
+ sends it. Mutter 50.1 offered only the draft protocol, which has no rename, and only behind
+ MUTTER_DEBUG_SESSION_MANAGEMENT_PROTOCOL=1, so it is xdg-session-management.patch which makes this reachable.
+ .
+ The request now renames the toplevel as the protocol describes. A name already known to the session, also one
+ stored from an earlier run, raises name_in_use, as add_toplevel does, and otherwise the state stored under the
+ old name moves to the new one.
+Author: Mitar
+Forwarded: https://gitlab.gnome.org/GNOME/mutter/-/work_items/5177
+Last-Update: 2026-11-03
+diff -ruN a/src/wayland/meta-wayland-xdg-session.c b/src/wayland/meta-wayland-xdg-session.c
+--- a/src/wayland/meta-wayland-xdg-session.c
++++ b/src/wayland/meta-wayland-xdg-session.c
+@@ -107,8 +107,55 @@
+   wl_resource_destroy (resource);
+ }
+ 
++static void
++xdg_toplevel_session_rename (struct wl_client   *wl_client,
++                             struct wl_resource *resource,
++                             const char         *name)
++{
++  MetaWaylandXdgToplevelSession *toplevel_session =
++    wl_resource_get_user_data (resource);
++  MetaWaylandXdgSession *session = toplevel_session->session;
++  g_autofree char *old_key = NULL;
++  gboolean in_table;
++
++  if (g_strcmp0 (toplevel_session->name, name) == 0)
++    return;
++
++  /* A toplevel whose session object is gone is neither looked up by name nor saved any more. */
++  if (!session)
++    {
++      g_free (toplevel_session->name);
++      toplevel_session->name = g_strdup (name);
++      return;
++    }
++
++  /* The same check as add_toplevel: a name known to the session, also one stored from an earlier run. */
++  if (g_hash_table_contains (session->toplevels, name) ||
++      meta_session_state_has_window (META_SESSION_STATE (session->xdg_session_state),
++                                     name))
++    {
++      wl_resource_post_error (session->resource, XDG_SESSION_V1_ERROR_NAME_IN_USE,
++                              "Name of toplevel is already in use");
++      return;
++    }
++
++  /* The protocol preserves the state of a renamed toplevel, so what is stored under the old name moves along. */
++  meta_wayland_xdg_session_state_rename_toplevel (session->xdg_session_state,
++                                                  toplevel_session->name, name);
++
++  /* A toplevel removed with remove_toplevel is no longer in the table, and only its own name changes. The table
++   * holds a reference, which stealing and inserting again keeps. */
++  in_table = g_hash_table_steal_extended (session->toplevels, toplevel_session->name,
++                                          (gpointer *) &old_key, NULL);
++  g_free (toplevel_session->name);
++  toplevel_session->name = g_strdup (name);
++  if (in_table)
++    g_hash_table_insert (session->toplevels, g_strdup (name), toplevel_session);
++}
++
+ static const struct xdg_toplevel_session_v1_interface meta_xdg_toplevel_session_interface = {
+   xdg_toplevel_session_destroy,
++  xdg_toplevel_session_rename,
+ };
+ 
+ /* The draft protocol removes a toplevel through its own object, where the final one has
+diff -ruN a/src/wayland/meta-wayland-xdg-session-state.c b/src/wayland/meta-wayland-xdg-session-state.c
+--- a/src/wayland/meta-wayland-xdg-session-state.c
++++ b/src/wayland/meta-wayland-xdg-session-state.c
+@@ -533,6 +533,22 @@
+   return g_hash_table_contains (xdg_session_state->toplevels, name);
+ }
+ 
++void
++meta_wayland_xdg_session_state_rename_toplevel (MetaWaylandXdgSessionState *session_state,
++                                                const char                 *old_name,
++                                                const char                 *new_name)
++{
++  g_autofree char *old_key = NULL;
++  MetaWaylandXdgToplevelState *toplevel_state;
++
++  if (!g_hash_table_steal_extended (session_state->toplevels, old_name,
++                                    (gpointer *) &old_key,
++                                    (gpointer *) &toplevel_state))
++    return;
++
++  g_hash_table_insert (session_state->toplevels, g_strdup (new_name), toplevel_state);
++}
++
+ static void
+ meta_wayland_xdg_session_state_class_init (MetaWaylandXdgSessionStateClass *klass)
+ {
+diff -ruN a/src/wayland/meta-wayland-xdg-session-state.h b/src/wayland/meta-wayland-xdg-session-state.h
+--- a/src/wayland/meta-wayland-xdg-session-state.h
++++ b/src/wayland/meta-wayland-xdg-session-state.h
+@@ -30,3 +30,9 @@
+                       meta_wayland_xdg_session_state,
+                       META, WAYLAND_XDG_SESSION_STATE,
+                       MetaSessionState)
++
++/* Moves the state stored for the toplevel old_name to new_name, which must not have state of its own. Does
++ * nothing when no state is stored for old_name. */
++void meta_wayland_xdg_session_state_rename_toplevel (MetaWaylandXdgSessionState *session_state,
++                                                     const char                 *old_name,
++                                                     const char                 *new_name);
