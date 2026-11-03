@@ -13,7 +13,7 @@ Description: Register the application ID with the portal before GTK is initialis
  GApplication then use. A standalone instance started with --gapplication-app-id is still
  registered as org.gnome.Ptyxis.
 Author: Mitar
-Forwarded: no
+Forwarded: https://gitlab.gnome.org/chergert/ptyxis/-/work_items/573
 Last-Update: 2026-11-03
 --- a/src/main.c
 +++ b/src/main.c
