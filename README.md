@@ -187,8 +187,12 @@ after the cores do, but starting from a cool board with the fan off, a working E
 seconds after the hottest core reaches 70 C, and under lighter loads before the cores reach it. The other is that
 none of the board readings has changed for 2 minutes while the hottest core has been at 70 C or more for the last 30
 seconds in a row: the readings are in whole degrees and can all stay the same for minutes while the processor idles,
-but once it heats up, at least one of them changes within seconds. The warning stays until the sign which raised it
-is gone, so until a fan spins again or a board reading changes.
+but once it heats up, at least one of them changes within seconds, until a steady load settles the board. This sign
+is not judged while the EC's fan target is at 95% or more of the top of its fan table. A build on all threads held
+at the sustained power limit, with the fan at full speed, settled the board so that all of its readings stayed the
+same for minutes, and a reading which stopped changing there leaves the fan close to the fastest a fresh one could
+ask for anyway. The warning stays until the sign which raised it is gone, so until a fan spins again or a board
+reading changes.
 
 ### Cooling and performance tracked over time
 

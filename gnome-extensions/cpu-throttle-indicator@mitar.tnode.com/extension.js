@@ -40,8 +40,16 @@ const FAULT_AFTER_HOT_SAMPLES = 15;
 // reporting the last temperature it read from a board sensor it cannot read any more, and the fan then keeps the speed
 // that temperature asks for, which can be a slow one as well as off. The readings are in whole degrees and can all
 // stay the same for minutes while the processor idles, but once it heats up, at least one of them changes within
-// seconds.
+// seconds, until a steady load settles the board.
 const BOARD_STALE_AFTER_S = 120;
+
+// The share of FAN_MAX_RPM from which the EC's fan target counts as full speed, at which board readings which stopped
+// changing are not shown as the fan not following the heat. A build on all threads held at the sustained power limit,
+// with the fan at full speed, settled the board so that all of its readings stayed the same for minutes, the same as
+// when the EC stops reading them. A reading which stopped changing there leaves the fan close to the fastest a fresh
+// one could ask for anyway. The share is under the whole of it so that a board which settles just under the top of a
+// sensor's fan ramp counts as well.
+const FAN_FULL_TARGET_SHARE = 0.95;
 
 // The theme's red pill for a top bar indicator which needs attention, the one the shell shows while recording the
 // screen. Borrowing it keeps the warning in the theme's colors, light or dark.
@@ -117,10 +125,13 @@ class ThrottleIndicator extends PanelMenu.Button {
                     file: fan.targetFile,
                     label: this._addRow(`${name} target`),
                     reading: false,
+                    // Undefined until the target has been read.
+                    speed: undefined,
                 });
             }
         }
         this._fanSpeedRows = this._fanRows.filter(row => row.kind === 'speed');
+        this._fanTargetRows = this._fanRows.filter(row => row.kind === 'target');
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem('Sensors'));
         this._powerLabel = this._addRow('APU power (SPL budget)');
         this._corePowerLabel = this._addRow('CPU cores');
@@ -363,9 +374,14 @@ class ThrottleIndicator extends PanelMenu.Button {
         }
 
         // The board readings are judged as soon as the processor has been hot for long enough, against the whole
-        // BOARD_STALE_AFTER_S before. Once the warning is shown for them, it stays until one of them changes, for the
-        // same reason as for a fan which does not spin.
-        if (this._samplesHot >= FAULT_AFTER_HOT_SAMPLES && this._boardChangedAt !== null &&
+        // BOARD_STALE_AFTER_S before, unless every fan target is at full speed. A target which has not been read yet
+        // is not at full speed. Once the warning is shown for them, it stays until one of them changes, for the same
+        // reason as for a fan which does not spin. A target which reaches full speed after that does not hide it,
+        // because with the board readings unchanged, only the APU's own sensor can raise the target, which it does
+        // only once the APU overheats.
+        const fansAtFull = this._fanTargetRows.length > 0 &&
+            this._fanTargetRows.every(row => row.speed >= FAN_FULL_TARGET_SHARE * FAN_MAX_RPM);
+        if (this._samplesHot >= FAULT_AFTER_HOT_SAMPLES && !fansAtFull && this._boardChangedAt !== null &&
             timestamp - this._boardChangedAt >= BOARD_STALE_AFTER_S * GLib.USEC_PER_SEC)
             this._boardStale = true;
 
