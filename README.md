@@ -20,11 +20,12 @@ configuration or to see how it has drifted from it.
 
 Where a setting is not enough, Ubuntu's own packages are patched. `patches/<source-package>/` contains patches
 which are applied on top of Ubuntu's source package, or for Firefox the Mozilla Team PPA's, together with tests for
-the patched behavior which run during the build where the package has a test suite to add them to. `rebuild-patched-packages.sh` rebuilds a package whenever Ubuntu publishes a new version of it or its
-patches change, building it with sbuild as an unprivileged user in a throwaway chroot, and publishes the result to
-a local APT repository. That repository is pinned above the Ubuntu archive, so unattended-upgrades or the next
-ordinary `apt upgrade` installs the patched build. A daily cron job keeps patched packages current, running
-root-owned copies of the script and patches, installed with `install-rebuild-patched-packages.sh`.
+the patched behavior which run during the build where the package has a test suite to add them to.
+`rebuild-patched-packages.sh` rebuilds a package whenever Ubuntu publishes a new version of it or its patches
+change, building it with sbuild as an unprivileged user in a throwaway chroot, and publishes the result to a local
+APT repository. That repository is pinned above the Ubuntu archive, so unattended-upgrades or the next ordinary
+`apt upgrade` installs the patched build. A daily cron job keeps patched packages current, running root-owned
+copies of the script and patches, installed with `install-rebuild-patched-packages.sh`.
 
 ## Main features
 
@@ -79,6 +80,9 @@ Ptyxis, Ubuntu's terminal, is patched and configured (`patches/ptyxis/`, `config
 - Palettes can set the selection highlight colours.
 - The visual bell shows even with animations disabled.
 - The dialog shown before logging out or shutting down lists the terminal while a program runs in it.
+- A new tab or window opens in the directory of the current tab also after a terminal reset, which keeps the
+  directory the shell reported (`patches/vte2.91/`), and when the shell reports none, in the directory of the
+  program running in the tab.
 
 ### Third-party APT repositories pinned to their packages
 
@@ -103,7 +107,9 @@ APT repository which a daily cron job keeps current (`rebuild-patched-packages.s
 `install-rebuild-patched-packages.sh`, `cron.daily/`). They are built the way Ubuntu builds its own packages,
 with sbuild in a throwaway chroot without network access, with build dependencies installed only inside it. Its
 unshare mode needs no root even to set up the chroot, so everything runs as an unprivileged system user, and a
-package's build scripts and test suite cannot change the system.
+package's build scripts and test suite cannot change the system. Builds run in `/tmp`, whose limit on the number
+of files is raised, since a Firefox build holds more files there than systemd's default allows
+(`systemd/tmp.mount.d/`).
 
 ### Daily mail of failures and errors
 
@@ -128,19 +134,29 @@ What it needs:
   (`modprobe.d/cros-charge-control.conf`).
 - The thresholds for UPower, which applies them for Preserve Battery Health (`udev/90-battery-charge-limit.rules`).
 - The Preserve Battery Health extension for the quick settings toggle (`configure-gnome-desktop.sh`).
-- The estimated time until the battery is empty or full, shown under the battery percentage in quick settings.
+- The estimated time until the battery is empty or full, shown under the battery percentage in quick settings
+  (`gnome-extensions/quick-settings-battery-time@mitar.tnode.com/`).
 - The firmware's own charge limit at 99%[^charge-limit] and Battery Extender disabled, in the BIOS.
 
 ### Hardware tweaks
 
-The touchscreen is disabled, the power button light is off, and the longer key repeat delay applies in the console
-as well (`udev/`, `systemd/`).
+The touchscreen is disabled, the power button light is off, and a held key starts repeating only after a second, in
+the console as well as in GNOME (`udev/`, `systemd/`).
 
 The audio coprocessor of the APU exposes a digital microphone which has no microphones wired to it on this laptop,
 and which the sound server otherwise offers as a second internal microphone beside the working one. Its card is kept
 unregistered (`modprobe.d/snd-acp-legacy-mach.conf`). Without that card the Realtek codec is no longer configured
 through ALSA UCM, so Sound settings offer one configuration whose ports follow the jacks in place of four
 combinations of speakers, headphones and microphones which differ in which of them they leave out.
+
+### Power and lid sounds follow the System Sounds switch
+
+System Sounds are switched off in Settings (`configure-gnome-desktop.sh`), and gnome-settings-daemon is patched so
+that the switch also silences the sounds of its power plugin, which plays them whatever the switch says otherwise:
+those for the power cable going in and out, for the lid opening and closing, and for a low battery
+(`patches/gnome-settings-daemon/`). Docking and undocking an external monitor which delivers power over USB-C counts
+as the cable going in and out. The low battery notification still appears, without its sound, and the warnings of a
+critically low battery still sound.
 
 ### Processor throttling
 
@@ -262,22 +278,18 @@ names. Three things stand in the way on Ubuntu 26.04, each patched until the fix
 
 Firefox therefore comes from the Mozilla Team PPA, which publishes the source to rebuild it with, unlike Mozilla's
 own repository (requested in [Mozilla bug 2087959](https://bugzilla.mozilla.org/show_bug.cgi?id=2087959)). Its build
-is also brought closer to Mozilla's: the libraries Mozilla runs in a WebAssembly sandbox, for fonts, spell checking,
-XML and audio, are sandboxed here too, where the PPA's build leaves them out.
+is also brought closer to Mozilla's in two ways. The libraries Mozilla runs in a WebAssembly sandbox, for fonts,
+spell checking, XML and audio, are sandboxed here too, where the PPA's build leaves them out. Also, like Mozilla's
+package, it installs no AppArmor profile of its own, so that Firefox runs under the one Ubuntu's apparmor package has
+for it (see the next section). The PPA's package installs in its place an enforcing profile written for Ubuntu 14.10,
+under which Firefox crashes at startup
+([Launchpad bug 2172775](https://bugs.launchpad.net/ubuntu/+source/firefox/+bug/2172775)).
 
-Chromium can restore its windows the same way, but speaks only the protocol's draft, which mutter 51 and the
-backport no longer have, so mutter is also patched to offer the draft next to the final protocol
-(`patches/mutter/xx-session-management.patch`). Chromium uses it only with its WaylandSessionManagement feature,
-which `configure-gnome-desktop.sh` enables for every user (`chromium.d/`), the same as
-`chrome://flags/#wayland-session-management`.
-
-### Chromium quits with Ctrl+Q
-
-Chromium binds no key to Exit on Linux. A small extension binds Ctrl+Q, which the thumb key sends where macOS has
-Command+Q (`chromium-extensions/quit-shortcut/`), and starts a native messaging host
-(`chromium-native-messaging-hosts/`), a script which ends Chromium with SIGTERM (`chromium-quit.sh`). Chromium handles
-that like the end of the desktop session and keeps its whole session, so all its windows return at the next start.
-`configure-gnome-desktop.sh` installs all three, and the shortcut can be changed in `chrome://extensions/shortcuts`.
+The backport offers the protocol to every application, while mutter does not implement its request to store a
+window's place under a new name, so an application which sent that request would end GNOME Shell and the session
+with it. Mutter is therefore also patched to implement the request
+(`patches/mutter/xdg-toplevel-session-rename.patch`), reported as
+[mutter issue 5177](https://gitlab.gnome.org/GNOME/mutter/-/work_items/5177).
 
 ### Firefox's sandbox has its user namespaces
 
@@ -291,6 +303,23 @@ Mozilla's own package too. `configure-gnome-desktop.sh` adds `Optimize=no-diff-e
 is [Ubuntu bug 2172229](https://bugs.launchpad.net/bugs/2172229), fixed in mainline by commit
 [e667fc72f7f4](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=e667fc72f7f4a54674962c324048ca2cc58bc703).
 Once the running kernel has it, the line in `parser.conf` and its call in the script can go.
+
+### Chromium windows return to their workspaces
+
+When Chromium restores its last session, its windows return to the workspace, monitor, position and size they had.
+Chromium names its windows to GNOME through the same session management protocol as Firefox, but speaks only the
+protocol's draft, which mutter 51 and the backport no longer have, so mutter is also patched to offer the draft next
+to the final protocol (`patches/mutter/xx-session-management.patch`). Chromium uses it only with its
+WaylandSessionManagement feature, which `configure-gnome-desktop.sh` enables for every user (`chromium.d/`), the
+same as `chrome://flags/#wayland-session-management`.
+
+### Chromium quits with Ctrl+Q
+
+Chromium binds no key to Exit on Linux. A small extension binds Ctrl+Q, which the thumb key sends where macOS has
+Command+Q (`chromium-extensions/quit-shortcut/`), and starts a native messaging host
+(`chromium-native-messaging-hosts/`), a script which ends Chromium with SIGTERM (`chromium-quit.sh`). Chromium handles
+that like the end of the desktop session and keeps its whole session, so all its windows return at the next start.
+`configure-gnome-desktop.sh` installs all three, and the shortcut can be changed in `chrome://extensions/shortcuts`.
 
 ### Magnet links open in a running Transmission
 
