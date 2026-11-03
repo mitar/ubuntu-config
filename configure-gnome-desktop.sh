@@ -472,7 +472,9 @@ install_user_unit() {
 }
 
 # Has every user's service manager also start a unit with a target, through sudo, with a link in the target's .wants
-# directory under /etc/systemd/user, as systemctl --global enable adds for the target the unit names itself.
+# directory under /etc/systemd/user, as systemctl --global enable adds for the target the unit names itself. Your own
+# service manager then reloads, so that the link applies to it from the next time the target starts, also before the
+# next login.
 add_global_wants() {
   local target=$1 name=$2
   [ -e "/etc/systemd/user/$target.wants/$name" ] && return 0
@@ -480,6 +482,7 @@ add_global_wants() {
   CHANGED=$((CHANGED+1))
   [ "$MODE" = apply ] || return 0
   sudo systemctl --global add-wants "$target" "$name"
+  systemctl --user daemon-reload
   return 0
 }
 
@@ -779,6 +782,12 @@ SNAP_DESKTOP_UNIT=snap.snapd-desktop-integration.snapd-desktop-integration.servi
 if [ -e "/etc/systemd/user/$SNAP_DESKTOP_UNIT" ]; then
   install_user_dropin "$SNAP_DESKTOP_UNIT.d/50-graphical-session.conf"
   add_global_wants graphical-session.target "$SNAP_DESKTOP_UNIT"
+fi
+# bluez's mpris-proxy fails at every logout and is not started again, see the drop-in. It comes with bluez, so this is
+# done only when its unit is installed.
+if [ -e /usr/lib/systemd/user/mpris-proxy.service ]; then
+  install_user_dropin mpris-proxy.service.d/50-follow-dbus.conf
+  add_global_wants dbus.service mpris-proxy.service
 fi
 
 echo "=== file manager sidebar ==="

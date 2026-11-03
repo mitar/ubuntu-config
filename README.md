@@ -377,6 +377,16 @@ drop-in's `[Unit]` section, the link and their lines in `configure-gnome-desktop
 change the launcher's exit status, so the `[Service]` section stays until snapd-desktop-integration does, as asked in
 [snapd-desktop-integration issue 174](https://github.com/canonical/snapd-desktop-integration/issues/174).
 
+### Media players stay connected to Bluetooth devices after a logout
+
+bluez's mpris-proxy registers the media players of the session with BlueZ, so that a Bluetooth headset or car kit
+can show what is playing. When a GNOME session ends, GNOME stops the user's D-Bus, which starts again once something
+connects to it, and mpris-proxy failed with exit status 1, because libdbus ends a program whose bus connection
+closes. Nothing started it again while the user's service manager kept running, as it does when one logs in again
+within ten seconds, and the login screen's session made it fail at every login too. A drop-in ties mpris-proxy to
+the user's D-Bus, so that it is stopped before the bus, and a link in `dbus.service.wants` starts it again together
+with the bus (`systemd/user/mpris-proxy.service.d/`, installed by `configure-gnome-desktop.sh`).
+
 ### GDM does not fail at shutdown
 
 GDM lists the users for the login screen through accountsservice, but its unit is not ordered relative to

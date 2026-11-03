@@ -11,22 +11,24 @@
 
 set -uo pipefail
 
+# The private D-Bus session, and every service it starts on demand, such as the desktop portals, sees only the
+# headless display. With the real one in their environment, those services could open windows on your desktop.
 if [ -z "${INSIDE_DBUS:-}" ]; then
-  exec env INSIDE_DBUS=1 dbus-run-session -- "$0" "$@"
+  exec env -u DISPLAY WAYLAND_DISPLAY=rename-check-$$ INSIDE_DBUS=1 dbus-run-session -- "$0" "$@"
 fi
 
 MUTTER_ROOT=$(readlink -f "$1")
 OUT=$(readlink -f "$2")
 SCENARIO=${3:-rename-check}
 HERE=$(dirname "$(readlink -f "$0")")
-DISPLAY_NAME=rename-check-$$
+DISPLAY_NAME=$WAYLAND_DISPLAY
 
 rm -rf "$OUT"
 mkdir -p "$OUT/xdg/data" "$OUT/xdg/config" "$OUT/xdg/state" "$OUT/xdg/cache"
 export XDG_DATA_HOME=$OUT/xdg/data XDG_CONFIG_HOME=$OUT/xdg/config XDG_STATE_HOME=$OUT/xdg/state XDG_CACHE_HOME=$OUT/xdg/cache
 
 LIBDIR=$MUTTER_ROOT/usr/lib/x86_64-linux-gnu
-LD_LIBRARY_PATH=$LIBDIR:$LIBDIR/mutter-18 "$MUTTER_ROOT/usr/bin/mutter" --headless --no-x11 \
+env -u WAYLAND_DISPLAY LD_LIBRARY_PATH=$LIBDIR:$LIBDIR/mutter-18 "$MUTTER_ROOT/usr/bin/mutter" --headless --no-x11 \
   --virtual-monitor 1920x1080 --wayland-display "$DISPLAY_NAME" --mutter-plugin="$LIBDIR/mutter-18/plugins/libdefault.so" > "$OUT/mutter.log" 2>&1 &
 MUTTER_PID=$!
 
