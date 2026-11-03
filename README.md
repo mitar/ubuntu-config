@@ -388,7 +388,10 @@ connects to it, and mpris-proxy failed with exit status 1, because libdbus ends 
 closes. Nothing started it again while the user's service manager kept running, as it does when one logs in again
 within ten seconds, and the login screen's session made it fail at every login too. A drop-in ties mpris-proxy to
 the user's D-Bus, so that it is stopped before the bus, and a link in `dbus.service.wants` starts it again together
-with the bus (`systemd/user/mpris-proxy.service.d/`, installed by `configure-gnome-desktop.sh`).
+with the bus (`systemd/user/mpris-proxy.service.d/`, installed by `configure-gnome-desktop.sh`). The same change to
+bluez's own unit is proposed in
+[a patch to the linux-bluetooth list](https://lore.kernel.org/linux-bluetooth/20261103151724.598627-1-mitar.git@tnode.com/T/),
+and the drop-in, the link and their lines in `configure-gnome-desktop.sh` can go once Ubuntu ships a bluez with it.
 
 ### GDM does not fail at shutdown
 
