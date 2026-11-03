@@ -1,0 +1,22 @@
+# Installed by configure-gnome-desktop.sh, which overwrites edits made here.
+#
+# Rules added to the fusermount3 profile, which the apparmor package ships in /etc/apparmor.d/fusermount3 and which
+# includes this file.
+#
+# fusermount3 is the setuid helper with which FUSE filesystems are mounted and unmounted. The document portal mounts
+# /run/user/<uid>/doc with the auto_unmount option, for which a fusermount3 stays behind to unmount the filesystem
+# when the portal exits. Before unmounting, it checks in a mount namespace of its own that the filesystem is still
+# mounted there, for which libfuse 3.17 and later make / private and bind the directory of the mount point. The profile
+# denies both, so the check fails, the filesystem stays mounted, and the helper stays behind too, which the user's
+# service manager cannot end as it runs as root. The profile also denies the dac_override and setuid capabilities,
+# without which the helper can hang at the start of a session without mounting the filesystem.
+#
+# The missing rules are reported in https://bugs.launchpad.net/ubuntu/+source/apparmor/+bug/2165030 and upstream in
+# https://gitlab.com/apparmor/apparmor/-/issues/652. Once the profile shipped by the apparmor package has them, this
+# file is not needed anymore.
+
+  capability dac_override,
+  capability setuid,
+  mount options=(rw, rprivate) -> /,
+  mount options=(rw, rbind) @{run}/user/@{uid}/ -> /,
+  @{run}/user/@{uid}/**/ r,

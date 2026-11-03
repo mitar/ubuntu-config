@@ -329,6 +329,18 @@ profile which allows it to own its name on the session bus, but not these calls 
 without rules added to the profile (`apparmor.d/local/transmission-gtk`) the link is lost and nothing happens. The
 missing rules are reported in [Ubuntu bug 2169433](https://bugs.launchpad.net/ubuntu/+source/transmission/+bug/2169433).
 
+### The document portal's filesystem is mounted and unmounted
+
+The document portal, through which sandboxed applications open the files they are given, mounts a FUSE filesystem
+at `/run/user/<uid>/doc` with the setuid helper fusermount3, and keeps a fusermount3 running to unmount it when the
+portal exits. Ubuntu confines fusermount3 with an AppArmor profile which does not allow what libfuse 3.17 and later
+do to check that the filesystem is still mounted before unmounting it, so the filesystem stayed mounted after the
+portal exited, together with helpers which the user's service manager cannot end. The profile also denies two
+capabilities, without which the helper can hang at the start of a session without mounting the filesystem at all.
+Rules added to the profile allow both (`apparmor.d/local/fusermount3`). They are reported in
+[Ubuntu bug 2165030](https://bugs.launchpad.net/ubuntu/+source/apparmor/+bug/2165030) and in
+[AppArmor issue 652](https://gitlab.com/apparmor/apparmor/-/issues/652).
+
 ### File indexing does not crash on vanished downloads
 
 GNOME's file indexer, localsearch, extracts metadata from new files in the background. Its extractor crashed on a

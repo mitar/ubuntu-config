@@ -780,6 +780,9 @@ set_key org.gnome.yelp show-cursor                      "true"
 # Without the added rules the AppArmor profile keeps a second Transmission from passing a magnet link or a torrent
 # file on to the one which already runs, so only links opened while Transmission is not running would be added.
 install_apparmor_local transmission-gtk transmission
+# Without the added rules the AppArmor profile of fusermount3 keeps the document portal's filesystem from being
+# unmounted when the portal exits, and can keep it from being mounted at all, see the file.
+install_apparmor_local fusermount3 fusermount3
 # Firefox otherwise runs without its sandbox's user namespaces, see the comment written into parser.conf.
 apparmor_parser_option Optimize=no-diff-encode firefox <<'EOF'
 # Added by configure-gnome-desktop.sh from ubuntu-config. Ubuntu's 7.0 kernel does not attach a profile whose
