@@ -64,6 +64,10 @@
 # chroot before every build. It is kept in /var/cache/patched-packages, owned by the build user, which
 # install-rebuild-patched-packages.sh gives the subordinate ids unshare mode needs.
 #
+# The work directory is removed at the end of every run. When a build fails, its full log is kept as
+# /var/log/patched-packages/<source-package>.failed.build, readable by everyone, and the failure report names it.
+# The next successful build of that package removes it.
+#
 #
 # Adding a package
 # ----------------
@@ -133,6 +137,7 @@ INSTALLED_SCRIPT=/usr/local/bin/rebuild-patched-packages
 CRON_JOB=/etc/cron.daily/rebuild-patched-packages
 LOCAL_REPO=/usr/local/lib/debs
 STATE_DIR=/var/lib/patched-packages
+LOG_DIR=/var/log/patched-packages
 SOURCES_DIR=/etc/apt/sources.list.d
 BUILD_USER=sbuild
 BUILD_ROOT=/tmp
@@ -634,11 +639,16 @@ rebuild() {
   if [ "$status" -ne 0 ]; then
     # sbuild writes the full build log to its own file in the work directory, and build.log only holds what it
     # prints. That directory belongs to the build user, so only a regular file is read, never a symlink.
-    local log
+    local log kept=$LOG_DIR/$src.failed.build
     log=$(find "$work" -maxdepth 1 -name '*.build' -type f -printf '%T@ %p\n' | sort -n | tail -1 | cut -d' ' -f2-)
-    echo "--- last 40 lines of the build log ---" >&2
-    tail -40 "${log:-$work/build.log}" >&2
-    fail "$src: build failed for $version"
+    # The work directory is removed on exit, so the log is copied out of it. nofollow keeps a symlink put there in
+    # the meantime from making root copy what it points to.
+    mkdir -p "$LOG_DIR"
+    dd if="${log:-$work/build.log}" iflag=nofollow status=none > "$kept" \
+      || echo "rebuild-patched-packages: $src: could not keep the build log as $kept" >&2
+    echo "--- last 40 lines of the build log, all of it in $kept ---" >&2
+    tail -40 "$kept" >&2
+    fail "$src: build failed for $version, the full build log is $kept"
   fi
 
   # The work directory belongs to the build user from here on, so only regular files are taken from it. A symlink
@@ -659,6 +669,7 @@ rebuild() {
   mkdir -p "$STATE_DIR"
   echo "$version" > "$STATE_DIR/$src.built"
   echo "$digest" > "$STATE_DIR/$src.patches"
+  rm -f "$LOG_DIR/$src.failed.build"
 
   echo "$src: rebuilt as $local_version ($reason) with $(wc -l < "$produced") binary package(s)"
   sed 's/^/    /' "$produced"
