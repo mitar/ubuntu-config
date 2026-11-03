@@ -20,8 +20,9 @@
 
 # The embedded controller, which answers the kernel's USB-C questions (UCSI), rejects reading the power offers of a
 # charger or dock as an incompatible partner (-95) when the kernel asks right after it is plugged in or the laptop
-# resumes, while later reads list them. It also answers some question with UCSI's undefined error, bit 8, at every
-# boot and every time the dock is plugged in. Charging is negotiated by the embedded controller and works regardless.
-# Rarer UCSI errors stay in the report.
+# resumes, while later reads list them. It also answers the question for the alternate modes of a cable plug with
+# UCSI's undefined error, bit 8, for every occupied port at every boot and every time the dock is plugged in. Charging
+# is negotiated by the embedded controller and works regardless. Both are described in
+# FrameworkComputer/EmbeddedController issue 72. Rarer UCSI errors stay in the report.
 ^kernel: ucsi_acpi \S+: UCSI_GET_PDOS failed \(-95\)$
 ^kernel: ucsi_acpi \S+: unknown error 256$
