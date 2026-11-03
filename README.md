@@ -433,7 +433,10 @@ When a session ended, systemd sent SIGTERM at the same time to at-spi-bus-launch
 started. When the launcher noticed its bus exiting before it handled its own SIGTERM, it logged "Failed to launch bus:
 Bus exited with code 0" and exited with status 1, which left `at-spi-dbus-bus.service` failed. The launcher ends its
 bus itself when it receives SIGTERM, so a drop-in has systemd send SIGTERM to the launcher alone
-(`systemd/user/at-spi-dbus-bus.service.d/`, installed by `configure-gnome-desktop.sh`).
+(`systemd/user/at-spi-dbus-bus.service.d/`, installed by `configure-gnome-desktop.sh`). The same setting is proposed
+for at-spi2-core's own unit in
+[at-spi2-core merge request 239](https://gitlab.gnome.org/GNOME/at-spi2-core/-/merge_requests/239), and the drop-in
+can go once Ubuntu ships an at-spi2-core which includes it.
 
 ### GDM does not fail at shutdown
 
