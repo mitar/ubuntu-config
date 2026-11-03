@@ -8,8 +8,8 @@ Description: Do not add a toplevel to the Wayland session under an ID from a pre
  session restore, the only case in which the window is restored under it.
 Author: Mitar
 Bug: https://bugzilla.mozilla.org/show_bug.cgi?id=2064100
-Forwarded: https://bugzilla.mozilla.org/attachment.cgi?id=9672742
-Last-Update: 2026-11-02
+Forwarded: https://phabricator.services.mozilla.com/D339348
+Last-Update: 2026-11-04
 diff --git a/widget/gtk/nsWindowWayland.cpp b/widget/gtk/nsWindowWayland.cpp
 index e45d513..37a3793 100644
 --- a/widget/gtk/nsWindowWayland.cpp

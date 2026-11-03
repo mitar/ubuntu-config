@@ -6,8 +6,8 @@ Description: Show windows which are not restored when session restore finishes.
  which still waits for session restore.
 Author: Mitar
 Bug: https://bugzilla.mozilla.org/show_bug.cgi?id=2064100
-Forwarded: https://bugzilla.mozilla.org/attachment.cgi?id=9672743
-Last-Update: 2026-11-02
+Forwarded: https://phabricator.services.mozilla.com/D339349
+Last-Update: 2026-11-04
 diff --git a/widget/gtk/nsWindow.cpp b/widget/gtk/nsWindow.cpp
 index abb9480..7a40442 100644
 --- a/widget/gtk/nsWindow.cpp
@@ -31,7 +31,7 @@ index abb9480..7a40442 100644
 +  }
 +  g_list_free(toplevels);
 +  for (const RefPtr<nsWindow>& window : waitingWindows) {
-+    if (window->mIsDestroyed || !window->mWaitingToSessionRestore) {
++    if (window->IsDestroyed() || !window->mWaitingToSessionRestore) {
 +      continue;
 +    }
 +    LOGW("  [%p] was not restored, show it", window.get());
