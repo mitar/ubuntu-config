@@ -1,0 +1,10 @@
+# Installed as /etc/chromium.d/wayland-session-management by configure-gnome-desktop.sh, which overwrites edits made
+# there. /usr/bin/chromium reads every file in /etc/chromium.d before it starts Chromium.
+#
+# Lets Chromium name its windows to GNOME through the Wayland session management protocol, so that GNOME returns
+# them to their workspace, monitor, position and size when Chromium restores its last session. The same as enabling
+# chrome://flags/#wayland-session-management, for every user and profile. Chromium speaks only the draft of the
+# protocol, which mutter offers with patches/mutter/xx-session-management.patch. It has an effect only while
+# Chromium runs on Wayland, which it does by default under GNOME on Wayland, and Chromium merges this with the
+# features enabled in chrome://flags.
+export CHROMIUM_FLAGS="$CHROMIUM_FLAGS --enable-features=WaylandSessionManagement"

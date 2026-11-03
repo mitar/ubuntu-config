@@ -33,8 +33,8 @@
 # packages, the console's boot-time unit, the udev rules, the module options, and the login screen settings need
 # root, as do the rules added to AppArmor profiles and the option added to AppArmor's parser configuration, the
 # drop-ins for GDM's unit and for application scopes, the user service which stops application scopes and its script,
-# the script which starts applications at login once there is a tray, and the option added to /etc/crypttab, so those
-# parts call sudo themselves and will ask for a password.
+# the script which starts applications at login once there is a tray, Chromium's flags, and the option added to
+# /etc/crypttab, so those parts call sudo themselves and will ask for a password.
 
 set -euo pipefail
 
@@ -385,6 +385,18 @@ install_apparmor_local() {
   [ "$MODE" = apply ] || return 0
   sudo install -m 644 "$src" "$dst"
   sudo apparmor_parser --replace "/etc/apparmor.d/$profile"
+  return 0
+}
+
+# Installs a file of flags for Chromium from chromium.d/ in this repository into the root-owned /etc/chromium.d through
+# sudo, where /usr/bin/chromium reads it at every start. Chromium already running picks it up when started again.
+install_chromium_flags() {
+  local name=$1 src=$REPO_DIR/chromium.d/$1 dst=/etc/chromium.d/$1
+  cmp -s "$src" "$dst" && return 0
+  echo "  install $dst"
+  CHANGED=$((CHANGED+1))
+  [ "$MODE" = apply ] || return 0
+  sudo install -m 644 "$src" "$dst"
   return 0
 }
 
@@ -756,6 +768,11 @@ install_user_unit stop-application-scopes-before-shutdown.service
 install_libexec wait-for-status-notifier-watcher.sh wait-for-status-notifier-watcher
 install_autostart claude-desktop.desktop
 install_autostart slack.desktop
+# Chromium returns its windows to their places only with this feature, see the file. Chromium is optional, so this is
+# done only when it is installed.
+if [ -d /etc/chromium.d ]; then
+  install_chromium_flags wayland-session-management
+fi
 # snapd starts snapd-desktop-integration before there is a display, see the drop-in. The snap is optional, so this is
 # done only when it is installed.
 SNAP_DESKTOP_UNIT=snap.snapd-desktop-integration.snapd-desktop-integration.service

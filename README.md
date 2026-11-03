@@ -261,6 +261,12 @@ own repository (requested in [Mozilla bug 2087959](https://bugzilla.mozilla.org/
 is also brought closer to Mozilla's: the libraries Mozilla runs in a WebAssembly sandbox, for fonts, spell checking,
 XML and audio, are sandboxed here too, where the PPA's build leaves them out.
 
+Chromium can restore its windows the same way, but speaks only the protocol's draft, which mutter 51 and the
+backport no longer have, so mutter is also patched to offer the draft next to the final protocol
+(`patches/mutter/xx-session-management.patch`). Chromium uses it only with its WaylandSessionManagement feature,
+which `configure-gnome-desktop.sh` enables for every user (`chromium.d/`), the same as
+`chrome://flags/#wayland-session-management`.
+
 ### Firefox's sandbox has its user namespaces
 
 Firefox isolates its content processes in user namespaces of their own. Ubuntu allows unprivileged user namespaces

@@ -1,0 +1,34 @@
+Tests for the patches in patches/mutter/, run by hand.
+
+Chromium session restore: run-chromium-session.sh and chromium_session.py
+    Checks xx-session-management.patch with the client it exists for. Starts a headless mutter with one virtual
+    monitor in a D-Bus session of its own and runs Chromium three times against it, through chromedriver, with a
+    new profile: the first run opens three windows and quits, the second and the third restore the last session.
+    Chromium speaks only the draft protocol, xx_session_manager_v1, and only with its WaylandSessionManagement
+    feature, which the test enables. It covers mutter's side of the protocol, but not whether windows return to
+    their workspaces, which needs a desktop. The test also runs next to your own Chromium without touching it.
+
+    Only the mutter package has mutter's binary. Instead of installing it, extract it with its library from the
+    local repository, or from any build to test:
+
+      mkdir /tmp/mutter-root
+      for p in mutter libmutter-18-0; do dpkg-deb -x /usr/local/lib/debs/${p}_*.deb /tmp/mutter-root; done
+      ./run-chromium-session.sh /tmp/mutter-root /tmp/chromium-session-test
+
+    Chromium and chromedriver default to the installed ones (packages chromium and chromium-driver), and can be
+    given as third and fourth argument. With the patch, the first run sends get_session and adds its windows with
+    add_toplevel. The second and the third send get_session with the session ID from the first run and restore
+    the windows with restore_toplevel under the names the previous run added, each answered with restored().
+    Chromium then removes each restored name and adds the window under a new one, which the next run restores:
+
+      run 1: add_toplevel ['733961897', '733961899', '733961901']
+      run 2: add_toplevel ['733961968', '733961970', '733961972']
+      run 2: restore_toplevel ['733961897', '733961899', '733961901'], restored 3, removed 3
+      run 3: restore_toplevel ['733961968', '733961970', '733961972'], restored 3, removed 3
+
+    Each run also prints the size of mutter's stored sessions, which stays the same from the second run to the
+    third, as the names removed and added balance. The script then prints "RESULT: OK" and exits with 0. Without
+    the patch Chromium finds no xx_session_manager_v1 and sends nothing, which the summary shows as "none".
+
+    The full WAYLAND_DEBUG output of each run is in the output directory as runN.log. The D-Bus and portal
+    messages printed on the way are expected in the private session.

@@ -63,4 +63,31 @@ xdg-session-management.patch
 
     Check by hand after a rebuild and a new login, with wayland-info from the wayland-utils package:
 
-      wayland-info | grep session        should list xdg_session_manager_v1 and no xx_session_manager_v1
+      wayland-info | grep session        should list xdg_session_manager_v1, and xx_session_manager_v1
+                                         from xx-session-management.patch
+
+xx-session-management.patch
+    Offers the draft protocol, xx_session_manager_v1, again next to the final one, for Chromium.
+    Chromium speaks only the draft (up to at least 156, see crbug.com/409099413), so with
+    xdg-session-management.patch alone it found no session manager. Both protocols are served by
+    the same code and share the stored sessions, and each session records which one it was created
+    through. For the draft, add_toplevel refuses only a name in use by a toplevel of the same
+    session object, as in mutter 50.1, which is what Chromium was written against. Mutter 50.1
+    offered the draft only with MUTTER_DEBUG_SESSION_MANAGEMENT_PROTOCOL=1, this offers it to every
+    client.
+
+    Chromium uses it only with its WaylandSessionManagement feature, enabled in
+    chrome://flags/#wayland-session-management or with --enable-features=WaylandSessionManagement,
+    which chromium.d/ of this repository adds. Without the feature, Chromium and the Electron
+    applications built on it bind the global but send nothing, checked with Chromium, Signal and
+    Slack. Chromium names each window anew at every start: it restores a window under its previous
+    name, then removes that name and adds the window under a new one, so unlike Firefox it does not
+    make session.gvdb grow. As with Firefox, the first start after enabling it shows windows
+    unplaced, and from the next start on they return to their places.
+
+    The session management tests in wayland-unit-tests.c run during the build against the final
+    protocol, which the patch leaves as it is. The draft is tested with Chromium itself by
+    tests/run-chromium-session.sh, see tests/README.
+
+    Mutter 51 drops the draft, so when Ubuntu ships it, this patch has to be ported to mutter 51's
+    own code. Drop it once Chromium speaks xdg_session_manager_v1.
