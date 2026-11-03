@@ -823,6 +823,8 @@ if [ -e /usr/lib/systemd/user/mpris-proxy.service ]; then
   install_user_dropin mpris-proxy.service.d/50-follow-dbus.conf
   add_global_wants dbus.service mpris-proxy.service
 fi
+# The accessibility bus sometimes fails when a session ends, see the drop-in.
+install_user_dropin at-spi-dbus-bus.service.d/50-stop-launcher-only.conf
 
 echo "=== file manager sidebar ==="
 # The folders in the Files sidebar are the entries of the GTK bookmarks file. xdg-user-dirs-gtk-update adds the

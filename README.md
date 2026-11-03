@@ -427,6 +427,14 @@ bluez's own unit is proposed in
 [a patch to the linux-bluetooth list](https://lore.kernel.org/linux-bluetooth/20261103151724.598627-1-mitar.git@tnode.com/T/),
 and the drop-in, the link and their lines in `configure-gnome-desktop.sh` can go once Ubuntu ships a bluez with it.
 
+### The accessibility bus does not fail when a session ends
+
+When a session ended, systemd sent SIGTERM at the same time to at-spi-bus-launcher and to the accessibility bus it
+started. When the launcher noticed its bus exiting before it handled its own SIGTERM, it logged "Failed to launch bus:
+Bus exited with code 0" and exited with status 1, which left `at-spi-dbus-bus.service` failed. The launcher ends its
+bus itself when it receives SIGTERM, so a drop-in has systemd send SIGTERM to the launcher alone
+(`systemd/user/at-spi-dbus-bus.service.d/`, installed by `configure-gnome-desktop.sh`).
+
 ### GDM does not fail at shutdown
 
 GDM lists the users for the login screen through accountsservice, but its unit is not ordered relative to
