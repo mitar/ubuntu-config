@@ -1,0 +1,62 @@
+Description: Use the session management protocol without GDK_DEBUG=session-mgmt.
+ GDK 4.22 binds xx_session_manager_v1 only when GDK_DEBUG contains session-mgmt, so an application which turns
+ on state saving still does not name its windows to the compositor. Upstream dropped the debug flag on main, after
+ GDK had moved to the final protocol, xdg_session_manager_v1. This is the same change for the draft protocol 4.22
+ speaks, which mutter offers through patches/mutter/xx-session-management.patch. GDK only binds the protocol, and
+ only an application with GtkApplication:support-save sends anything over it.
+Author: Adrian Vovk <adrianvovk@gmail.com>
+Origin: backport, https://gitlab.gnome.org/GNOME/gtk/-/commit/15da56ccc5cf225bed58885a5997c16f0af7b679
+Forwarded: not-needed
+Last-Update: 2026-11-04
+diff --git a/docs/reference/gtk/running.md b/docs/reference/gtk/running.md
+index 766f0f0..70b80ce 100644
+--- a/docs/reference/gtk/running.md
++++ b/docs/reference/gtk/running.md
+@@ -267,9 +267,6 @@ A number of options affect behavior instead of logging:
+ `color-mgmt`
+ : Enable color management
+ 
+-`session-mgmt`
+-: Enable session management
+-
+ The special value `all` can be used to turn on all debug options. The special
+ value `help` can be used to obtain a list of all supported debug options.
+ 
+diff --git a/gdk/gdk.c b/gdk/gdk.c
+index dbf234c..bf9d305 100644
+--- a/gdk/gdk.c
++++ b/gdk/gdk.c
+@@ -147,7 +147,6 @@ static const GdkDebugKey gdk_debug_keys[] = {
+   { "high-depth",      GDK_DEBUG_HIGH_DEPTH, "Use high bit depth rendering if possible" },
+   { "no-vsync",        GDK_DEBUG_NO_VSYNC, "Repaint instantly (uses 100% CPU with animations)" },
+   { "color-mgmt",      GDK_DEBUG_COLOR_MANAGEMENT, "Enable color management" },
+-  { "session-mgmt",    GDK_DEBUG_SESSION_MANAGEMENT, "Enable session management" },
+ };
+ 
+ static const GdkDebugKey gdk_feature_keys[] = {
+diff --git a/gdk/gdkdebugprivate.h b/gdk/gdkdebugprivate.h
+index 12c8b78..edbce35 100644
+--- a/gdk/gdkdebugprivate.h
++++ b/gdk/gdkdebugprivate.h
+@@ -50,7 +50,6 @@ typedef enum {
+   GDK_DEBUG_HIGH_DEPTH      = 1 << 22,
+   GDK_DEBUG_NO_VSYNC        = 1 << 23,
+   GDK_DEBUG_COLOR_MANAGEMENT= 1 << 24,
+-  GDK_DEBUG_SESSION_MANAGEMENT= 1 << 25,
+ } GdkDebugFlags;
+ 
+ typedef enum {
+diff --git a/gdk/wayland/gdkdisplay-wayland.c b/gdk/wayland/gdkdisplay-wayland.c
+index 0ae853b..ee55f40 100644
+--- a/gdk/wayland/gdkdisplay-wayland.c
++++ b/gdk/wayland/gdkdisplay-wayland.c
+@@ -181,9 +181,6 @@ init_skip_protocols (GdkWaylandDisplay *display_wayland)
+   if (!GDK_DISPLAY_DEBUG_CHECK (GDK_DISPLAY (display_wayland), COLOR_MANAGEMENT))
+     g_strv_builder_add (strv, wp_color_manager_v1_interface.name);
+ 
+-  if (!GDK_DISPLAY_DEBUG_CHECK (GDK_DISPLAY (display_wayland), SESSION_MANAGEMENT))
+-    g_strv_builder_add (strv, xx_session_manager_v1_interface.name);
+-
+   if (help)
+     {
+       gdk_help_message ("%s can be set to a list of Wayland interfaces to disable.\n", variable);

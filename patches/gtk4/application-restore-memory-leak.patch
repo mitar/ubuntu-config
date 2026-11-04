@@ -1,0 +1,19 @@
+Description: Fix a memory leak when registering the session restore.
+Author: Matthias Clasen <mclasen@redhat.com>
+Origin: upstream, https://gitlab.gnome.org/GNOME/gtk/-/commit/ebd8e0433a53905bb9736faa131a899313667bc1
+Forwarded: not-needed
+Last-Update: 2026-11-04
+diff --git a/gtk/gtkapplication-dbus.c b/gtk/gtkapplication-dbus.c
+index aa9c822..8cec313 100644
+--- a/gtk/gtkapplication-dbus.c
++++ b/gtk/gtkapplication-dbus.c
+@@ -293,6 +293,9 @@ request_restore (GtkApplicationImplDBus *dbus)
+                                  -1,
+                                  NULL,
+                                  NULL);
++  else
++    g_variant_builder_clear (&discarded);
++
+   return TRUE;
+ }
+ 

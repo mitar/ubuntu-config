@@ -1,0 +1,44 @@
+Source package: gnome-text-editor
+
+restore-window-placement.patch
+    Lets Text Editor's windows return to their workspace, monitor, position and size when it restores its session,
+    with the session save/restore API of GtkApplication, which only the GTK of patches/gtk4/ has. Text Editor keeps
+    restoring the documents of its windows from its own session state, ~/.local/share/org.gnome.TextEditor/
+    session.gvariant, and GTK saves and restores the names under which mutter remembers where each window was.
+
+    Every window has an ID, saved as window-id both with the window in session.gvariant and in GTK's window state
+    of it, which links the two. When Text Editor starts, GTK emits GtkApplication::restore-window for each window
+    it saved, and Text Editor creates an empty window for it, kept hidden, which GTK gives the name mutter knows it
+    by. The session restore then gives that window the documents saved with the same ID and shows it. A window GTK
+    restored which the session restore has no documents for, for example when Restore Session is switched off, is
+    destroyed again once the session has another window. A window in session.gvariant without an ID GTK restored,
+    such as every window at the first start with the patch, opens unplaced and keeps its ID, so that it is placed
+    from the next start on.
+
+    The property and the signals of the save/restore API are looked up at runtime, so the package builds against
+    Ubuntu's GTK, whose headers do not have them, and behaves exactly as before when it runs with Ubuntu's GTK. A
+    standalone instance (--standalone) does not set GtkApplication:support-save, since it runs next to the primary
+    one and both would write the same state file.
+
+    The pages of a window stay in session.gvariant rather than in GTK's window state because Text Editor saves and
+    loads them asynchronously, along with its drafts, while GTK requires the window to exist before
+    restore-window returns.
+
+    Quitting with Ctrl+Q leaves the windows open until the process exits, and mutter keeps their places only with
+    patches/mutter/save-toplevels-on-session-destroy.patch. Without it, only the first window Text Editor opened
+    returns to its place.
+
+    The patch adds no test to Text Editor's test suite, which has no tests of the session. It is tested together
+    with patches/gtk4/ and patches/mutter/ by tests/run-text-editor-session.sh, see tests/README.
+
+    Drop the patch once Text Editor uses a save/restore API which a GTK in Ubuntu has. After a version bump of
+    Text Editor, check that editor_session_restore_v1 in src/editor-session.c still creates the windows it restores
+    with _editor_session_create_window_no_draft, and that editor_application_activate in src/editor-application.c
+    still presents an existing window instead of restoring the session.
+
+Check by hand after an upgrade, in a new login, so that the patched mutter runs, and with no Text Editor of the
+previous version still running in the background:
+
+  open two windows with a document each on different workspaces, quit with Ctrl+Q, and start Text Editor again:
+  both windows should return to their workspaces and places. The first start after installing the patch has no
+  names saved yet, so the windows are placed from the second start on.

@@ -1,0 +1,4 @@
+application-save-restore-api.patch
+wayland-session-management-without-debug-flag.patch
+application-restore-memory-leak.patch
+application-register-restore-only-when-supported.patch

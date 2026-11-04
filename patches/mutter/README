@@ -103,3 +103,22 @@ xdg-toplevel-session-rename.patch
     Neither Firefox nor Chromium sends rename. tests/run-rename-check.sh checks it with a minimal
     client, see tests/README. The crash is reported as mutter issue 5177. Drop the patch once mutter
     implements rename.
+
+save-toplevels-on-session-destroy.patch
+    Mutter saves where a window of a session was only when the window is unmanaged, and only while
+    the session object still exists, while the protocol says destroying a session preserves the
+    current state of its toplevels. When a client quits without destroying its windows first,
+    libwayland destroys its objects in the order of their IDs, so a window whose surface, toplevel
+    and xdg_wm_base all have higher IDs than the session is unmanaged only once the session is gone,
+    and its place is lost. GTK 4 binds xdg_wm_base and creates every window but the first after its
+    session, and quits without destroying its windows, so Text Editor, quitting with several windows
+    open, had only its first window placed again at the next start. With this patch mutter saves the
+    state of every toplevel still having a window when the session is destroyed, by the client or by
+    its disconnect, unless the client removed the session. The same code serves
+    xdg_session_manager_v1 and the draft from xx-session-management.patch.
+
+    The test xdg-session-management-restore of src/tests/wayland-unit-tests.c is run a second time
+    with the client destroying its session while its toplevel is still mapped
+    (restore-session-destroyed), which fails without the change. The tests run during the build.
+    Upstream main has the same code in xdg_session_destructor. Drop the patch once mutter saves a
+    session's toplevels when the session is destroyed.

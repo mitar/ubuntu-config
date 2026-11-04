@@ -1,0 +1,35 @@
+Description: List the symbols of the session save/restore API in the symbols file.
+ application-save-restore-api.patch exports gtk_application_save, gtk_application_forget and
+ gtk_restore_reason_get_type, and dh_makeshlibs runs with -c4, which fails the build on any exported symbol the
+ symbols file does not list.
+Author: Mitar
+Forwarded: not-needed
+Last-Update: 2026-11-04
+diff --git a/debian/libgtk-4-1.symbols.in b/debian/libgtk-4-1.symbols.in
+index 5a2a741..116ad30 100644
+--- a/debian/libgtk-4-1.symbols.in
++++ b/debian/libgtk-4-1.symbols.in
+@@ -1371,6 +1371,7 @@ libgtk-@APIVER@.so.@SONAME@ @SHARED_PKG@ #MINVER#
+  gtk_app_chooser_widget_set_show_other@Base 4.0.0
+  gtk_app_chooser_widget_set_show_recommended@Base 4.0.0
+  gtk_application_add_window@Base 4.0.0
++ gtk_application_forget@Base 4.22.4
+  gtk_application_get_accels_for_action@Base 4.0.0
+  gtk_application_get_actions_for_accel@Base 4.0.0
+  gtk_application_get_active_window@Base 4.0.0
+@@ -1384,6 +1385,7 @@ libgtk-@APIVER@.so.@SONAME@ @SHARED_PKG@ #MINVER#
+  gtk_application_list_action_descriptions@Base 4.0.0
+  gtk_application_new@Base 4.0.0
+  gtk_application_remove_window@Base 4.0.0
++ gtk_application_save@Base 4.22.4
+  gtk_application_set_accels_for_action@Base 4.0.0
+  gtk_application_set_menubar@Base 4.0.0
+  gtk_application_uninhibit@Base 4.0.0
+@@ -3988,6 +3990,7 @@ libgtk-@APIVER@.so.@SONAME@ @SHARED_PKG@ #MINVER#
+  gtk_requisition_get_type@Base 4.0.0
+  gtk_requisition_new@Base 4.0.0
+  gtk_response_type_get_type@Base 4.0.0
++ gtk_restore_reason_get_type@Base 4.22.4
+  gtk_revealer_get_child@Base 4.0.0
+  gtk_revealer_get_child_revealed@Base 4.0.0
+  gtk_revealer_get_reveal_child@Base 4.0.0

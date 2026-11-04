@@ -1,0 +1,74 @@
+Description: Register the session restore only when the session manager supports it.
+ GTK calls RegisterRestore of gnome-session without looking at its RestoreSupported property. gnome-session 50
+ reports RestoreSupported as false, as the feature is disabled for GNOME 50, but still records every application
+ which registers. It then launches the applications still running at the end of the session again at the next
+ login, and starts none of the autostart applications of that login. GTK now reads RestoreSupported first and
+ registers only when it is true. Otherwise it keeps the state under its fallback instance ID, as it does without
+ a session manager, and restores it at every start of the application with the restore reason launch.
+Author: Mitar
+Forwarded: no
+Last-Update: 2026-11-04
+diff --git a/gtk/gtkapplication-dbus.c b/gtk/gtkapplication-dbus.c
+index 8cec313..23893d0 100644
+--- a/gtk/gtkapplication-dbus.c
++++ b/gtk/gtkapplication-dbus.c
+@@ -217,6 +217,39 @@ debug_override_restore_reason (GtkRestoreReason *reason)
+     g_warning ("Unknown GTK_OVERRIDE_RESTORE_REASON value: %s", str);
+ }
+ 
++/* Returns whether the session manager reports that it supports session
++ * save/restore. False when it does not report it at all, which includes session
++ * managers without save/restore and a missing session manager.
++ */
++static gboolean
++session_manager_supports_restore (GtkApplicationImplDBus *dbus)
++{
++  g_autoptr (GError) error = NULL;
++  g_autoptr (GVariant) reply = NULL;
++  g_autoptr (GVariant) value = NULL;
++
++  reply = g_dbus_connection_call_sync (dbus->session,
++                                       "org.gnome.SessionManager",
++                                       "/org/gnome/SessionManager",
++                                       "org.freedesktop.DBus.Properties",
++                                       "Get",
++                                       g_variant_new ("(ss)", "org.gnome.SessionManager", "RestoreSupported"),
++                                       G_VARIANT_TYPE ("(v)"),
++                                       G_DBUS_CALL_FLAGS_NONE,
++                                       -1,
++                                       NULL,
++                                       &error);
++  if (!reply)
++    {
++      GTK_DEBUG (SESSION, "Could not read RestoreSupported of the session manager: %s", error->message);
++      return FALSE;
++    }
++
++  g_variant_get (reply, "(v)", &value);
++
++  return g_variant_is_of_type (value, G_VARIANT_TYPE_BOOLEAN) && g_variant_get_boolean (value);
++}
++
+ static gboolean
+ request_restore (GtkApplicationImplDBus *dbus)
+ {
+@@ -229,6 +262,19 @@ request_restore (GtkApplicationImplDBus *dbus)
+   GVariantBuilder discarded;
+   const char *discard = NULL;
+ 
++  /* A session manager which registers the app saves it as running and launches
++   * it again at the next login, which it must do only when it reports that it
++   * supports that. gnome-session 50 reports that it does not, yet still
++   * registers apps and launches them again, and then skips the autostart apps
++   * of that login. Without the session manager the state is kept under the
++   * fallback instance ID and restored at every launch instead.
++   */
++  if (!session_manager_supports_restore (dbus))
++    {
++      GTK_DEBUG (SESSION, "Session manager does not support session saving, not registering restore");
++      return FALSE;
++    }
++
+   app_id = g_application_get_application_id (G_APPLICATION (dbus->impl.application));
+ 
+   reply = g_dbus_connection_call_sync (dbus->session,

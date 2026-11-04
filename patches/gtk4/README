@@ -1,0 +1,67 @@
+Source package: gtk4
+
+The four patches in series together let a GTK 4 application name its windows to the compositor through the session
+management protocol, so that mutter places them again where they were. They are for Text Editor, which uses them
+with patches/gnome-text-editor/. No other installed GTK 4 application opts in, and GTK changes nothing for an
+application which does not set GtkApplication:support-save.
+
+GTK keeps the window state of such an application in $XDG_STATE_HOME/<application ID>@fallback.state, for Text
+Editor ~/.local/state/org.gnome.TextEditor@fallback.state. It holds the name of the application's session with
+mutter and, for each window, the name mutter knows the window by and the application's own state of it. GTK
+reads it when the application starts and writes it every 15 seconds while one of its windows has the focus, and
+when the application quits. Moving the file away makes the application's windows open unplaced
+once, and placed again from the start after that. Mutter keeps the places it stored under the old names in
+~/.local/share/gnome-shell/session.gvdb, see patches/mutter/README, and so it does for a window GTK restores and
+the application then destroys without showing it, as Text Editor does when it restores no documents, since GTK
+cannot remove a name stored in an earlier run (mutter issue 5174).
+
+application-save-restore-api.patch
+    Upstream's revert, commit 15ed5c2fea, of the removal of the public save/restore API of GtkApplication before
+    4.22 (merge request 9395), cherry-picked unchanged. It brings back GtkApplication:support-save,
+    GtkApplication::restore-window, GtkApplicationWindow::save-state and the rest of the API GTK 4.21 had, as it
+    was on main until upstream hid it again for 4.24 (merge request 10196), because the asynchronous API meant to
+    replace it did not land in time. The work on that API is on the branch avovk/async-state-saving of GTK.
+
+wayland-session-management-without-debug-flag.patch
+    GDK 4.22 binds the protocol only with GDK_DEBUG=session-mgmt. This is upstream's commit 15da56ccc5, which
+    drops that debug flag, applied by hand, since upstream made it after moving GDK from the draft protocol,
+    xx_session_manager_v1, to the final one, xdg_session_manager_v1. GTK 4.22 speaks only the draft, which mutter
+    offers through patches/mutter/xx-session-management.patch.
+
+application-restore-memory-leak.patch
+    Upstream's commit ebd8e0433a, which frees the list of discarded instance IDs when registering with the session
+    manager.
+
+application-register-restore-only-when-supported.patch
+    GTK registers an application with gnome-session through RegisterRestore without reading gnome-session's
+    RestoreSupported property. gnome-session 50 reports it as false, but its save/restore is still live: it records
+    every application which registers, launches the ones still running at the end of the session again at the
+    next login, and then starts none of the autostart applications of that login (do_phase_startup in its
+    gsm-manager.c). With this patch GTK reads RestoreSupported first and registers only when it is true.
+    Otherwise it keeps the state under its fallback instance ID, as it does without a session manager, and
+    restores it at every start of the application with the restore reason launch. Mutter ignores the reason, so
+    the windows are placed again either way. Neither GTK main nor the branch with the asynchronous API reads the
+    property, which makes this a candidate for an upstream merge request.
+
+application-save-restore-symbols.patch (debian-series)
+    Lists gtk_application_save, gtk_application_forget and gtk_restore_reason_get_type in
+    debian/libgtk-4-1.symbols.in. dh_makeshlibs runs with -c4, which fails the build on any exported symbol the
+    file does not list. It changes the packaging, so it is applied from debian-series rather than series.
+
+Ubuntu's own debian/patches already carry upstream's commit 221cd8e190, which keeps GTK from crashing when an
+application forgets a window it never showed, which Text Editor does with a restored window it has no documents
+for.
+
+None of the patches adds a test to GTK's test suite, which runs during the build and shows that they break
+nothing existing. That windows are named and restored is tested with Text Editor by
+patches/gnome-text-editor/tests/run-text-editor-session.sh, see the README there.
+
+Drop the patches once Ubuntu ships a GTK whose GtkApplication has a public save/restore API again, which will not
+be this one: Text Editor then has to be ported to that API, and the RestoreSupported check checked against it. A
+rebuild of GTK means a rebuild for every Ubuntu update of it. After a version bump, check that
+gtk/gtkapplication-dbus.c still registers with RegisterRestore and that gdk/wayland/gdkdisplay-wayland.c still
+has no session management entry in init_skip_protocols.
+
+Check by hand after an upgrade:
+
+  nm -D /usr/lib/x86_64-linux-gnu/libgtk-4.so.1 | grep -E 'gtk_application_(save|forget)'    should list both

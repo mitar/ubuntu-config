@@ -1,0 +1,188 @@
+Description: Save the state of a session's toplevels when the session is destroyed.
+ Destroying a session preserves the current state of its toplevels, as the protocol describes, but mutter saves
+ the state of a toplevel only when its window is unmanaged, which is skipped once the session is gone. When a
+ client quits without destroying its windows first, libwayland destroys its objects in the order of their IDs, so
+ a window whose surface, toplevel and xdg_wm_base all have higher IDs than the session is unmanaged only after the
+ session, and mutter forgets where it was. GTK 4 binds xdg_wm_base and creates its later windows after its
+ session, and quits without destroying its windows, so Text Editor, quitting with several windows open, had only
+ its first window placed again at the next start. Mutter now saves the state of every toplevel still having a
+ window when the session is destroyed, unless the client removed the session. A toplevel's surface is looked
+ up only while it is set, as on_window_unmanaging clears it when the window goes away.
+ .
+ The test xdg-session-management-restore is run a second time with the client destroying its session while its
+ toplevel is still mapped (restore-session-destroyed), which fails without the change.
+Author: Mitar
+Forwarded: no
+Last-Update: 2026-11-04
+diff --git a/src/tests/wayland-test-clients/xdg-session-management-restore.c b/src/tests/wayland-test-clients/xdg-session-management-restore.c
+index 20e0ebd..4f9d2f5 100644
+--- a/src/tests/wayland-test-clients/xdg-session-management-restore.c
++++ b/src/tests/wayland-test-clients/xdg-session-management-restore.c
+@@ -124,7 +124,8 @@ on_toplevel_configured (WaylandSurface       *surface,
+ 
+ static void
+ simple (WaylandDisplay *display,
+-        const char     *session_id)
++        const char     *session_id,
++        gboolean        destroy_session)
+ {
+   TestDisplayState *test_state = display->test_state;
+   g_autoptr (WaylandSurface) toplevel1 = NULL;
+@@ -168,6 +169,10 @@ simple (WaylandDisplay *display,
+ 
+   xdg_toplevel_session_v1_destroy (toplevel_session1);
+   xdg_session_v1_destroy (session);
++
++  /* Have the compositor destroy the session while the toplevel is still mapped */
++  if (destroy_session)
++    wl_display_roundtrip (display->display);
+ }
+ 
+ static void
+@@ -195,9 +200,15 @@ main (int    argc,
+   struct wl_registry *registry;
+   TestDisplayState *test_state;
+   const char *session_id = NULL;
++  gboolean destroy_session = FALSE;
+ 
+-  if (argc > 1)
+-    session_id = argv[1];
++  for (int i = 1; i < argc; i++)
++    {
++      if (g_strcmp0 (argv[i], "--destroy-session") == 0)
++        destroy_session = TRUE;
++      else
++        session_id = argv[i];
++    }
+ 
+   display = wayland_display_new (WAYLAND_DISPLAY_CAPABILITY_TEST_DRIVER);
+   test_state = g_new0 (TestDisplayState, 1);
+@@ -213,7 +224,7 @@ main (int    argc,
+ 
+   g_assert_nonnull (test_state->session_manager);
+ 
+-  simple (display, session_id);
++  simple (display, session_id, destroy_session);
+ 
+   return EXIT_SUCCESS;
+ }
+diff --git a/src/tests/wayland-unit-tests.c b/src/tests/wayland-unit-tests.c
+index d233e0a..cfbc955 100644
+--- a/src/tests/wayland-unit-tests.c
++++ b/src/tests/wayland-unit-tests.c
+@@ -1264,8 +1264,11 @@ get_primary_logical_monitor_layout (void)
+   return meta_logical_monitor_get_layout (logical_monitor);
+ }
+ 
++/* With destroy_session, the client destroys its session while its toplevel is still mapped, which has to preserve
++ * the state of the toplevel, the same as for a client which quits with its toplevels mapped.
++ */
+ static void
+-toplevel_sessions_restore (void)
++check_toplevel_sessions_restore (gboolean destroy_session)
+ {
+   MetaSessionManager *session_manager;
+   MetaWaylandTestClient *wayland_test_client;
+@@ -1280,8 +1283,19 @@ toplevel_sessions_restore (void)
+                     G_CALLBACK (on_session_instantiated), &session_id);
+ 
+   /* Launch client once, resize window */
+-  wayland_test_client =
+-    meta_wayland_test_client_new (test_context, "xdg-session-management-restore");
++  if (destroy_session)
++    {
++      wayland_test_client =
++        meta_wayland_test_client_new_with_args (test_context,
++                                                "xdg-session-management-restore",
++                                                "--destroy-session",
++                                                NULL);
++    }
++  else
++    {
++      wayland_test_client =
++        meta_wayland_test_client_new (test_context, "xdg-session-management-restore");
++    }
+ 
+   wait_for_sync_point (0);
+   wait_for_paint (stage);
+@@ -1329,6 +1343,18 @@ toplevel_sessions_restore (void)
+   meta_wayland_test_client_finish (wayland_test_client);
+ }
+ 
++static void
++toplevel_sessions_restore (void)
++{
++  check_toplevel_sessions_restore (FALSE);
++}
++
++static void
++toplevel_sessions_restore_session_destroyed (void)
++{
++  check_toplevel_sessions_restore (TRUE);
++}
++
+ static void
+ toplevel_sessions_restore_fullscreen (void)
+ {
+@@ -2402,6 +2428,8 @@ init_tests (void)
+                    toplevel_sessions_replace);
+   g_test_add_func ("/wayland/toplevel/sessions/restore",
+                    toplevel_sessions_restore);
++  g_test_add_func ("/wayland/toplevel/sessions/restore-session-destroyed",
++                   toplevel_sessions_restore_session_destroyed);
+ #ifdef MUTTER_PRIVILEGED_TEST
+   (void)(toplevel_sessions_restore_maximized);
+   (void)(toplevel_sessions_restore_tiled);
+diff --git a/src/wayland/meta-wayland-xdg-session.c b/src/wayland/meta-wayland-xdg-session.c
+index 49d142f..43be798 100644
+--- a/src/wayland/meta-wayland-xdg-session.c
++++ b/src/wayland/meta-wayland-xdg-session.c
+@@ -61,6 +61,7 @@ struct _MetaWaylandXdgSession
+   char *id;
+   struct wl_resource *resource;
+   GHashTable *toplevels; /* name -> MetaWaylandXdgToplevelSession */
++  gboolean removed;
+ };
+ 
+ G_DEFINE_FINAL_TYPE (MetaWaylandXdgSession,
+@@ -349,6 +350,7 @@ xdg_session_remove (struct wl_client   *wl_client,
+   MetaWaylandXdgSession *session =
+     META_WAYLAND_XDG_SESSION (wl_resource_get_user_data (resource));
+ 
++  session->removed = TRUE;
+   g_signal_emit (session, signals[DELETE], 0);
+ 
+   wl_resource_destroy (resource);
+@@ -514,6 +516,32 @@ xdg_session_destructor (struct wl_resource *resource)
+   GHashTableIter iter;
+   gpointer value;
+ 
++  /* Destroying the session preserves the current state of its toplevels, while a toplevel's state is otherwise
++   * saved only when its window is unmanaged. A client which quits without destroying its windows first has its
++   * objects destroyed in the order of their IDs, and a window whose surface, toplevel and xdg_wm_base all have
++   * higher IDs than the session is unmanaged only after the session is gone. A removed session has been deleted,
++   * and saving would create it again.
++   */
++  if (!session->removed)
++    {
++      g_hash_table_iter_init (&iter, session->toplevels);
++      while (g_hash_table_iter_next (&iter, NULL, &value))
++        {
++          MetaWaylandXdgToplevelSession *toplevel_session = value;
++          MetaWindow *window = NULL;
++
++          if (toplevel_session->surface)
++            window = meta_wayland_surface_get_toplevel_window (toplevel_session->surface);
++
++          if (window)
++            {
++              g_signal_emit (session, signals[SAVE_TOPLEVEL], 0,
++                             META_WAYLAND_XDG_TOPLEVEL (toplevel_session->surface->role),
++                             toplevel_session->name, window);
++            }
++        }
++    }
++
+   g_signal_emit (session, signals[DESTROYED], 0);
+ 
+   g_hash_table_iter_init (&iter, session->toplevels);

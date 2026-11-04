@@ -1,0 +1,429 @@
+Description: Restore windows to their places with the session save/restore API of GTK.
+ Text Editor restores its windows with their documents, sizes and maximized state from its own session state,
+ but a Wayland client can neither learn nor set where its windows are, so they open wherever GNOME Shell puts
+ new windows. Only the compositor can place them again, by the name the application gives each window through
+ the session management protocol. GTK names the windows of an application which sets
+ GtkApplication:support-save, saves the names with the rest of its window state, and at the next start emits
+ GtkApplication::restore-window for each saved window.
+ .
+ Text Editor now sets support-save and gives every window an ID, which it saves both in the window state GTK
+ keeps (GtkApplicationWindow::save-state) and with the window in its own session state. For each window GTK
+ restores, an empty window is created while GTK emits restore-window, as GTK requires, and kept hidden. The
+ session restore then gives it the pages of the window saved under the same ID and shows it, where mutter
+ places it again. A window the session restore has no pages for is destroyed once the session has another
+ window, and a window saved without a known ID is created as before, keeping its ID so it is placed from the
+ next start. A standalone instance does not set support-save.
+ .
+ The save/restore API is public only in a GTK with patches/gtk4/, so the property and the signals are looked
+ up at runtime: Text Editor builds against Ubuntu's GTK and behaves as before when it runs with it.
+Author: Mitar
+Forwarded: not-needed
+Last-Update: 2026-11-04
+diff --git a/src/editor-application.c b/src/editor-application.c
+index 1b8b464..6201c6a 100644
+--- a/src/editor-application.c
++++ b/src/editor-application.c
+@@ -29,7 +29,7 @@
+ #include "editor-recoloring-private.h"
+ #include "editor-session-private.h"
+ #include "editor-utils-private.h"
+-#include "editor-window.h"
++#include "editor-window-private.h"
+ 
+ #define PORTAL_BUS_NAME "org.freedesktop.portal.Desktop"
+ #define PORTAL_OBJECT_PATH "/org/freedesktop/portal/desktop"
+@@ -118,6 +118,9 @@ editor_application_restore_cb (GObject      *object,
+                                restore->files->len,
+                                restore->hint);
+ 
++  /* A failed restore leaves the windows GTK restored next to the one above */
++  _editor_session_discard_restored_windows (session);
++
+   g_application_release (g_application_get_default ());
+ }
+ 
+@@ -136,7 +139,7 @@ editor_application_activate (GApplication *application)
+     {
+       GtkWindow *window = iter->data;
+ 
+-      if (EDITOR_IS_WINDOW (window))
++      if (EDITOR_IS_WINDOW (window) && !EDITOR_WINDOW (window)->restore_pending)
+         {
+           gtk_window_present (window);
+           return;
+@@ -169,7 +172,9 @@ editor_application_open (GApplication  *application,
+   g_assert (EDITOR_IS_APPLICATION (self));
+   g_assert (files != NULL || n_files == 0);
+ 
+-  if (_editor_session_did_restore (self->session))
++  /* Windows GTK restored wait for the session restore to give them pages */
++  if (_editor_session_did_restore (self->session) &&
++      !_editor_session_has_restored_windows (self->session))
+     {
+       editor_session_open_files (self->session, files, n_files, hint);
+     }
+@@ -791,6 +796,26 @@ editor_application_init (EditorApplication *self)
+   g_application_add_main_option_entries (G_APPLICATION (self), entries);
+ }
+ 
++static void
++editor_application_restore_window_cb (GtkApplication *application,
++                                      int             reason,
++                                      GVariant       *state,
++                                      gpointer        user_data)
++{
++  EditorApplication *self = (EditorApplication *)application;
++  const char *window_id = NULL;
++
++  g_assert (EDITOR_IS_APPLICATION (self));
++
++  /* Without a window ID, from a window state Text Editor did not save, no
++   * window is created and GTK drops the state.
++   */
++  if (state == NULL || !g_variant_lookup (state, "window-id", "&s", &window_id))
++    return;
++
++  _editor_session_create_restored_window (self->session, window_id);
++}
++
+ EditorApplication *
+ _editor_application_new (gboolean standalone)
+ {
+@@ -805,6 +830,27 @@ _editor_application_new (gboolean standalone)
+                        NULL);
+   self->standalone = !!standalone;
+ 
++  /* With the save/restore API of GTK, GTK saves the window state of every
++   * window, including the name under which the compositor remembers where the
++   * window was placed, and restores it at the next start with
++   * GtkApplication::restore-window. The pages of the windows stay in the
++   * session state of Text Editor, which links both by the window ID. Stable
++   * GTK releases do not have the API, so it is looked up at runtime, which
++   * also lets Text Editor build and run without it. A standalone instance runs
++   * next to the primary one, so it does not save state, which both would write
++   * to the same file.
++   */
++  if (!standalone &&
++      g_object_class_find_property (G_OBJECT_GET_CLASS (self), "support-save") != NULL &&
++      g_signal_lookup ("restore-window", GTK_TYPE_APPLICATION) != 0)
++    {
++      g_object_set (self, "support-save", TRUE, NULL);
++      g_signal_connect (self,
++                        "restore-window",
++                        G_CALLBACK (editor_application_restore_window_cb),
++                        NULL);
++    }
++
+   return self;
+ }
+ 
+@@ -845,7 +891,7 @@ editor_application_get_current_window (EditorApplication *self)
+     {
+       GtkWindow *window = iter->data;
+ 
+-      if (EDITOR_IS_WINDOW (window))
++      if (EDITOR_IS_WINDOW (window) && !EDITOR_WINDOW (window)->restore_pending)
+         return EDITOR_WINDOW (window);
+     }
+ 
+diff --git a/src/editor-session-private.h b/src/editor-session-private.h
+index 95292b2..aa7b729 100644
+--- a/src/editor-session-private.h
++++ b/src/editor-session-private.h
+@@ -58,6 +58,10 @@ struct _EditorSession
+ 
+ EditorSession *_editor_session_new                    (void);
+ EditorWindow  *_editor_session_create_window_no_draft (EditorSession  *self);
++EditorWindow  *_editor_session_create_restored_window (EditorSession  *self,
++                                                       const char     *window_id);
++gboolean       _editor_session_has_restored_windows   (EditorSession  *self);
++void           _editor_session_discard_restored_windows (EditorSession *self);
+ gboolean       _editor_session_did_restore            (EditorSession  *self);
+ GPtrArray     *_editor_session_get_pages              (EditorSession  *self);
+ void           _editor_session_document_seen          (EditorSession  *self,
+diff --git a/src/editor-session.c b/src/editor-session.c
+index d1b3cda..36bee4a 100644
+--- a/src/editor-session.c
++++ b/src/editor-session.c
+@@ -221,8 +221,14 @@ add_window_state (EditorSession   *self,
+       gboolean is_active = gtk_window_is_active (GTK_WINDOW (window));
+       gint width, height;
+ 
++      /* Still waiting for its pages, which the last session state holds */
++      if (window->restore_pending)
++        continue;
++
+       g_variant_builder_open (builder, G_VARIANT_TYPE ("a{sv}"));
+ 
++      g_variant_builder_add_parsed (builder, "{'window-id', <%s>}", window->window_id);
++
+       /* Track if this should be the foreground window */
+       if (is_active)
+         g_variant_builder_add_parsed (builder, "{'is-active', <%b>}", is_active);
+@@ -320,7 +326,7 @@ find_or_create_window (EditorSession *self)
+ 
+       g_assert (GTK_IS_WINDOW (win));
+ 
+-      if (EDITOR_IS_WINDOW (win))
++      if (EDITOR_IS_WINDOW (win) && !EDITOR_WINDOW (win)->restore_pending)
+         return EDITOR_WINDOW (win);
+     }
+ 
+@@ -698,6 +704,135 @@ _editor_session_create_window_no_draft (EditorSession *self)
+   return window;
+ }
+ 
++/*
++ * _editor_session_create_restored_window:
++ * @self: an #EditorSession
++ * @window_id: the window ID saved with the window state GTK restores
++ *
++ * Creates the window GTK asks for when it restores the state of a window, which
++ * has to be added to the application while GTK emits
++ * GtkApplication::restore-window so that GTK can give it the window state to
++ * restore. The window is neither shown nor saved in the session state until the
++ * session restore gives it the pages of the window saved with the same ID.
++ * Restored windows the session restore has no pages for are destroyed by
++ * _editor_session_discard_restored_windows().
++ *
++ * Returns: (transfer none): an #EditorWindow
++ */
++EditorWindow *
++_editor_session_create_restored_window (EditorSession *self,
++                                        const char    *window_id)
++{
++  EditorWindow *window;
++
++  g_return_val_if_fail (EDITOR_IS_SESSION (self), NULL);
++  g_return_val_if_fail (window_id != NULL, NULL);
++
++  window = _editor_session_create_window_no_draft (self);
++  g_free (window->window_id);
++  window->window_id = g_strdup (window_id);
++  window->restore_pending = TRUE;
++
++  return window;
++}
++
++/* Returns the restored window waiting for the pages saved under @window_id, no
++ * longer marked as waiting, or NULL when there is none.
++ */
++static EditorWindow *
++take_restored_window (EditorSession *self,
++                      const char    *window_id)
++{
++  g_assert (EDITOR_IS_SESSION (self));
++  g_assert (window_id != NULL);
++
++  for (guint i = 0; i < self->windows->len; i++)
++    {
++      EditorWindow *window = g_ptr_array_index (self->windows, i);
++
++      if (window->restore_pending && g_strcmp0 (window->window_id, window_id) == 0)
++        {
++          window->restore_pending = FALSE;
++          return window;
++        }
++    }
++
++  return NULL;
++}
++
++/* Returns whether a window of the session is not waiting for its pages. */
++static gboolean
++has_window_not_pending (EditorSession *self)
++{
++  g_assert (EDITOR_IS_SESSION (self));
++
++  for (guint i = 0; i < self->windows->len; i++)
++    {
++      EditorWindow *window = g_ptr_array_index (self->windows, i);
++
++      if (!window->restore_pending)
++        return TRUE;
++    }
++
++  return FALSE;
++}
++
++/*
++ * _editor_session_has_restored_windows:
++ * @self: an #EditorSession
++ *
++ * Returns: whether windows created by _editor_session_create_restored_window()
++ *    are still waiting for the session restore to give them their pages
++ */
++gboolean
++_editor_session_has_restored_windows (EditorSession *self)
++{
++  g_return_val_if_fail (EDITOR_IS_SESSION (self), FALSE);
++
++  for (guint i = 0; i < self->windows->len; i++)
++    {
++      EditorWindow *window = g_ptr_array_index (self->windows, i);
++
++      if (window->restore_pending)
++        return TRUE;
++    }
++
++  return FALSE;
++}
++
++/*
++ * _editor_session_discard_restored_windows:
++ * @self: an #EditorSession
++ *
++ * Destroys the windows created by _editor_session_create_restored_window()
++ * which the session restore did not give any pages, together with the window
++ * state GTK restored for them. It has to be called once the session has another
++ * window, since GTK keeps the state of the last window of the application to
++ * restore it the next time a window is opened.
++ */
++void
++_editor_session_discard_restored_windows (EditorSession *self)
++{
++  g_return_if_fail (EDITOR_IS_SESSION (self));
++
++  for (guint i = self->windows->len; i > 0; i--)
++    {
++      EditorWindow *window = g_ptr_array_index (self->windows, i - 1);
++
++      if (!window->restore_pending)
++        continue;
++
++      /* Removed from the session first, so that destroying it is not handled as
++       * closing the last window, which saves the session and quits.
++       */
++      g_object_ref (window);
++      g_ptr_array_remove_index (self->windows, i - 1);
++      g_signal_emit (self, signals [WINDOW_REMOVED], 0, window);
++      gtk_window_destroy (GTK_WINDOW (window));
++      g_object_unref (window);
++    }
++}
++
+ /**
+  * editor_session_create_window:
+  * @self: an #EditorSession
+@@ -1824,6 +1959,9 @@ editor_session_restore_v1 (EditorSession *self,
+     {
+       g_autoptr(GVariant) pages = NULL;
+       gboolean maximized = FALSE;
++      const char *window_id = NULL;
++
++      g_variant_lookup (window, "window-id", "&s", &window_id);
+ 
+       if (!g_variant_lookup (window, "size", "(uu)", &width, &height) ||
+           width > HUGE_WINDOW || height > HUGE_WINDOW)
+@@ -1838,7 +1976,25 @@ editor_session_restore_v1 (EditorSession *self,
+       if ((pages = g_variant_lookup_value (window, "pages", G_VARIANT_TYPE ("aa{sv}"))) &&
+           g_variant_n_children (pages) > 0)
+         {
+-          EditorWindow *ewin = _editor_session_create_window_no_draft (self);
++          EditorWindow *ewin = NULL;
++
++          /* The window GTK restored with the same ID already has the window
++           * state the compositor placed it with the last time, and otherwise a
++           * new window keeps the ID, so that it is placed from the next run.
++           */
++          if (window_id != NULL)
++            ewin = take_restored_window (self, window_id);
++
++          if (ewin == NULL)
++            {
++              ewin = _editor_session_create_window_no_draft (self);
++
++              if (window_id != NULL)
++                {
++                  g_free (ewin->window_id);
++                  ewin->window_id = g_strdup (window_id);
++                }
++            }
+ 
+           if (width > 0 && height > 0)
+             gtk_window_set_default_size (GTK_WINDOW (ewin), width, height);
+@@ -1872,7 +2028,7 @@ editor_session_restore_v1 (EditorSession *self,
+         }
+     }
+ 
+-  if (self->windows->len == 0 || self->pages->len == 0)
++  if (!has_window_not_pending (self) || self->pages->len == 0)
+     {
+       if (had_failure)
+         goto failure;
+@@ -1953,6 +2109,8 @@ editor_session_restore (EditorSession *self,
+   else
+     editor_session_create_window (self);
+ 
++  _editor_session_discard_restored_windows (self);
++
+   g_object_notify_by_pspec (G_OBJECT (self), properties [PROP_RECENTS]);
+ }
+ 
+diff --git a/src/editor-window-private.h b/src/editor-window-private.h
+index d9d48cc..e3ef989 100644
+--- a/src/editor-window-private.h
++++ b/src/editor-window-private.h
+@@ -71,6 +71,16 @@ struct _EditorWindow
+   guint                 doc_type_index;
+ 
+   guint                 inhibit_cookie;
++
++  /* Names the window in the session state and in the window state GTK saves,
++   * which links the two across runs.
++   */
++  char                 *window_id;
++
++  /* Created for window state GTK restored and not yet given its pages by the
++   * session restore, so not shown yet.
++   */
++  guint                 restore_pending : 1;
+ };
+ 
+ 
+diff --git a/src/editor-window.c b/src/editor-window.c
+index aa78e0a..95c0a4b 100644
+--- a/src/editor-window.c
++++ b/src/editor-window.c
+@@ -833,6 +833,7 @@ editor_window_finalize (GObject *object)
+   g_clear_object (&self->page_signals);
+   g_clear_object (&self->cancellable);
+   g_clear_pointer (&self->closed_items, g_array_unref);
++  g_clear_pointer (&self->window_id, g_free);
+ 
+   G_OBJECT_CLASS (editor_window_parent_class)->finalize (object);
+ }
+@@ -969,10 +970,33 @@ editor_window_class_init (EditorWindowClass *klass)
+   g_type_ensure (EDITOR_TYPE_STATUSBAR);
+ }
+ 
++static gboolean
++editor_window_save_state_cb (EditorWindow *self,
++                             GVariantDict *dict,
++                             gpointer      user_data)
++{
++  g_assert (EDITOR_IS_WINDOW (self));
++  g_assert (dict != NULL);
++
++  g_variant_dict_insert (dict, "window-id", "s", self->window_id);
++
++  return FALSE;
++}
++
+ static void
+ editor_window_init (EditorWindow *self)
+ {
+   self->cancellable = g_cancellable_new ();
++  self->window_id = g_uuid_string_random ();
++
++  /* Stable GTK releases do not have GtkApplicationWindow::save-state, so it is
++   * looked up at runtime, which also lets Text Editor build and run without it.
++   */
++  if (g_signal_lookup ("save-state", GTK_TYPE_APPLICATION_WINDOW) != 0)
++    g_signal_connect (self,
++                      "save-state",
++                      G_CALLBACK (editor_window_save_state_cb),
++                      NULL);
+ 
+   gtk_widget_init_template (GTK_WIDGET (self));
+ 
