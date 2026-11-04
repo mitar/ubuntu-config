@@ -143,3 +143,10 @@ save-toplevels-on-change.patch
     again, and whose second run restores no window without this patch. Reported upstream as
     mutter issue 5181, no merge request yet. Drop the patch once mutter stores a toplevel's state
     when it changes.
+
+wayland-keyboard-test-sync-point.patch
+    Upstream's commit c6a16523f, which fixes a race in the keyboard tests of the build's test suite.
+    A test waited for the test client's window and then for its sync point, and waiting for the
+    window could dispatch the sync point request, so the test hung until meson killed it after 360
+    seconds and failed the build. It changes only the test. Drop the patch once Ubuntu ships mutter
+    51, which has it.
