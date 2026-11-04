@@ -17,8 +17,8 @@ Description: Store the state of a session's toplevel whenever its window changes
  mapped, after the window was moved, which fails without the change.
 Author: Mitar
 Bug: https://gitlab.gnome.org/GNOME/mutter/-/work_items/5181
-Forwarded: no
-Last-Update: 2026-11-04
+Forwarded: https://gitlab.gnome.org/GNOME/mutter/-/merge_requests/5455
+Last-Update: 2026-11-05
 diff --git a/src/tests/wayland-unit-tests.c b/src/tests/wayland-unit-tests.c
 index cfbc955..a87c576 100644
 --- a/src/tests/wayland-unit-tests.c

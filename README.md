@@ -347,7 +347,8 @@ terminal, are stored by mutter whenever a window moves, changes its size or stat
 written to disk a few seconds later. Mutter stores a window's place only when the window closes, so after a crash or
 a reset of the machine windows would return to where they were when they last closed, or open unplaced
 (`patches/mutter/save-toplevels-on-change.patch`, reported as
-[mutter issue 5181](https://gitlab.gnome.org/GNOME/mutter/-/work_items/5181)).
+[mutter issue 5181](https://gitlab.gnome.org/GNOME/mutter/-/work_items/5181) and proposed upstream as
+[mutter merge request 5455](https://gitlab.gnome.org/GNOME/mutter/-/merge_requests/5455)).
 
 ### Chromium quits with Ctrl+Q
 

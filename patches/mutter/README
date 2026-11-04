@@ -141,8 +141,8 @@ save-toplevels-on-change.patch
     with the window placed anew. The tests run during the build. With Ptyxis it is also tested by
     patches/ptyxis/tests/run-ptyxis-session.sh, which ends mutter with SIGKILL and starts it
     again, and whose second run restores no window without this patch. Reported upstream as
-    mutter issue 5181, no merge request yet. Drop the patch once mutter stores a toplevel's state
-    when it changes.
+    mutter issue 5181 and proposed as mutter merge request 5455. Drop the patch once mutter stores
+    a toplevel's state when it changes.
 
 wayland-keyboard-test-sync-point.patch
     Upstream's commit c6a16523f, which fixes a race in the keyboard tests of the build's test suite.
