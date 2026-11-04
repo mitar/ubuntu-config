@@ -120,5 +120,5 @@ save-toplevels-on-session-destroy.patch
     The test xdg-session-management-restore of src/tests/wayland-unit-tests.c is run a second time
     with the client destroying its session while its toplevel is still mapped
     (restore-session-destroyed), which fails without the change. The tests run during the build.
-    Upstream main has the same code in xdg_session_destructor. Drop the patch once mutter saves a
+    The fix is proposed upstream as mutter merge request 5453. Drop the patch once mutter saves a
     session's toplevels when the session is destroyed.

@@ -316,15 +316,16 @@ same as `chrome://flags/#wayland-session-management`.
 ### Text Editor windows return to their workspaces
 
 When Text Editor restores its documents at start, their windows return to the workspace, monitor, position and size
-they had. GTK 4 can name an application's windows to GNOME through the draft of the same protocol, but GTK 4.22
-hides the API an application turns that on with, and binds the protocol only behind a debug switch. GTK is patched
-to bring both back (`patches/gtk4/`), and Text Editor to use them (`patches/gnome-text-editor/`). No other
-installed application turns the API on. Mutter is also patched to remember the places of the windows an
-application still has open when it quits (`patches/mutter/save-toplevels-on-session-destroy.patch`), which GTK
-applications do without closing their windows first. GTK keeps the names in its own state file and reads it whenever Text Editor starts.
-It does not register Text Editor with gnome-session, which would otherwise start Text Editor again at the next
-login and then skip that login's autostart applications. Upstream GTK hid the API again for 4.24, because the
-asynchronous API meant to replace it was not ready.
+they had. GTK 4 can name an application's windows to GNOME through the draft of the same protocol, but GTK 4.22 hides
+the API an application turns that on with, and binds the protocol only behind a debug switch. GTK is patched to bring
+both back (`patches/gtk4/`), and Text Editor to use them (`patches/gnome-text-editor/`). No other installed
+application turns the API on. Mutter is also patched to remember the places of the windows an application still has
+open when it quits (`patches/mutter/save-toplevels-on-session-destroy.patch`), which GTK applications do without
+closing their windows first, proposed upstream as
+[mutter merge request 5453](https://gitlab.gnome.org/GNOME/mutter/-/merge_requests/5453). GTK keeps the names in its
+own state file and reads it whenever Text Editor starts. It does not register Text Editor with gnome-session, which
+would otherwise start Text Editor again at the next login and then skip that login's autostart applications. Upstream
+GTK hid the API again for 4.24, because the asynchronous API meant to replace it was not ready.
 
 ### Chromium quits with Ctrl+Q
 

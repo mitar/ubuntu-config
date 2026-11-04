@@ -12,7 +12,7 @@ Description: Save the state of a session's toplevels when the session is destroy
  The test xdg-session-management-restore is run a second time with the client destroying its session while its
  toplevel is still mapped (restore-session-destroyed), which fails without the change.
 Author: Mitar
-Forwarded: no
+Forwarded: https://gitlab.gnome.org/GNOME/mutter/-/merge_requests/5453
 Last-Update: 2026-11-04
 diff --git a/src/tests/wayland-test-clients/xdg-session-management-restore.c b/src/tests/wayland-test-clients/xdg-session-management-restore.c
 index 20e0ebd..4f9d2f5 100644
