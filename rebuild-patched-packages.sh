@@ -55,9 +55,11 @@
 # package's own build scripts and test suite can change neither the system nor anything outside the chroot. Root
 # only fetches the source, applies the patches and publishes the result, none of which runs code from the package.
 #
-# Builds run in /tmp, a tmpfs, both the work directory and sbuild's chroot. A Firefox build holds more files there
-# than systemd's default tmpfs limit allows, which install-rebuild-patched-packages.sh raises with
-# systemd/tmp.mount.d/50-nr-inodes.conf.
+# Builds run in /tmp, a tmpfs, both the work directory and sbuild's chroot. The source package is built in the work
+# directory and the unpacked source removed before sbuild starts, so that the build holds only sbuild's own copy of
+# the source. A Firefox build still needs about 40 GiB there at its peak, which /tmp, half of the memory, has only on
+# a machine with more than 80 GiB of it. Its files come close to systemd's default tmpfs limit on their number,
+# which install-rebuild-patched-packages.sh raises with systemd/tmp.mount.d/50-nr-inodes.conf.
 #
 # The chroot tarball is created with mmdebstrap from the system's own Ubuntu sources, so it follows the same
 # mirror, release and pockets, and it is created again once it is older than a week. sbuild also updates the
@@ -79,8 +81,8 @@
 # bump. Then install the patches with install-rebuild-patched-packages.sh.
 #
 # The patches in series are applied with quilt by dpkg-source, which allows them to change only the upstream source.
-# A quilt patch which changes debian/ is refused here, because dpkg-source treats it as already applied when sbuild
-# builds the source package again and fails with a misleading message. Changes to the packaging itself go into
+# A quilt patch which changes debian/ is refused here, because dpkg-source treats it as already applied when it
+# builds the source package and fails with a misleading message. Changes to the packaging itself go into
 # patches listed in a "debian-series" file instead. Those are applied directly to the unpacked source, before the
 # quilt patches and without fuzz, and may change nothing outside debian/.
 #
@@ -623,14 +625,23 @@ rebuild() {
   chown -R "$BUILD_USER:$BUILD_USER" "$work"
   ensure_chroot "$work"
 
+  # The source package is built here with the same dpkg-source steps sbuild runs on a source tree, so that the tree
+  # can be removed before the build. sbuild unpacks the source package again inside its chroot, and without the
+  # tree only that copy is in /tmp during the build, which for Firefox is about 5 GiB and half a million files less.
+  # The .dsc is named after the version without its epoch.
+  local dsc=$work/${src}_${local_version#*:}.dsc
   ( cd "$tree" \
       && as_builder "$work" DEBEMAIL="$email" DEBFULLNAME="${DEBFULLNAME:-Local patched build}" \
            dch --newversion "$local_version" "Rebuilt with local patches from $PATCH_DIR/$src." \
+      && as_builder "$work" dpkg-source --before-build . \
+      && as_builder "$work" dpkg-source -b . \
+      && as_builder "$work" dpkg-source --after-build . \
       && cd "$work" \
+      && rm -rf "$tree" \
       && as_builder "$work" SBUILD_CONFIG="$work/sbuild.conf" DEB_BUILD_OPTIONS="$opts" \
            sbuild --chroot-mode=unshare --chroot="$CHROOT_TARBALL" --dist="$CODENAME" --arch-all --arch-any \
-             --no-clean-source --apt-update --apt-distupgrade --no-run-lintian --no-run-piuparts --no-run-autopkgtest \
-             --jobs="$BUILD_JOBS" --build-dir="$work" "${extra[@]}" "$tree" \
+             --apt-update --apt-distupgrade --no-run-lintian --no-run-piuparts --no-run-autopkgtest \
+             --jobs="$BUILD_JOBS" --build-dir="$work" "${extra[@]}" "$dsc" \
   ) >"$work/build.log" 2>&1 || status=$?
 
   # A test suite can start processes, such as a daemon, which would otherwise outlive the build.
