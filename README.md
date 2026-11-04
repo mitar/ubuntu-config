@@ -83,6 +83,8 @@ Ptyxis, Ubuntu's terminal, is patched and configured (`patches/ptyxis/`, `config
 - A new tab or window opens in the directory of the current tab also after a terminal reset, which keeps the
   directory the shell reported (`patches/vte2.91/`), and when the shell reports none, in the directory of the
   program running in the tab.
+- After a crash, its windows return to their places, with their tabs and the last screen of each (see
+  [Terminal windows return after a crash](#terminal-windows-return-after-a-crash)).
 
 ### Third-party APT repositories pinned to their packages
 
@@ -318,14 +320,34 @@ same as `chrome://flags/#wayland-session-management`.
 When Text Editor restores its documents at start, their windows return to the workspace, monitor, position and size
 they had. GTK 4 can name an application's windows to GNOME through the draft of the same protocol, but GTK 4.22 hides
 the API an application turns that on with, and binds the protocol only behind a debug switch. GTK is patched to bring
-both back (`patches/gtk4/`), and Text Editor to use them (`patches/gnome-text-editor/`). No other installed
-application turns the API on. Mutter is also patched to remember the places of the windows an application still has
+both back (`patches/gtk4/`), and Text Editor to use them (`patches/gnome-text-editor/`). The only other installed
+application turning the API on is the terminal (see the next section). Mutter is also patched to remember the places of the windows an application still has
 open when it quits (`patches/mutter/save-toplevels-on-session-destroy.patch`), which GTK applications do without
 closing their windows first, proposed upstream as
 [mutter merge request 5453](https://gitlab.gnome.org/GNOME/mutter/-/merge_requests/5453). GTK keeps the names in its
 own state file and reads it whenever Text Editor starts. It does not register Text Editor with gnome-session, which
 would otherwise start Text Editor again at the next login and then skip that login's autostart applications. Upstream
 GTK hid the API again for 4.24, because the asynchronous API meant to replace it was not ready.
+
+### Terminal windows return after a crash
+
+When the terminal starts after a crash, a reset of the machine or a logout with terminal windows open, its windows
+return to their workspaces and places, each tab in the directory it had, with the last screen it showed dimmed above
+the prompt of a new shell, as Terminal on macOS does. Ptyxis saves its tabs only when its last window is closed, so
+it would bring back the tabs of the last time that happened
+([Ptyxis issue 603](https://gitlab.gnome.org/chergert/ptyxis/-/work_items/603)). It is patched to save its session a
+few seconds after every change, including the screens, which are kept in a file readable only by you, and to name its
+windows to GNOME through GTK's API, as Text Editor does (`patches/ptyxis/`). Closing the last window keeps its tabs
+for the next start, but not their screens.
+
+### Windows return to their places also after a crash
+
+The places of the windows named through the session management protocol, of Firefox, Chromium, Text Editor and the
+terminal, are stored by mutter whenever a window moves, changes its size or state, or moves to another workspace, and
+written to disk a few seconds later. Mutter stores a window's place only when the window closes, so after a crash or
+a reset of the machine windows would return to where they were when they last closed, or open unplaced
+(`patches/mutter/save-toplevels-on-change.patch`, reported as
+[mutter issue 5181](https://gitlab.gnome.org/GNOME/mutter/-/work_items/5181)).
 
 ### Chromium quits with Ctrl+Q
 

@@ -33,6 +33,45 @@ register-app-id-before-gtk-init.patch
     by an empty application ID, because Ptyxis calls gtk_init before GTK registers the ID with
     the portal, and GNOME Shell leaves out inhibitors whose ID names no application.
 
+save-session-on-change.patch
+    Saves the session, the windows with their tabs and the directory of each tab, 3 seconds after
+    it changes. Upstream saves it only when the last window is closed, so after a crash, a reset
+    of the machine or the end of the desktop session, at which Ptyxis exits without closing its
+    windows, the next start restores the tabs of the last time all windows were closed, which
+    can be days old (Ptyxis issue 603). A window created for a single command, such as one
+    started from a .desktop file with Terminal=true, is left out of the session, since it would
+    be restored as a shell without its command. A candidate for an upstream merge request on
+    issue 603.
+
+restore-window-placement.patch
+    Lets Ptyxis's windows return to their workspace, monitor, position and size when it restores
+    its session, with the session save/restore API of GtkApplication, which only the GTK of
+    patches/gtk4/ has, the same way as patches/gnome-text-editor/restore-window-placement.patch
+    does for Text Editor. Every window has an ID, saved as window-id both with the window in
+    Ptyxis's session state, ~/.config/org.gnome.Ptyxis/session.gvariant, and in GTK's window
+    state of it, ~/.local/state/org.gnome.Ptyxis@fallback.state, which links the two. GTK
+    restores the names under which mutter remembers where each window was, and Ptyxis gives
+    each restored window the tabs saved with the same ID. GTK saves its window state every 15
+    seconds while a Ptyxis window has the keyboard focus, so a window opened less than 15 seconds
+    before a crash opens unplaced. The property and the signals of the API are looked up at
+    runtime, so the package builds against Ubuntu's GTK and behaves as before with it. A
+    standalone instance (--standalone) does not use the API.
+
+    After a crash of the whole system, a window returns to its place only if mutter stored it,
+    which it does when the window changes only with
+    patches/mutter/save-toplevels-on-change.patch.
+
+restore-screens.patch
+    Saves what each tab shows, the text of its last screen without colors, with the session,
+    and shows it dimmed above the prompt of the tab's new shell when the session is restored,
+    as Terminal on macOS does, so that it is clear what each terminal was doing. The screens
+    are kept in ~/.local/state/org.gnome.Ptyxis/screens.gvariant, readable only by you, and
+    they are shown only after a session which ended with windows open: closing the last window
+    removes them, and the next start restores its tabs without them. A terminal scrolled back
+    keeps the screen it had the last time it was scrolled to the end. The dim style is VTE's,
+    which scales the foreground to 2/3: on tango-black it turns the text grey, while on a
+    light palette it would darken the text instead.
+
 None of this is reachable through settings, which is why the patches exist. A shortcut in Ptyxis
 is spread across four places, and only the first is visible from outside:
 
@@ -45,9 +84,11 @@ Some bindings skip the schema entirely and are registered in code with
 gtk_widget_class_add_binding_action, which is the case for Ctrl+G. Those are invisible to
 gsettings, to the preferences window, and to the conflict check in configure-ptyxis.sh.
 
-Ptyxis ships no test suite, so there is nothing to add tests to. A build failure is the only
-automated check, and for changes like these it is a weak one: every patch here could apply,
-compile, and still behave wrongly. Check by hand after a rebuild.
+Ptyxis ships no test suite, so there is nothing to add tests to. The three session patches are
+tested together with patches/gtk4/ and patches/mutter/ by tests/run-ptyxis-session.sh, see
+tests/README. For the others a build failure is the only automated check, and for changes like
+these it is a weak one: every patch here could apply, compile, and still behave wrongly. Check by
+hand after a rebuild.
 
   Ctrl+F then Ctrl+G           should move down the scrollback, towards newer output
   select text, Ctrl+Shift+C    should copy as HTML, and the context menu should show that accel
@@ -57,3 +98,17 @@ compile, and still behave wrongly. Check by hand after a rebuild.
                                should open in /tmp, not in the home directory
   sleep 60, then Power Off in the system menu
                                should list Terminal with "A foreground process is running"
+  two windows on different workspaces, ls in each, wait 15 seconds, run pkill -KILL -x ptyxis
+  in one of them, and start Terminal
+                               should bring back both windows on their workspaces, each tab in
+                               its directory with the ls output dimmed above a new prompt
+  close the last window with its close button, start Terminal
+                               should bring back its tabs without the dimmed screens
+
+The first start after installing restore-window-placement.patch has no window names saved yet,
+so the windows are placed from the second start on.
+
+After a version bump, check that ptyxis_window_close_request and
+update_visible_and_maybe_close in src/ptyxis-window.c are still the only places that save the
+session, and that ptyxis_session_restore in src/ptyxis-session.c still creates each window with
+ptyxis_window_new_empty before adding its tabs.

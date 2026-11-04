@@ -1,0 +1,439 @@
+Description: Restore windows to their places with the session save/restore API of GTK.
+ Ptyxis restores its windows with their tabs from its own session state, but a Wayland client
+ can neither learn nor set where its windows are, so they open wherever GNOME Shell puts new
+ windows. Only the compositor can place them again, by the name the application gives each
+ window through the session management protocol. GTK names the windows of an application which
+ sets GtkApplication:support-save, saves the names with the rest of its window state, and at
+ the next start emits GtkApplication::restore-window for each saved window.
+ .
+ Ptyxis now sets support-save and gives every window an ID, which it saves both in the window
+ state GTK keeps (GtkApplicationWindow::save-state) and with the window in its own session
+ state. For each window GTK restores, an empty window is created while GTK emits
+ restore-window, as GTK requires, and kept hidden. The session restore then gives it the tabs
+ of the window saved under the same ID and shows it, where mutter places it again. A window the
+ session restore has no tabs for is destroyed once the command line is handled, and a window
+ saved without a known ID is created as before, keeping its ID so that it is placed from the
+ next start on. A standalone instance does not set support-save.
+ .
+ The save/restore API is public only in a GTK with patches/gtk4/, so the property and the
+ signals are looked up at runtime: Ptyxis builds against Ubuntu's GTK and behaves as before when
+ it runs with it.
+Author: Mitar
+Forwarded: not-needed
+Last-Update: 2026-11-04
+diff --git a/src/ptyxis-application.c b/src/ptyxis-application.c
+index 91b0505..ec9de2d 100644
+--- a/src/ptyxis-application.c
++++ b/src/ptyxis-application.c
+@@ -227,7 +227,8 @@ ptyxis_application_open (GApplication  *app,
+            windows != NULL;
+            windows = windows->next)
+         {
+-          if (PTYXIS_IS_WINDOW (windows->data))
++          if (PTYXIS_IS_WINDOW (windows->data) &&
++              !ptyxis_window_get_restore_pending (windows->data))
+             {
+               window = windows->data;
+               break;
+@@ -344,7 +345,8 @@ ptyxis_application_activate (GApplication *app)
+        windows != NULL;
+        windows = windows->next)
+     {
+-      if (PTYXIS_IS_WINDOW (windows->data))
++      if (PTYXIS_IS_WINDOW (windows->data) &&
++          !ptyxis_window_get_restore_pending (windows->data))
+         {
+           gtk_window_present (windows->data);
+           return;
+@@ -381,7 +383,8 @@ get_current_window (PtyxisApplication *self)
+        iter != NULL;
+        iter = iter->next)
+     {
+-      if (PTYXIS_IS_WINDOW (iter->data))
++      if (PTYXIS_IS_WINDOW (iter->data) &&
++          !ptyxis_window_get_restore_pending (iter->data))
+         return PTYXIS_WINDOW (iter->data);
+     }
+ 
+@@ -889,6 +892,60 @@ ptyxis_application_client_process_exited_cb (PtyxisApplication *self,
+                          GINT_TO_POINTER (exit_code));
+ }
+ 
++static void
++ptyxis_application_restore_window_cb (PtyxisApplication *self,
++                                      int                reason,
++                                      GVariant          *state,
++                                      gpointer           user_data)
++{
++  PtyxisWindow *window;
++  const char *window_id = NULL;
++
++  g_assert (PTYXIS_IS_APPLICATION (self));
++
++  /* Without a window ID, from a window state Ptyxis did not save, no window is
++   * created and GTK drops the state.
++   */
++  if (state == NULL || !g_variant_lookup (state, "window-id", "&s", &window_id))
++    return;
++
++  /* GTK gives the window state to the window added to the application while
++   * it emits the signal, and the session restore gives the window its tabs and
++   * shows it later, when the command line is handled.
++   */
++  window = ptyxis_window_new_empty ();
++  ptyxis_window_set_window_id (window, window_id);
++  ptyxis_window_set_restore_pending (window, TRUE);
++}
++
++static void
++ptyxis_application_after_emit (GApplication *application,
++                               GVariant     *platform_data)
++{
++  PtyxisApplication *self = (PtyxisApplication *)application;
++  g_autoptr(GPtrArray) pending = g_ptr_array_new_with_free_func (g_object_unref);
++
++  g_assert (PTYXIS_IS_APPLICATION (self));
++
++  G_APPLICATION_CLASS (ptyxis_application_parent_class)->after_emit (application, platform_data);
++
++  /* Windows created for window state GTK restored which the session restore
++   * did not give tabs, because it did not run or saved none for them, are
++   * destroyed, which also drops their window state.
++   */
++  for (const GList *iter = gtk_application_get_windows (GTK_APPLICATION (self));
++       iter != NULL;
++       iter = iter->next)
++    {
++      if (PTYXIS_IS_WINDOW (iter->data) &&
++          ptyxis_window_get_restore_pending (iter->data))
++        g_ptr_array_add (pending, g_object_ref (iter->data));
++    }
++
++  for (guint i = 0; i < pending->len; i++)
++    gtk_window_destroy (g_ptr_array_index (pending, i));
++}
++
+ static void
+ ptyxis_application_window_removed_cb (PtyxisApplication *self,
+                                       GtkWindow         *window,
+@@ -926,6 +983,27 @@ ptyxis_application_startup (GApplication *application)
+   self->shortcuts = ptyxis_shortcuts_new (NULL);
+   self->xdg_terminals_list_monitor = g_file_monitor (xdg_terminals_list, 0, NULL, NULL);
+ 
++  /* With the save/restore API of GTK, GTK saves the window state of every
++   * window, including the name under which the compositor remembers where the
++   * window was placed, and restores it at the next start with
++   * GtkApplication::restore-window. The tabs of the windows stay in the session
++   * state of Ptyxis, which links both by the window ID. Stable GTK releases do
++   * not have the API, so it is looked up at runtime, which also lets Ptyxis
++   * build and run without it. GTK reads GtkApplication:support-save when it
++   * starts up. A standalone instance runs next to the primary one, so it does
++   * not save state, which both would write to the same file.
++   */
++  if (!is_standalone (self) &&
++      g_object_class_find_property (G_OBJECT_GET_CLASS (self), "support-save") != NULL &&
++      g_signal_lookup ("restore-window", GTK_TYPE_APPLICATION) != 0)
++    {
++      g_object_set (self, "support-save", TRUE, NULL);
++      g_signal_connect (self,
++                        "restore-window",
++                        G_CALLBACK (ptyxis_application_restore_window_cb),
++                        NULL);
++    }
++
+   /* Load the session state so it's available if we need it */
+   if ((session_bytes = g_file_load_bytes (session_file, NULL, NULL, NULL)))
+     {
+@@ -1129,6 +1207,7 @@ ptyxis_application_class_init (PtyxisApplicationClass *klass)
+   app_class->startup = ptyxis_application_startup;
+   app_class->command_line = ptyxis_application_command_line;
+   app_class->open = ptyxis_application_open;
++  app_class->after_emit = ptyxis_application_after_emit;
+ 
+   properties[PROP_CONTAINERS] =
+     g_param_spec_object ("containers", NULL, NULL,
+@@ -2270,7 +2349,8 @@ has_session_window (PtyxisApplication *self)
+        iter = iter->next)
+     {
+       if (PTYXIS_IS_WINDOW (iter->data) &&
+-          !ptyxis_window_get_single_terminal_mode (iter->data))
++          !ptyxis_window_get_single_terminal_mode (iter->data) &&
++          !ptyxis_window_get_restore_pending (iter->data))
+         return TRUE;
+     }
+ 
+diff --git a/src/ptyxis-session.c b/src/ptyxis-session.c
+index a738beb..d9b5a4a 100644
+--- a/src/ptyxis-session.c
++++ b/src/ptyxis-session.c
+@@ -50,9 +50,12 @@ ptyxis_session_save (PtyxisApplication *app)
+        list != NULL;
+        list = list->next)
+     {
+-      /* A window created for a single command would be restored without it */
++      /* A window created for a single command would be restored without it,
++       * and one waiting for its tabs to be restored has none yet.
++       */
+       if (PTYXIS_IS_WINDOW (list->data) &&
+-          !ptyxis_window_get_single_terminal_mode (list->data))
++          !ptyxis_window_get_single_terminal_mode (list->data) &&
++          !ptyxis_window_get_restore_pending (list->data))
+         {
+           PtyxisWindow *window = PTYXIS_WINDOW (list->data);
+           g_autoptr(GListModel) pages = ptyxis_window_list_pages (window);
+@@ -60,6 +63,8 @@ ptyxis_session_save (PtyxisApplication *app)
+ 
+           g_variant_builder_open (&builder, G_VARIANT_TYPE ("a{sv}"));
+ 
++          g_variant_builder_add_parsed (&builder, "{'window-id', <%s>}", ptyxis_window_get_window_id (window));
++
+           if (gtk_window_is_maximized (GTK_WINDOW (window)))
+             g_variant_builder_add_parsed (&builder, "{'maximized', <%b>}", TRUE);
+ 
+@@ -154,6 +159,34 @@ ptyxis_session_save (PtyxisApplication *app)
+   return g_variant_take_ref (g_variant_builder_end (&builder));
+ }
+ 
++/* Returns the window created for the window state GTK restored under
++ * @window_id, which has the name under which the compositor remembers where the
++ * window was, no longer marked as waiting for its tabs, or NULL when there is
++ * none.
++ */
++static PtyxisWindow *
++take_restored_window (PtyxisApplication *app,
++                      const char        *window_id)
++{
++  g_assert (PTYXIS_IS_APPLICATION (app));
++  g_assert (window_id != NULL);
++
++  for (const GList *iter = gtk_application_get_windows (GTK_APPLICATION (app));
++       iter != NULL;
++       iter = iter->next)
++    {
++      if (PTYXIS_IS_WINDOW (iter->data) &&
++          ptyxis_window_get_restore_pending (iter->data) &&
++          g_strcmp0 (ptyxis_window_get_window_id (iter->data), window_id) == 0)
++        {
++          ptyxis_window_set_restore_pending (iter->data, FALSE);
++          return iter->data;
++        }
++    }
++
++  return NULL;
++}
++
+ gboolean
+ ptyxis_session_restore (PtyxisApplication *app,
+                         GVariant          *state)
+@@ -189,6 +222,7 @@ ptyxis_session_restore (PtyxisApplication *app,
+       PtyxisWindow *the_window = NULL;
+       PtyxisTab *active_tab = NULL;
+       GVariantIter tab_iter;
++      const char *window_id;
+       gboolean maximized;
+ 
+       if (!(tabs = g_variant_lookup_value (window, "tabs", G_VARIANT_TYPE ("aa{sv}"))) ||
+@@ -198,6 +232,9 @@ ptyxis_session_restore (PtyxisApplication *app,
+       if (!g_variant_lookup (window, "maximized", "b", &maximized))
+         maximized = FALSE;
+ 
++      if (!g_variant_lookup (window, "window-id", "&s", &window_id))
++        window_id = NULL;
++
+       g_variant_iter_init (&tab_iter, tabs);
+       while (g_variant_iter_loop (&tab_iter, "@a{sv}", &tab))
+         {
+@@ -252,8 +289,20 @@ ptyxis_session_restore (PtyxisApplication *app,
+           if (the_profile == NULL)
+             the_profile = ptyxis_application_dup_default_profile (app);
+ 
++          /* The window GTK restored with the same ID already has the window
++           * state the compositor placed it with the last time, and otherwise a
++           * new window keeps the ID, so that it is placed from the next run on.
++           */
++          if (the_window == NULL && window_id != NULL)
++            the_window = take_restored_window (app, window_id);
++
+           if (the_window == NULL)
+-            the_window = ptyxis_window_new_empty ();
++            {
++              the_window = ptyxis_window_new_empty ();
++
++              if (window_id != NULL)
++                ptyxis_window_set_window_id (the_window, window_id);
++            }
+ 
+           the_tab = ptyxis_tab_new (the_profile);
+ 
+diff --git a/src/ptyxis-window.c b/src/ptyxis-window.c
+index a646563..8844575 100644
+--- a/src/ptyxis-window.c
++++ b/src/ptyxis-window.c
+@@ -87,12 +87,22 @@ struct _PtyxisWindow
+   guint                  visual_bell_source;
+   guint                  focus_active_tab_source;
+ 
++  /* Names the window in the session state and in the window state GTK saves,
++   * which links the two across runs.
++   */
++  char                  *window_id;
++
+   guint                  tab_overview_animating : 1;
+   guint                  disposed : 1;
+   guint                  single_terminal_mode : 1;
+   guint                  is_maximized : 1;
+   guint                  is_fullscreen : 1;
+   guint                  in_close_request : 1;
++
++  /* Created for window state GTK restored and not yet given its tabs by the
++   * session restore, so not shown yet.
++   */
++  guint                  restore_pending : 1;
+   guint                  reset_nonvisible_from_size_allocate : 1;
+ };
+ 
+@@ -1393,7 +1403,7 @@ is_last_window (PtyxisWindow *self)
+         {
+           PtyxisWindow *window = PTYXIS_WINDOW (iter->data);
+ 
+-          if (window != self && !window->single_terminal_mode)
++          if (window != self && !window->single_terminal_mode && !window->restore_pending)
+             return FALSE;
+         }
+     }
+@@ -2001,6 +2011,8 @@ ptyxis_window_finalize (GObject *object)
+   g_clear_object (&self->profile_bindings);
+   g_clear_object (&self->selected_page_signals);
+ 
++  g_clear_pointer (&self->window_id, g_free);
++
+   G_OBJECT_CLASS (ptyxis_window_parent_class)->finalize (object);
+ }
+ 
+@@ -2160,12 +2172,38 @@ ptyxis_window_class_init (PtyxisWindowClass *klass)
+   g_type_ensure (PTYXIS_TYPE_SHRINKER);
+ }
+ 
++static gboolean
++ptyxis_window_save_state_cb (PtyxisWindow *self,
++                             GVariantDict *dict,
++                             gpointer      user_data)
++{
++  g_assert (PTYXIS_IS_WINDOW (self));
++  g_assert (dict != NULL);
++
++  /* Not part of the session, so GTK drops its state when restoring it */
++  if (!self->single_terminal_mode)
++    g_variant_dict_insert (dict, "window-id", "s", self->window_id);
++
++  return FALSE;
++}
++
+ static void
+ ptyxis_window_init (PtyxisWindow *self)
+ {
+   g_autoptr(GIcon) default_icon = NULL;
+   GtkGestureClick *click;
+ 
++  self->window_id = g_uuid_string_random ();
++
++  /* Stable GTK releases do not have GtkApplicationWindow::save-state, so it is
++   * looked up at runtime, which also lets Ptyxis build and run without it.
++   */
++  if (g_signal_lookup ("save-state", GTK_TYPE_APPLICATION_WINDOW) != 0)
++    g_signal_connect (self,
++                      "save-state",
++                      G_CALLBACK (ptyxis_window_save_state_cb),
++                      NULL);
++
+   self->active_tab_bindings = g_binding_group_new ();
+   self->profile_bindings = g_binding_group_new ();
+ 
+@@ -2416,6 +2454,71 @@ ptyxis_window_get_single_terminal_mode (PtyxisWindow *self)
+   return self->single_terminal_mode;
+ }
+ 
++/**
++ * ptyxis_window_get_window_id:
++ * @self: a #PtyxisWindow
++ *
++ * Returns: the ID naming the window in the session state and in the window
++ *   state GTK saves
++ */
++const char *
++ptyxis_window_get_window_id (PtyxisWindow *self)
++{
++  g_return_val_if_fail (PTYXIS_IS_WINDOW (self), NULL);
++
++  return self->window_id;
++}
++
++/**
++ * ptyxis_window_set_window_id:
++ * @self: a #PtyxisWindow
++ * @window_id: the ID the window was saved with
++ *
++ * Gives the window the ID it was saved with, so that it is saved under the
++ * same one again.
++ */
++void
++ptyxis_window_set_window_id (PtyxisWindow *self,
++                             const char   *window_id)
++{
++  g_return_if_fail (PTYXIS_IS_WINDOW (self));
++  g_return_if_fail (window_id != NULL);
++
++  g_set_str (&self->window_id, window_id);
++}
++
++/**
++ * ptyxis_window_get_restore_pending:
++ * @self: a #PtyxisWindow
++ *
++ * Returns: whether the window was created for window state GTK restored and
++ *   still waits for the session restore to give it its tabs
++ */
++gboolean
++ptyxis_window_get_restore_pending (PtyxisWindow *self)
++{
++  g_return_val_if_fail (PTYXIS_IS_WINDOW (self), FALSE);
++
++  return self->restore_pending;
++}
++
++/**
++ * ptyxis_window_set_restore_pending:
++ * @self: a #PtyxisWindow
++ * @restore_pending: whether the window waits for its tabs
++ *
++ * Marks a window created for window state GTK restored as waiting for its tabs.
++ * Such a window is not shown, saved in the session nor offered for new tabs.
++ */
++void
++ptyxis_window_set_restore_pending (PtyxisWindow *self,
++                                   gboolean      restore_pending)
++{
++  g_return_if_fail (PTYXIS_IS_WINDOW (self));
++
++  self->restore_pending = !!restore_pending;
++}
++
+ PtyxisWindow *
+ ptyxis_window_new_empty (void)
+ {
+diff --git a/src/ptyxis-window.h b/src/ptyxis-window.h
+index b4b1cb8..d6cd48e 100644
+--- a/src/ptyxis-window.h
++++ b/src/ptyxis-window.h
+@@ -61,5 +61,11 @@ void           ptyxis_window_set_tab_pinned      (PtyxisWindow       *self,
+                                                   gboolean            pinned);
+ gboolean       ptyxis_window_get_single_terminal_mode
+                                                  (PtyxisWindow       *self);
++const char    *ptyxis_window_get_window_id       (PtyxisWindow       *self);
++void           ptyxis_window_set_window_id       (PtyxisWindow       *self,
++                                                  const char         *window_id);
++gboolean       ptyxis_window_get_restore_pending (PtyxisWindow       *self);
++void           ptyxis_window_set_restore_pending (PtyxisWindow       *self,
++                                                  gboolean            restore_pending);
+ 
+ G_END_DECLS

@@ -1,0 +1,423 @@
+Description: Save the session a few seconds after it changes, not only when the last window closes.
+ Ptyxis saves its session, the windows with their tabs and the directory of each tab, only when
+ the last window is closed or a window loses its last tab. When it ends any other way, as in a
+ crash, a reset of the machine or at the end of the desktop session, where ptyxis-agent ends
+ first and Ptyxis exits, the next start restores the session saved the last time all windows
+ were closed, which can be days old.
+ .
+ The session is now saved 3 seconds after a change, with further changes until then included
+ in the same save: a tab added, closed, moved, pinned or selected, its directory or title
+ changed, a window closed, maximized or zoomed. Writes of the session file run one at a time,
+ and a state equal to the one last written is not written again. Nothing is saved this way by a
+ standalone instance, while a saved session is still to be restored, as when Ptyxis was started
+ for a single command, nor once the last window is closed, which saves the session as before.
+ .
+ A window created for a single command is left out of the session, as it would be restored as
+ a shell without its command.
+Author: Mitar
+Bug: https://gitlab.gnome.org/chergert/ptyxis/-/work_items/603
+Forwarded: no
+Last-Update: 2026-11-04
+diff --git a/src/ptyxis-application.c b/src/ptyxis-application.c
+index e06d672..91b0505 100644
+--- a/src/ptyxis-application.c
++++ b/src/ptyxis-application.c
+@@ -40,6 +40,11 @@
+ #define PORTAL_OBJECT_PATH "/org/freedesktop/portal/desktop"
+ #define PORTAL_SETTINGS_INTERFACE "org.freedesktop.portal.Settings"
+ 
++/* How long a change waits before the session is saved, so that a burst of
++ * changes is saved once.
++ */
++#define SAVE_SESSION_DELAY_SECONDS 3
++
+ struct _PtyxisApplication
+ {
+   AdwApplication       parent_instance;
+@@ -53,6 +58,15 @@ struct _PtyxisApplication
+   GHashTable          *exited;
+   GVariant            *session;
+   GFileMonitor        *xdg_terminals_list_monitor;
++
++  /* The session state last written, so that an unchanged one is not written
++   * again, and the newest one requested while a write was in progress.
++   */
++  GBytes              *written_session;
++  GBytes              *pending_session;
++  guint                save_session_source;
++
++  guint                writing_session : 1;
+   guint                has_restored_session : 1;
+   guint                overlay_scrollbars : 1;
+   guint                client_is_fallback : 1;
+@@ -875,6 +889,17 @@ ptyxis_application_client_process_exited_cb (PtyxisApplication *self,
+                          GINT_TO_POINTER (exit_code));
+ }
+ 
++static void
++ptyxis_application_window_removed_cb (PtyxisApplication *self,
++                                      GtkWindow         *window,
++                                      gpointer           user_data)
++{
++  g_assert (PTYXIS_IS_APPLICATION (self));
++  g_assert (GTK_IS_WINDOW (window));
++
++  ptyxis_application_queue_save_session (self);
++}
++
+ static void
+ ptyxis_application_startup (GApplication *application)
+ {
+@@ -912,6 +937,11 @@ ptyxis_application_startup (GApplication *application)
+ 
+   G_APPLICATION_CLASS (ptyxis_application_parent_class)->startup (application);
+ 
++  g_signal_connect (self,
++                    "window-removed",
++                    G_CALLBACK (ptyxis_application_window_removed_cb),
++                    NULL);
++
+   if ((sandbox_agent = ptyxis_application_should_sandbox_agent (self)))
+     timeout_msec = G_MAXINT;
+   else
+@@ -1036,6 +1066,10 @@ ptyxis_application_finalize (GObject *object)
+   g_clear_object (&self->settings);
+   g_clear_object (&self->client);
+ 
++  g_clear_handle_id (&self->save_session_source, g_source_remove);
++  g_clear_pointer (&self->written_session, g_bytes_unref);
++  g_clear_pointer (&self->pending_session, g_bytes_unref);
++
+   g_clear_pointer (&self->next_title_prefix, g_free);
+   g_clear_pointer (&self->exited, g_hash_table_unref);
+   g_clear_pointer (&self->system_font_name, g_free);
+@@ -2137,23 +2171,78 @@ ptyxis_application_get_os_name (PtyxisApplication *self)
+   return ptyxis_client_get_os_name (self->client);
+ }
+ 
++static void ptyxis_application_write_session (PtyxisApplication *self,
++                                              GBytes            *bytes);
++
+ static void
+-ptyxis_application_save_session_cb (GObject      *object,
+-                                    GAsyncResult *result,
+-                                    gpointer      user_data)
++ptyxis_application_write_session_cb (GObject      *object,
++                                     GAsyncResult *result,
++                                     gpointer      user_data)
+ {
+   GFile *file = (GFile *)object;
+   g_autoptr(PtyxisApplication) self = user_data;
++  g_autoptr(GBytes) pending = NULL;
+   g_autoptr(GError) error = NULL;
+ 
+   g_assert (G_IS_FILE (file));
+   g_assert (G_IS_ASYNC_RESULT (result));
+   g_assert (PTYXIS_IS_APPLICATION (self));
+ 
+-  g_application_release (G_APPLICATION (self));
++  self->writing_session = FALSE;
+ 
+   if (!g_file_replace_contents_finish (file, result, NULL, &error))
+-    g_warning ("Failed to save session state: %s", error->message);
++    {
++      g_warning ("Failed to save session state: %s", error->message);
++      g_clear_pointer (&self->written_session, g_bytes_unref);
++    }
++
++  if ((pending = g_steal_pointer (&self->pending_session)))
++    ptyxis_application_write_session (self, pending);
++
++  g_application_release (G_APPLICATION (self));
++}
++
++static void
++ptyxis_application_write_session (PtyxisApplication *self,
++                                  GBytes            *bytes)
++{
++  g_autoptr(GFile) file = NULL;
++  g_autoptr(GFile) directory = NULL;
++
++  g_assert (PTYXIS_IS_APPLICATION (self));
++  g_assert (bytes != NULL);
++
++  /* Writes run one at a time, as two replacing the same file at once could
++   * finish in either order and leave the older state in place.
++   */
++  if (self->writing_session)
++    {
++      g_clear_pointer (&self->pending_session, g_bytes_unref);
++      self->pending_session = g_bytes_ref (bytes);
++      return;
++    }
++
++  if (self->written_session != NULL && g_bytes_equal (self->written_session, bytes))
++    return;
++
++  g_clear_pointer (&self->written_session, g_bytes_unref);
++  self->written_session = g_bytes_ref (bytes);
++  self->writing_session = TRUE;
++
++  file = get_session_file ();
++  directory = g_file_get_parent (file);
++
++  g_application_hold (G_APPLICATION (self));
++
++  g_file_make_directory_with_parents (directory, NULL, NULL);
++  g_file_replace_contents_bytes_async (file,
++                                       bytes,
++                                       NULL,
++                                       FALSE,
++                                       G_FILE_CREATE_REPLACE_DESTINATION,
++                                       NULL,
++                                       ptyxis_application_write_session_cb,
++                                       g_object_ref (self));
+ }
+ 
+ void
+@@ -2164,24 +2253,83 @@ ptyxis_application_save_session (PtyxisApplication *self)
+ 
+   g_return_if_fail (PTYXIS_IS_APPLICATION (self));
+ 
++  g_clear_handle_id (&self->save_session_source, g_source_remove);
++
+   if ((state = ptyxis_session_save (self)) &&
+       (bytes = g_variant_get_data_as_bytes (state)))
++    ptyxis_application_write_session (self, bytes);
++}
++
++static gboolean
++has_session_window (PtyxisApplication *self)
++{
++  g_assert (PTYXIS_IS_APPLICATION (self));
++
++  for (const GList *iter = gtk_application_get_windows (GTK_APPLICATION (self));
++       iter != NULL;
++       iter = iter->next)
+     {
+-      g_autoptr(GFile) file = get_session_file ();
+-      g_autoptr(GFile) directory = g_file_get_parent (file);
+-
+-      g_application_hold (G_APPLICATION (self));
+-
+-      g_file_make_directory_with_parents (directory, NULL, NULL);
+-      g_file_replace_contents_bytes_async (file,
+-                                           bytes,
+-                                           NULL,
+-                                           FALSE,
+-                                           G_FILE_CREATE_REPLACE_DESTINATION,
+-                                           NULL,
+-                                           ptyxis_application_save_session_cb,
+-                                           g_object_ref (self));
++      if (PTYXIS_IS_WINDOW (iter->data) &&
++          !ptyxis_window_get_single_terminal_mode (iter->data))
++        return TRUE;
+     }
++
++  return FALSE;
++}
++
++static void
++ptyxis_application_save_session_timeout_cb (gpointer user_data)
++{
++  PtyxisApplication *self = user_data;
++
++  g_assert (PTYXIS_IS_APPLICATION (self));
++
++  self->save_session_source = 0;
++
++  /* Until the saved session is restored, saving would replace it with the
++   * windows of this run, such as a single one started for a command.
++   */
++  if (self->session != NULL && !self->has_restored_session)
++    return;
++
++  /* Once the last window is closed the session is already saved with it, and
++   * saving now would replace that with an empty one.
++   */
++  if (!has_session_window (self))
++    return;
++
++  ptyxis_application_save_session (self);
++}
++
++/**
++ * ptyxis_application_queue_save_session:
++ * @self: a #PtyxisApplication
++ *
++ * Saves the session a few seconds later, so that the session state follows
++ * windows and tabs while they change and survives an end of the application
++ * which does not close its windows, such as a crash or the end of the desktop
++ * session. Further calls until then are included in the same save.
++ *
++ * Nothing is saved by a standalone instance, nor while a saved session is
++ * still to be restored, nor once no window is left whose tabs are saved.
++ */
++void
++ptyxis_application_queue_save_session (PtyxisApplication *self)
++{
++  g_return_if_fail (PTYXIS_IS_APPLICATION (self));
++
++  /* A standalone instance runs next to the primary one, and both would write
++   * the same file.
++   */
++  if (is_standalone (self))
++    return;
++
++  if (self->save_session_source != 0)
++    return;
++
++  self->save_session_source = g_timeout_add_seconds_once (SAVE_SESSION_DELAY_SECONDS,
++                                                          ptyxis_application_save_session_timeout_cb,
++                                                          self);
+ }
+ 
+ gboolean
+diff --git a/src/ptyxis-application.h b/src/ptyxis-application.h
+index 1af2b6d..87dd77c 100644
+--- a/src/ptyxis-application.h
++++ b/src/ptyxis-application.h
+@@ -88,5 +88,6 @@ PtyxisIpcContainer *ptyxis_application_find_container_by_name     (PtyxisApplica
+                                                                    const char           *runtime,
+                                                                    const char           *name);
+ void                ptyxis_application_save_session               (PtyxisApplication    *self);
++void                ptyxis_application_queue_save_session         (PtyxisApplication    *self);
+ 
+ G_END_DECLS
+diff --git a/src/ptyxis-session.c b/src/ptyxis-session.c
+index 6330fcb..a738beb 100644
+--- a/src/ptyxis-session.c
++++ b/src/ptyxis-session.c
+@@ -50,7 +50,9 @@ ptyxis_session_save (PtyxisApplication *app)
+        list != NULL;
+        list = list->next)
+     {
+-      if (PTYXIS_IS_WINDOW (list->data))
++      /* A window created for a single command would be restored without it */
++      if (PTYXIS_IS_WINDOW (list->data) &&
++          !ptyxis_window_get_single_terminal_mode (list->data))
+         {
+           PtyxisWindow *window = PTYXIS_WINDOW (list->data);
+           g_autoptr(GListModel) pages = ptyxis_window_list_pages (window);
+diff --git a/src/ptyxis-tab.c b/src/ptyxis-tab.c
+index b19c212..48cd480 100644
+--- a/src/ptyxis-tab.c
++++ b/src/ptyxis-tab.c
+@@ -682,6 +682,8 @@ ptyxis_tab_notify_window_title_cb (PtyxisTab      *self,
+   g_assert (PTYXIS_IS_TERMINAL (terminal));
+ 
+   g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_TITLE]);
++
++  ptyxis_application_queue_save_session (PTYXIS_APPLICATION_DEFAULT);
+ }
+ 
+ static void
+@@ -692,6 +694,9 @@ ptyxis_tab_notify_window_subtitle_cb (PtyxisTab      *self,
+   g_assert (PTYXIS_IS_TERMINAL (terminal));
+ 
+   g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_SUBTITLE]);
++
++  /* The current directory of the tab changed */
++  ptyxis_application_queue_save_session (PTYXIS_APPLICATION_DEFAULT);
+ }
+ 
+ static void
+diff --git a/src/ptyxis-window.c b/src/ptyxis-window.c
+index 58d74b2..a646563 100644
+--- a/src/ptyxis-window.c
++++ b/src/ptyxis-window.c
+@@ -420,6 +420,7 @@ ptyxis_window_page_attached_cb (PtyxisWindow *self,
+   g_assert (ADW_IS_TAB_VIEW (tab_view));
+ 
+   update_visible_and_maybe_close (self);
++  ptyxis_application_queue_save_session (PTYXIS_APPLICATION_DEFAULT);
+ }
+ 
+ static void
+@@ -433,6 +434,15 @@ ptyxis_window_page_detached_cb (PtyxisWindow *self,
+   g_assert (ADW_IS_TAB_VIEW (tab_view));
+ 
+   update_visible_and_maybe_close (self);
++  ptyxis_application_queue_save_session (PTYXIS_APPLICATION_DEFAULT);
++}
++
++static void
++ptyxis_window_queue_save_session_cb (PtyxisWindow *self)
++{
++  g_assert (PTYXIS_IS_WINDOW (self));
++
++  ptyxis_application_queue_save_session (PTYXIS_APPLICATION_DEFAULT);
+ }
+ 
+ static gboolean
+@@ -1487,6 +1497,8 @@ ptyxis_window_notify_zoom_cb (PtyxisWindow *self,
+   gtk_widget_action_set_enabled (GTK_WIDGET (self), "win.zoom-in", can_zoom_in);
+   gtk_widget_action_set_enabled (GTK_WIDGET (self), "win.zoom-one", can_zoom_one);
+   gtk_widget_action_set_enabled (GTK_WIDGET (self), "win.zoom-out", can_zoom_out);
++
++  ptyxis_application_queue_save_session (PTYXIS_APPLICATION_DEFAULT);
+ }
+ 
+ static void
+@@ -2218,6 +2230,27 @@ ptyxis_window_init (PtyxisWindow *self)
+ 
+   adw_tab_view_set_shortcuts (self->tab_view, 0);
+ 
++  /* The rest of what the session saves changes with the tabs themselves */
++  g_signal_connect_object (self->tab_view,
++                           "page-reordered",
++                           G_CALLBACK (ptyxis_window_queue_save_session_cb),
++                           self,
++                           G_CONNECT_SWAPPED);
++  g_signal_connect_object (self->tab_view,
++                           "notify::selected-page",
++                           G_CALLBACK (ptyxis_window_queue_save_session_cb),
++                           self,
++                           G_CONNECT_SWAPPED);
++  g_signal_connect_object (self->tab_view,
++                           "notify::n-pinned-pages",
++                           G_CALLBACK (ptyxis_window_queue_save_session_cb),
++                           self,
++                           G_CONNECT_SWAPPED);
++  g_signal_connect (self,
++                    "notify::maximized",
++                    G_CALLBACK (ptyxis_window_queue_save_session_cb),
++                    NULL);
++
+   g_binding_group_bind (self->active_tab_bindings, "profile",
+                         self->profile_bindings, "source",
+                         G_BINDING_SYNC_CREATE);
+@@ -2368,6 +2401,21 @@ ptyxis_window_new (void)
+   return ptyxis_window_new_for_profile (NULL);
+ }
+ 
++/**
++ * ptyxis_window_get_single_terminal_mode:
++ * @self: a #PtyxisWindow
++ *
++ * Returns: whether the window was created for a single command, and so has
++ *   one tab and no others
++ */
++gboolean
++ptyxis_window_get_single_terminal_mode (PtyxisWindow *self)
++{
++  g_return_val_if_fail (PTYXIS_IS_WINDOW (self), FALSE);
++
++  return self->single_terminal_mode;
++}
++
+ PtyxisWindow *
+ ptyxis_window_new_empty (void)
+ {
+diff --git a/src/ptyxis-window.h b/src/ptyxis-window.h
+index e30caff..b4b1cb8 100644
+--- a/src/ptyxis-window.h
++++ b/src/ptyxis-window.h
+@@ -59,5 +59,7 @@ gboolean       ptyxis_window_is_animating        (PtyxisWindow       *self);
+ void           ptyxis_window_set_tab_pinned      (PtyxisWindow       *self,
+                                                   PtyxisTab          *tab,
+                                                   gboolean            pinned);
++gboolean       ptyxis_window_get_single_terminal_mode
++                                                 (PtyxisWindow       *self);
+ 
+ G_END_DECLS

@@ -1,0 +1,275 @@
+Description: Store the state of a session's toplevel whenever its window changes.
+ The protocol says the compositor updates the state of a toplevel added to a session whenever it changes, but
+ mutter stores it only when the window is unmanaged, and with save-toplevels-on-session-destroy.patch when the
+ session is destroyed. When the compositor ends without unmanaging its windows, as when GNOME Shell crashes or the
+ machine resets or loses power, every window comes back at the next start where it was the last time it was
+ stored, possibly days earlier, or opens unplaced if it never was.
+ .
+ The state of a toplevel is now stored whenever its window moves, changes its size, its maximized, fullscreen or
+ minimized state, or its workspace, which covers everything meta_session_state_save_window stores, the tiled
+ state and the monitor included. The session manager already writes the session file 3 seconds after the first
+ change it is given, so a burst of changes, such as an interactive move, costs one write. Nothing is stored for a
+ window without a workspace, which is not placed yet or shown on all workspaces, nor for a toplevel removed from
+ its session with remove_toplevel. A restored toplevel is connected only once its stored state has been applied,
+ which changes the window step by step and would otherwise replace that state while it is read.
+ .
+ The test restore-changed has a second client restore the session while the first one still has its window
+ mapped, after the window was moved, which fails without the change.
+Author: Mitar
+Bug: https://gitlab.gnome.org/GNOME/mutter/-/work_items/5181
+Forwarded: no
+Last-Update: 2026-11-04
+diff --git a/src/tests/wayland-unit-tests.c b/src/tests/wayland-unit-tests.c
+index cfbc955..a87c576 100644
+--- a/src/tests/wayland-unit-tests.c
++++ b/src/tests/wayland-unit-tests.c
+@@ -1355,6 +1355,86 @@ toplevel_sessions_restore_session_destroyed (void)
+   check_toplevel_sessions_restore (TRUE);
+ }
+ 
++static MetaWindow *
++find_other_client_window (const char *title,
++                          MetaWindow *other)
++{
++  MetaDisplay *display = meta_context_get_display (test_context);
++  g_autoptr (GList) windows = meta_display_list_all_windows (display);
++  GList *l;
++
++  for (l = windows; l; l = l->next)
++    {
++      MetaWindow *window = l->data;
++
++      if (window != other && g_strcmp0 (meta_window_get_title (window), title) == 0)
++        return window;
++    }
++
++  return NULL;
++}
++
++/* The state of a toplevel has to be stored when it changes, so that it is current also when the compositor ends
++ * without unmanaging the window, as in a crash. A second client restores the session while the first one still has
++ * its window mapped, which replaces the session of the first client and restores the toplevel from what was stored
++ * for it until then, without the window having been unmanaged.
++ */
++static void
++toplevel_sessions_restore_changed (void)
++{
++  MetaSessionManager *session_manager;
++  MetaWaylandTestClient *wayland_test_client1;
++  MetaWaylandTestClient *wayland_test_client2;
++  MetaBackend *backend = meta_context_get_backend (test_context);
++  ClutterActor *stage = meta_backend_get_stage (backend);
++  MetaWindow *window1;
++  MetaWindow *window2;
++  MtkRectangle frame_rect;
++  g_autofree char *session_id = NULL;
++
++  session_manager = meta_context_get_session_manager (test_context);
++  g_signal_connect (session_manager, "session-instantiated",
++                    G_CALLBACK (on_session_instantiated), &session_id);
++
++  wayland_test_client1 =
++    meta_wayland_test_client_new (test_context, "xdg-session-management-restore");
++
++  wait_for_sync_point (0);
++  wait_for_paint (stage);
++
++  g_signal_handlers_disconnect_by_func (session_manager,
++                                        on_session_instantiated,
++                                        &session_id);
++  g_assert_nonnull (session_id);
++
++  window1 = find_client_window ("toplevel1");
++  g_assert_nonnull (window1);
++
++  meta_window_move_resize_frame (window1, FALSE, 123, 234, 200, 200);
++  wait_for_paint (stage);
++
++  wayland_test_client2 =
++    meta_wayland_test_client_new_with_args (test_context,
++                                            "xdg-session-management-restore",
++                                            session_id,
++                                            NULL);
++
++  wait_for_sync_point (0);
++
++  window2 = find_other_client_window ("toplevel1", window1);
++  g_assert_nonnull (window2);
++
++  frame_rect = meta_window_config_get_rect (window2->config);
++  g_assert_cmpint (frame_rect.x, ==, 123);
++  g_assert_cmpint (frame_rect.y, ==, 234);
++  g_assert_cmpint (frame_rect.width, ==, 200);
++  g_assert_cmpint (frame_rect.height, ==, 200);
++
++  meta_wayland_test_driver_emit_sync_event (test_driver, 0);
++  meta_wayland_test_client_finish (wayland_test_client1);
++  meta_wayland_test_client_finish (wayland_test_client2);
++}
++
+ static void
+ toplevel_sessions_restore_fullscreen (void)
+ {
+@@ -2430,6 +2510,8 @@ init_tests (void)
+                    toplevel_sessions_restore);
+   g_test_add_func ("/wayland/toplevel/sessions/restore-session-destroyed",
+                    toplevel_sessions_restore_session_destroyed);
++  g_test_add_func ("/wayland/toplevel/sessions/restore-changed",
++                   toplevel_sessions_restore_changed);
+ #ifdef MUTTER_PRIVILEGED_TEST
+   (void)(toplevel_sessions_restore_maximized);
+   (void)(toplevel_sessions_restore_tiled);
+diff --git a/src/wayland/meta-wayland-xdg-session.c b/src/wayland/meta-wayland-xdg-session.c
+index 43be798..28f919e 100644
+--- a/src/wayland/meta-wayland-xdg-session.c
++++ b/src/wayland/meta-wayland-xdg-session.c
+@@ -22,6 +22,7 @@
+ 
+ #include <glib-object.h>
+ 
++#include "core/window-private.h"
+ #include "wayland/meta-wayland-xdg-session-state.h"
+ #include "wayland/meta-wayland-xdg-shell.h"
+ 
+@@ -70,6 +71,8 @@ G_DEFINE_FINAL_TYPE (MetaWaylandXdgSession,
+ 
+ static void on_window_unmanaging (MetaWindow                    *window,
+                                   MetaWaylandXdgToplevelSession *toplevel_session);
++static void disconnect_window (MetaWaylandXdgToplevelSession *toplevel_session,
++                               MetaWindow                    *window);
+ 
+ static MetaWaylandXdgToplevelSession *
+ meta_wayland_xdg_toplevel_session_ref (MetaWaylandXdgToplevelSession *toplevel_session)
+@@ -90,11 +93,7 @@ meta_wayland_xdg_toplevel_session_unref (MetaWaylandXdgToplevelSession *toplevel
+         window = meta_wayland_surface_get_toplevel_window (surface);
+ 
+       if (window)
+-        {
+-          g_signal_handlers_disconnect_by_func (window,
+-                                                on_window_unmanaging,
+-                                                toplevel_session);
+-        }
++        disconnect_window (toplevel_session, window);
+ 
+       g_free (toplevel_session->name);
+       g_free (toplevel_session);
+@@ -371,9 +370,82 @@ on_window_unmanaging (MetaWindow                    *window,
+                      xdg_toplevel, toplevel_session->name, window);
+     }
+ 
++  /* Without the surface the window cannot be found again to disconnect from it later */
++  disconnect_window (toplevel_session, window);
+   toplevel_session->surface = NULL;
+ }
+ 
++/* The protocol has the state of a toplevel updated whenever it changes, so that it is current also when the session
++ * ends without its windows being unmanaged, as when the compositor crashes or the machine loses power. The session
++ * manager writes the session file a few seconds after the first change, so a burst of changes, such as an
++ * interactive move, costs one write.
++ */
++static void
++on_window_changed (MetaWindow                    *window,
++                   MetaWaylandXdgToplevelSession *toplevel_session)
++{
++  MetaWaylandXdgSession *session = toplevel_session->session;
++
++  if (!session || session->removed || !toplevel_session->surface)
++    return;
++
++  /* A toplevel removed with remove_toplevel is no longer part of the session, and saving it would store it again */
++  if (g_hash_table_lookup (session->toplevels, toplevel_session->name) != toplevel_session)
++    return;
++
++  /* A window not placed yet, or shown on all workspaces, has no workspace whose index could be stored */
++  if (!window->workspace)
++    return;
++
++  g_signal_emit (session, signals[SAVE_TOPLEVEL], 0,
++                 META_WAYLAND_XDG_TOPLEVEL (toplevel_session->surface->role),
++                 toplevel_session->name, window);
++}
++
++static void
++on_window_notify (MetaWindow                    *window,
++                  GParamSpec                    *pspec,
++                  MetaWaylandXdgToplevelSession *toplevel_session)
++{
++  on_window_changed (window, toplevel_session);
++}
++
++static void
++connect_window (MetaWaylandXdgToplevelSession *toplevel_session,
++                MetaWindow                    *window)
++{
++  g_signal_connect (window, "unmanaging",
++                    G_CALLBACK (on_window_unmanaging), toplevel_session);
++
++  /* Everything meta_session_state_save_window() stores: the frame rectangle, the monitor which follows from it, the
++   * maximized, tiled and fullscreen state, whether the window is minimized, and its workspace. Tiling changes the
++   * rectangle, so it is covered by the first two.
++   */
++  g_signal_connect (window, "position-changed",
++                    G_CALLBACK (on_window_changed), toplevel_session);
++  g_signal_connect (window, "size-changed",
++                    G_CALLBACK (on_window_changed), toplevel_session);
++  g_signal_connect (window, "workspace-changed",
++                    G_CALLBACK (on_window_changed), toplevel_session);
++  g_signal_connect (window, "notify::maximized-horizontally",
++                    G_CALLBACK (on_window_notify), toplevel_session);
++  g_signal_connect (window, "notify::maximized-vertically",
++                    G_CALLBACK (on_window_notify), toplevel_session);
++  g_signal_connect (window, "notify::fullscreen",
++                    G_CALLBACK (on_window_notify), toplevel_session);
++  g_signal_connect (window, "notify::minimized",
++                    G_CALLBACK (on_window_notify), toplevel_session);
++}
++
++static void
++disconnect_window (MetaWaylandXdgToplevelSession *toplevel_session,
++                   MetaWindow                    *window)
++{
++  g_signal_handlers_disconnect_by_func (window, on_window_unmanaging, toplevel_session);
++  g_signal_handlers_disconnect_by_func (window, on_window_changed, toplevel_session);
++  g_signal_handlers_disconnect_by_func (window, on_window_notify, toplevel_session);
++}
++
+ static void
+ xdg_session_add_toplevel (struct wl_client   *wl_client,
+                           struct wl_resource *resource,
+@@ -417,10 +489,7 @@ xdg_session_add_toplevel (struct wl_client   *wl_client,
+ 
+   window = meta_wayland_surface_get_toplevel_window (surface);
+   if (window)
+-    {
+-      g_signal_connect (window, "unmanaging",
+-                        G_CALLBACK (on_window_unmanaging), toplevel_session);
+-    }
++    connect_window (toplevel_session, window);
+ }
+ 
+ static void
+@@ -463,17 +532,17 @@ xdg_session_restore_toplevel (struct wl_client   *wl_client,
+                                            id);
+   g_hash_table_insert (session->toplevels, g_strdup (name), toplevel_session);
+ 
+-  window = meta_wayland_surface_get_toplevel_window (surface);
+-  if (window)
+-    {
+-      g_signal_connect (window, "unmanaging",
+-                        G_CALLBACK (on_window_unmanaging), toplevel_session);
+-    }
+-
+   g_signal_emit (session,
+                  signals[RESTORE_TOPLEVEL], 0,
+                  xdg_toplevel, name, &restored);
+ 
++  /* Connected only after the restore, which changes the window step by step from the state stored for it, and saving
++   * the window in between would replace that state while it is being restored.
++   */
++  window = meta_wayland_surface_get_toplevel_window (surface);
++  if (window)
++    connect_window (toplevel_session, window);
++
+   if (restored)
+     meta_wayland_xdg_toplevel_session_emit_restored (toplevel_session);
+ }

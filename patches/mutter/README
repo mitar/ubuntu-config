@@ -122,3 +122,24 @@ save-toplevels-on-session-destroy.patch
     (restore-session-destroyed), which fails without the change. The tests run during the build.
     The fix is proposed upstream as mutter merge request 5453. Drop the patch once mutter saves a
     session's toplevels when the session is destroyed.
+
+save-toplevels-on-change.patch
+    Mutter stores where a window of a session is only when the window is unmanaged, and with the
+    patch above when the session is destroyed, while the protocol says the compositor updates the
+    state of a toplevel whenever it changes. When GNOME Shell crashes, or the machine resets or
+    loses power, no window is unmanaged, so every window comes back where it was the last time it
+    was stored, possibly days earlier, or opens unplaced. With this patch mutter stores the state
+    of a toplevel whenever its window moves, changes its size, its maximized, fullscreen or
+    minimized state, or its workspace, and writes session.gvdb 3 seconds after the first change,
+    as it did for a window unmanaged. Windows without a workspace, not placed yet or shown on all
+    workspaces, are left to the store at unmanage, as is a toplevel the client removed. A restored
+    toplevel is stored on change only once its stored state has been applied, which would
+    otherwise be replaced while it is read.
+
+    The test restore-changed of src/tests/wayland-unit-tests.c has a second client restore the
+    session while the first one still has its moved window mapped, and fails without the change,
+    with the window placed anew. The tests run during the build. With Ptyxis it is also tested by
+    patches/ptyxis/tests/run-ptyxis-session.sh, which ends mutter with SIGKILL and starts it
+    again, and whose second run restores no window without this patch. Reported upstream as
+    mutter issue 5181, no merge request yet. Drop the patch once mutter stores a toplevel's state
+    when it changes.

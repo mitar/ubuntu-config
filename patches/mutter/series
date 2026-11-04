@@ -3,3 +3,4 @@ xdg-session-management.patch
 xx-session-management.patch
 xdg-toplevel-session-rename.patch
 save-toplevels-on-session-destroy.patch
+save-toplevels-on-change.patch

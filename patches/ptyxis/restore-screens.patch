@@ -1,0 +1,625 @@
+Description: Show the screen each tab had when the session ended, dimmed, when it is restored.
+ After a crash, a reset of the machine or the end of the desktop session, Ptyxis restores its
+ tabs in the directories they had, with new shells, which show nothing of what the tab was used
+ for. The session now also saves the text of the screen of each tab, its last rows without
+ colors, and a restored tab shows it in the dim style above the prompt of its new shell, so
+ that it is clear what each terminal was doing, as Terminal on macOS does.
+ .
+ The screens are kept in $XDG_STATE_HOME/org.gnome.Ptyxis/screens.gvariant, readable only by
+ the user, apart from the session state in the config directory, and linked to its tabs by an
+ ID. They are saved with the session, which saves 3 seconds after a change, now also of what a
+ terminal shows. Closing the last window saves its tabs without the screens and removes the
+ screens file, so the screens are shown only after a session which ended with windows open. A
+ terminal scrolled back shows earlier rows, so its screen is kept as it was the last time it
+ was scrolled to the end.
+ .
+ The dim style is SGR 2, which VTE draws with the foreground color scaled to 2/3. That greys out
+ light text on a dark background but darkens dark text on a light one.
+Author: Mitar
+Forwarded: no
+Last-Update: 2026-11-04
+diff --git a/src/ptyxis-application.c b/src/ptyxis-application.c
+index ec9de2d..dc71119 100644
+--- a/src/ptyxis-application.c
++++ b/src/ptyxis-application.c
+@@ -66,6 +66,18 @@ struct _PtyxisApplication
+   GBytes              *pending_session;
+   guint                save_session_source;
+ 
++  /* The screens of the tabs saved with the session state, until the session
++   * is restored, and as for the session state, the ones last written and the
++   * newest requested while a write was in progress. A screens file which is
++   * to be removed is NULL.
++   */
++  GVariant            *screens;
++  GBytes              *written_screens;
++  GBytes              *pending_screens;
++
++  guint                writing_screens : 1;
++  guint                has_pending_screens : 1;
++  guint                screens_removed : 1;
+   guint                writing_session : 1;
+   guint                has_restored_session : 1;
+   guint                overlay_scrollbars : 1;
+@@ -178,6 +190,15 @@ get_session_file (void)
+                                     NULL);
+ }
+ 
++static inline GFile *
++get_screens_file (void)
++{
++  return g_file_new_build_filename (g_get_user_state_dir (),
++                                    APP_ID,
++                                    "screens.gvariant",
++                                    NULL);
++}
++
+ static gboolean
+ is_standalone (PtyxisApplication *self)
+ {
+@@ -187,6 +208,8 @@ is_standalone (PtyxisApplication *self)
+ static gboolean
+ ptyxis_application_restore (PtyxisApplication *self)
+ {
++  gboolean ret;
++
+   g_assert (PTYXIS_IS_APPLICATION (self));
+ 
+   if (self->has_restored_session)
+@@ -197,7 +220,11 @@ ptyxis_application_restore (PtyxisApplication *self)
+ 
+   self->has_restored_session = TRUE;
+ 
+-  return ptyxis_session_restore (self, self->session);
++  ret = ptyxis_session_restore (self, self->session, self->screens);
++
++  g_clear_pointer (&self->screens, g_variant_unref);
++
++  return ret;
+ }
+ 
+ static void
+@@ -1013,6 +1040,19 @@ ptyxis_application_startup (GApplication *application)
+         self->session = g_variant_take_ref (g_steal_pointer (&variant));
+     }
+ 
++  /* The screens are saved apart from the session state and only while the
++   * session runs, so they are there after it ended without its last window
++   * being closed, for example by a crash.
++   */
++  if (self->session != NULL)
++    {
++      g_autoptr(GFile) screens_file = get_screens_file ();
++      g_autoptr(GBytes) screens_bytes = g_file_load_bytes (screens_file, NULL, NULL, NULL);
++
++      if (screens_bytes != NULL)
++        self->screens = g_variant_take_ref (g_variant_new_from_bytes (G_VARIANT_TYPE ("a{ss}"), screens_bytes, FALSE));
++    }
++
+   G_APPLICATION_CLASS (ptyxis_application_parent_class)->startup (application);
+ 
+   g_signal_connect (self,
+@@ -1147,6 +1187,9 @@ ptyxis_application_finalize (GObject *object)
+   g_clear_handle_id (&self->save_session_source, g_source_remove);
+   g_clear_pointer (&self->written_session, g_bytes_unref);
+   g_clear_pointer (&self->pending_session, g_bytes_unref);
++  g_clear_pointer (&self->screens, g_variant_unref);
++  g_clear_pointer (&self->written_screens, g_bytes_unref);
++  g_clear_pointer (&self->pending_screens, g_bytes_unref);
+ 
+   g_clear_pointer (&self->next_title_prefix, g_free);
+   g_clear_pointer (&self->exited, g_hash_table_unref);
+@@ -2324,19 +2367,148 @@ ptyxis_application_write_session (PtyxisApplication *self,
+                                        g_object_ref (self));
+ }
+ 
++static void ptyxis_application_write_screens (PtyxisApplication *self,
++                                              GBytes            *bytes);
++
++static void
++ptyxis_application_write_screens_cb (GObject      *object,
++                                     GAsyncResult *result,
++                                     gpointer      user_data)
++{
++  GFile *file = (GFile *)object;
++  g_autoptr(PtyxisApplication) self = user_data;
++  g_autoptr(GError) error = NULL;
++  gboolean success;
++
++  g_assert (G_IS_FILE (file));
++  g_assert (G_IS_ASYNC_RESULT (result));
++  g_assert (PTYXIS_IS_APPLICATION (self));
++
++  self->writing_screens = FALSE;
++
++  if (self->written_screens != NULL)
++    success = g_file_replace_contents_finish (file, result, NULL, &error);
++  else
++    success = g_file_delete_finish (file, result, &error) ||
++              g_error_matches (error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND);
++
++  if (!success)
++    {
++      g_warning ("Failed to save the screens of the session: %s", error->message);
++      g_clear_pointer (&self->written_screens, g_bytes_unref);
++      self->screens_removed = FALSE;
++    }
++
++  if (self->has_pending_screens)
++    {
++      g_autoptr(GBytes) pending = g_steal_pointer (&self->pending_screens);
++
++      self->has_pending_screens = FALSE;
++      ptyxis_application_write_screens (self, pending);
++    }
++
++  g_application_release (G_APPLICATION (self));
++}
++
++/* Writes the screens of the tabs, or removes the screens file when @bytes is
++ * NULL.
++ */
++static void
++ptyxis_application_write_screens (PtyxisApplication *self,
++                                  GBytes            *bytes)
++{
++  g_autoptr(GFile) file = NULL;
++
++  g_assert (PTYXIS_IS_APPLICATION (self));
++
++  if (self->writing_screens)
++    {
++      g_clear_pointer (&self->pending_screens, g_bytes_unref);
++      self->pending_screens = bytes != NULL ? g_bytes_ref (bytes) : NULL;
++      self->has_pending_screens = TRUE;
++      return;
++    }
++
++  if (bytes == NULL ? self->screens_removed
++                    : (self->written_screens != NULL && g_bytes_equal (self->written_screens, bytes)))
++    return;
++
++  g_clear_pointer (&self->written_screens, g_bytes_unref);
++  self->written_screens = bytes != NULL ? g_bytes_ref (bytes) : NULL;
++  self->screens_removed = bytes == NULL;
++  self->writing_screens = TRUE;
++
++  file = get_screens_file ();
++
++  g_application_hold (G_APPLICATION (self));
++
++  if (bytes != NULL)
++    {
++      g_autoptr(GFile) directory = g_file_get_parent (file);
++
++      /* Private, as terminals show passwords and other secrets */
++      g_file_make_directory_with_parents (directory, NULL, NULL);
++      g_file_replace_contents_bytes_async (file,
++                                           bytes,
++                                           NULL,
++                                           FALSE,
++                                           G_FILE_CREATE_REPLACE_DESTINATION | G_FILE_CREATE_PRIVATE,
++                                           NULL,
++                                           ptyxis_application_write_screens_cb,
++                                           g_object_ref (self));
++    }
++  else
++    {
++      g_file_delete_async (file,
++                           G_PRIORITY_DEFAULT,
++                           NULL,
++                           ptyxis_application_write_screens_cb,
++                           g_object_ref (self));
++    }
++}
++
++/**
++ * ptyxis_application_save_session:
++ * @self: a #PtyxisApplication
++ * @keep_screens: whether to save what the terminals show
++ *
++ * Saves the session now. With @keep_screens, the screen of each tab is saved
++ * as well, and shown again when the session is restored. Without it, saved
++ * screens are removed, which is meant for closing the last window: the next
++ * start restores its tabs without the screens they had.
++ */
+ void
+-ptyxis_application_save_session (PtyxisApplication *self)
++ptyxis_application_save_session (PtyxisApplication *self,
++                                 gboolean           keep_screens)
+ {
+   g_autoptr(GVariant) state = NULL;
++  g_autoptr(GVariant) screens = NULL;
+   g_autoptr(GBytes) bytes = NULL;
+ 
+   g_return_if_fail (PTYXIS_IS_APPLICATION (self));
+ 
+   g_clear_handle_id (&self->save_session_source, g_source_remove);
+ 
+-  if ((state = ptyxis_session_save (self)) &&
++  if ((state = ptyxis_session_save (self, keep_screens ? &screens : NULL)) &&
+       (bytes = g_variant_get_data_as_bytes (state)))
+     ptyxis_application_write_session (self, bytes);
++
++  /* A standalone instance runs next to the primary one, whose screens these
++   * are.
++   */
++  if (is_standalone (self))
++    return;
++
++  if (screens != NULL)
++    {
++      g_autoptr(GBytes) screens_bytes = g_variant_get_data_as_bytes (screens);
++
++      ptyxis_application_write_screens (self, screens_bytes);
++    }
++  else
++    {
++      ptyxis_application_write_screens (self, NULL);
++    }
+ }
+ 
+ static gboolean
+@@ -2378,7 +2550,7 @@ ptyxis_application_save_session_timeout_cb (gpointer user_data)
+   if (!has_session_window (self))
+     return;
+ 
+-  ptyxis_application_save_session (self);
++  ptyxis_application_save_session (self, TRUE);
+ }
+ 
+ /**
+diff --git a/src/ptyxis-application.h b/src/ptyxis-application.h
+index 87dd77c..2675463 100644
+--- a/src/ptyxis-application.h
++++ b/src/ptyxis-application.h
+@@ -87,7 +87,8 @@ PtyxisIpcContainer *ptyxis_application_discover_current_container (PtyxisApplica
+ PtyxisIpcContainer *ptyxis_application_find_container_by_name     (PtyxisApplication    *self,
+                                                                    const char           *runtime,
+                                                                    const char           *name);
+-void                ptyxis_application_save_session               (PtyxisApplication    *self);
++void                ptyxis_application_save_session               (PtyxisApplication    *self,
++                                                                   gboolean              keep_screens);
+ void                ptyxis_application_queue_save_session         (PtyxisApplication    *self);
+ 
+ G_END_DECLS
+diff --git a/src/ptyxis-session.c b/src/ptyxis-session.c
+index d9b5a4a..2252dcd 100644
+--- a/src/ptyxis-session.c
++++ b/src/ptyxis-session.c
+@@ -27,15 +27,29 @@
+ #include "ptyxis-util.h"
+ #include "ptyxis-window.h"
+ 
++/**
++ * ptyxis_session_save:
++ * @app: a #PtyxisApplication
++ * @screens: (out) (optional): a location for the screens of the tabs saved
++ *
++ * Saves the windows and tabs of the session. With @screens, the text each
++ * tab's terminal shows is saved as well, as a dictionary from the screen ID
++ * saved with the tab to the text, kept apart because it is private.
++ *
++ * Returns: (transfer full): the session state
++ */
+ GVariant *
+-ptyxis_session_save (PtyxisApplication *app)
++ptyxis_session_save (PtyxisApplication  *app,
++                     GVariant          **screens)
+ {
+   PtyxisSettings *settings;
+   GVariantBuilder builder;
++  GVariantBuilder screens_builder;
+   gboolean restore_session;
+ 
+   g_return_val_if_fail (PTYXIS_IS_APPLICATION (app), NULL);
+ 
++  g_variant_builder_init (&screens_builder, G_VARIANT_TYPE ("a{ss}"));
+   g_variant_builder_init (&builder, G_VARIANT_TYPE ("a{sv}"));
+   g_variant_builder_add_parsed (&builder, "{'version', <%u>}", 1);
+   g_variant_builder_open (&builder, G_VARIANT_TYPE ("{sv}"));
+@@ -141,6 +155,20 @@ ptyxis_session_save (PtyxisApplication *app)
+                   if (container_id != NULL &&
+                       g_strcmp0 (default_container, container_id) != 0)
+                     g_variant_builder_add_parsed (&builder, "{'container', <%s>}", container_id);
++
++                  if (screens != NULL)
++                    {
++                      g_autofree char *screen = ptyxis_tab_dup_screen_text (tab);
++
++                      if (screen != NULL)
++                        {
++                          const char *screen_id = ptyxis_tab_get_uuid (tab);
++
++                          g_variant_builder_add_parsed (&builder, "{'screen-id', <%s>}", screen_id);
++                          g_variant_builder_add (&screens_builder, "{ss}", screen_id, screen);
++                        }
++                    }
++
+                   g_variant_builder_close (&builder);
+                 }
+             }
+@@ -156,6 +184,11 @@ ptyxis_session_save (PtyxisApplication *app)
+   g_variant_builder_close (&builder);
+   g_variant_builder_close (&builder);
+ 
++  if (screens != NULL)
++    *screens = g_variant_take_ref (g_variant_builder_end (&screens_builder));
++  else
++    g_variant_builder_clear (&screens_builder);
++
+   return g_variant_take_ref (g_variant_builder_end (&builder));
+ }
+ 
+@@ -187,9 +220,21 @@ take_restored_window (PtyxisApplication *app,
+   return NULL;
+ }
+ 
++/**
++ * ptyxis_session_restore:
++ * @app: a #PtyxisApplication
++ * @state: the session state saved by ptyxis_session_save()
++ * @screens: (nullable): the screens saved with it, if any
++ *
++ * Restores the windows and tabs of the session. A tab with a screen in
++ * @screens shows it, dimmed, above the output of its new process.
++ *
++ * Returns: whether a window was restored
++ */
+ gboolean
+ ptyxis_session_restore (PtyxisApplication *app,
+-                        GVariant          *state)
++                        GVariant          *state,
++                        GVariant          *screens)
+ {
+   g_autoptr(GVariant) windows = NULL;
+   PtyxisSettings *settings;
+@@ -203,6 +248,7 @@ ptyxis_session_restore (PtyxisApplication *app,
+   g_return_val_if_fail (PTYXIS_IS_APPLICATION (app), FALSE);
+   g_return_val_if_fail (state != NULL, FALSE);
+   g_return_val_if_fail (g_variant_is_of_type (state, G_VARIANT_TYPE ("a{sv}")), FALSE);
++  g_return_val_if_fail (screens == NULL || g_variant_is_of_type (screens, G_VARIANT_TYPE ("a{ss}")), FALSE);
+ 
+   if (!g_variant_lookup (state, "version", "u", &version))
+     return FALSE;
+@@ -245,6 +291,8 @@ ptyxis_session_restore (PtyxisApplication *app,
+           const char *container;
+           const char *cwd;
+           const char *window_title;
++          const char *screen_id;
++          const char *screen;
+           PtyxisTab *the_tab;
+           guint32 zoom;
+           gboolean is_active;
+@@ -274,6 +322,11 @@ ptyxis_session_restore (PtyxisApplication *app,
+           if (!g_variant_lookup (tab, "window-title", "&s", &window_title))
+             window_title = NULL;
+ 
++          if (screens == NULL ||
++              !g_variant_lookup (tab, "screen-id", "&s", &screen_id) ||
++              !g_variant_lookup (screens, screen_id, "&s", &screen))
++            screen = NULL;
++
+           if (!g_variant_lookup (tab, "active", "b", &is_active))
+             is_active = FALSE;
+ 
+@@ -320,6 +373,10 @@ ptyxis_session_restore (PtyxisApplication *app,
+           if (!maximized)
+             vte_terminal_set_size (VTE_TERMINAL (terminal), columns, rows);
+ 
++          /* The terminal spawns its process once it is shown */
++          if (screen != NULL)
++            ptyxis_tab_show_previous_screen (the_tab, screen);
++
+           if (zoom != PTYXIS_ZOOM_LEVEL_DEFAULT)
+             ptyxis_tab_set_zoom (the_tab, zoom);
+ 
+diff --git a/src/ptyxis-session.h b/src/ptyxis-session.h
+index b2aa382..dca34d3 100644
+--- a/src/ptyxis-session.h
++++ b/src/ptyxis-session.h
+@@ -25,8 +25,10 @@
+ 
+ G_BEGIN_DECLS
+ 
+-GVariant *ptyxis_session_save    (PtyxisApplication *app);
+-gboolean  ptyxis_session_restore (PtyxisApplication *app,
+-                                  GVariant          *state);
++GVariant *ptyxis_session_save    (PtyxisApplication  *app,
++                                  GVariant          **screens);
++gboolean  ptyxis_session_restore (PtyxisApplication  *app,
++                                  GVariant           *state,
++                                  GVariant           *screens);
+ 
+ G_END_DECLS
+diff --git a/src/ptyxis-tab.c b/src/ptyxis-tab.c
+index 48cd480..89d7e8d 100644
+--- a/src/ptyxis-tab.c
++++ b/src/ptyxis-tab.c
+@@ -64,6 +64,7 @@ struct _PtyxisTab
+   PtyxisIpcContainer      *container_at_creation;
+   char                   **command;
+   char                    *initial_title;
++  char                    *screen_text;
+   GdkTexture              *cached_texture;
+   AdwBanner               *banner;
+   GtkScrolledWindow       *scrolled_window;
+@@ -644,6 +645,14 @@ ptyxis_tab_inspect_action (GtkWidget  *widget,
+   gtk_window_present (GTK_WINDOW (inspector));
+ }
+ 
++static void
++ptyxis_tab_contents_changed_cb (PtyxisTab *self)
++{
++  g_assert (PTYXIS_IS_TAB (self));
++
++  ptyxis_application_queue_save_session (PTYXIS_APPLICATION_DEFAULT);
++}
++
+ static void
+ ptyxis_tab_map (GtkWidget *widget)
+ {
+@@ -1224,6 +1233,7 @@ ptyxis_tab_finalize (GObject *object)
+   PtyxisTab *self = (PtyxisTab *)object;
+ 
+   g_clear_pointer (&self->uuid, g_free);
++  g_clear_pointer (&self->screen_text, g_free);
+ 
+   G_OBJECT_CLASS (ptyxis_tab_parent_class)->finalize (object);
+ }
+@@ -1539,6 +1549,96 @@ ptyxis_tab_init (PtyxisTab *self)
+                            G_CALLBACK (ptyxis_tab_invalidate_thumbnail),
+                            self,
+                            G_CONNECT_SWAPPED);
++
++  /* The session saves what the terminal shows */
++  g_signal_connect_object (self->terminal,
++                           "contents-changed",
++                           G_CALLBACK (ptyxis_tab_contents_changed_cb),
++                           self,
++                           G_CONNECT_SWAPPED);
++}
++
++/**
++ * ptyxis_tab_dup_screen_text:
++ * @self: a #PtyxisTab
++ *
++ * Gets the text of the screen of the terminal, which is its last rows, as plain
++ * text without colors and without trailing whitespace. A terminal scrolled back
++ * shows earlier rows, so the screen is then the one it had the last time it was
++ * scrolled to the end.
++ *
++ * Returns: (transfer full) (nullable): the text of the screen, or %NULL when
++ *   it is empty
++ */
++char *
++ptyxis_tab_dup_screen_text (PtyxisTab *self)
++{
++  GtkAdjustment *vadjustment;
++
++  g_return_val_if_fail (PTYXIS_IS_TAB (self), NULL);
++
++  /* vte_terminal_get_text_format() returns the rows shown, which are the
++   * screen while the terminal is scrolled to the end.
++   */
++  vadjustment = gtk_scrollable_get_vadjustment (GTK_SCROLLABLE (self->terminal));
++
++  if (vadjustment == NULL ||
++      gtk_adjustment_get_value (vadjustment) + gtk_adjustment_get_page_size (vadjustment) >=
++      gtk_adjustment_get_upper (vadjustment) - .5)
++    {
++      g_autofree char *text = vte_terminal_get_text_format (VTE_TERMINAL (self->terminal), VTE_FORMAT_TEXT);
++
++      if (text != NULL)
++        g_set_str (&self->screen_text, g_strchomp (text));
++    }
++
++  if (ptyxis_str_empty0 (self->screen_text))
++    return NULL;
++
++  return g_strdup (self->screen_text);
++}
++
++/**
++ * ptyxis_tab_show_previous_screen:
++ * @self: a #PtyxisTab
++ * @text: the screen text saved by ptyxis_tab_dup_screen_text()
++ *
++ * Shows the screen the terminal of the tab had in an earlier run, dimmed, so
++ * that the output of the new run starts below it and stands apart. Call it
++ * before the terminal spawns its process.
++ */
++void
++ptyxis_tab_show_previous_screen (PtyxisTab  *self,
++                                 const char *text)
++{
++  g_autofree char *valid = NULL;
++  g_autoptr(GString) str = NULL;
++
++  g_return_if_fail (PTYXIS_IS_TAB (self));
++  g_return_if_fail (text != NULL);
++
++  valid = g_utf8_make_valid (text, -1);
++  str = g_string_new ("\033[2m");
++
++  for (const char *iter = valid; *iter; iter = g_utf8_next_char (iter))
++    {
++      gunichar ch = g_utf8_get_char (iter);
++
++      /* Control characters would be acted on instead of shown, and the text
++       * saved holds none but line ends, which are fed as a carriage return and
++       * a line feed.
++       */
++      if (ch == '\n')
++        g_string_append (str, "\r\n");
++      else if (ch < 0x20 || (ch >= 0x7f && ch < 0xa0))
++        g_string_append_c (str, ' ');
++      else
++        g_string_append_unichar (str, ch);
++    }
++
++  g_string_append (str, "\033[0m\r\n");
++
++  vte_terminal_feed (VTE_TERMINAL (self->terminal), str->str, str->len);
+ }
+ 
+ PtyxisTab *
+diff --git a/src/ptyxis-tab.h b/src/ptyxis-tab.h
+index 06c061c..fc97319 100644
+--- a/src/ptyxis-tab.h
++++ b/src/ptyxis-tab.h
+@@ -128,6 +128,9 @@ gboolean            ptyxis_tab_has_foreground_process             (PtyxisTab
+                                                                    GPid                 *pid,
+                                                                    char                **cmdline);
+ const char         *ptyxis_tab_get_initial_title                  (PtyxisTab            *self);
++char               *ptyxis_tab_dup_screen_text                    (PtyxisTab            *self);
++void                ptyxis_tab_show_previous_screen               (PtyxisTab            *self,
++                                                                   const char           *text);
+ void                ptyxis_tab_set_initial_title                  (PtyxisTab            *self,
+                                                                    const char           *initial_title);
+ void                ptyxis_tab_set_initial_working_directory_uri  (PtyxisTab            *self,
+diff --git a/src/ptyxis-window.c b/src/ptyxis-window.c
+index 8844575..1a8a70a 100644
+--- a/src/ptyxis-window.c
++++ b/src/ptyxis-window.c
+@@ -399,7 +399,7 @@ update_visible_and_maybe_close (PtyxisWindow *self)
+   if (n_pages == 0 && !adw_tab_view_get_is_transferring_page (self->tab_view))
+     {
+       if (!self->in_close_request && !self->single_terminal_mode)
+-        ptyxis_application_save_session (PTYXIS_APPLICATION_DEFAULT);
++        ptyxis_application_save_session (PTYXIS_APPLICATION_DEFAULT, TRUE);
+       gtk_window_destroy (GTK_WINDOW (self));
+       return;
+     }
+@@ -1385,7 +1385,16 @@ ptyxis_window_close_request_cb (GObject      *object,
+   g_assert (PTYXIS_IS_WINDOW (self));
+ 
+   if (_ptyxis_close_dialog_run_finish (result, &error))
+-    gtk_window_destroy (GTK_WINDOW (self));
++    {
++      gtk_window_destroy (GTK_WINDOW (self));
++    }
++  else
++    {
++      /* Closing the last window removed the saved screens, which a window kept
++       * open saves again.
++       */
++      ptyxis_application_queue_save_session (PTYXIS_APPLICATION_DEFAULT);
++    }
+ 
+   self->in_close_request = FALSE;
+ }
+@@ -1423,8 +1432,12 @@ ptyxis_window_close_request (GtkWindow *window)
+ 
+   ptyxis_window_save_size (self);
+ 
++  /* The tabs of the last window closed are restored at the next start, but
++   * without their screens, which are restored only when the session ended
++   * with the windows still open.
++   */
+   if (!self->single_terminal_mode && is_last_window (self))
+-    ptyxis_application_save_session (PTYXIS_APPLICATION_DEFAULT);
++    ptyxis_application_save_session (PTYXIS_APPLICATION_DEFAULT, FALSE);
+ 
+   /* Short-circuit if user dismissed guard rails */
+   settings = ptyxis_application_get_settings (PTYXIS_APPLICATION_DEFAULT);
