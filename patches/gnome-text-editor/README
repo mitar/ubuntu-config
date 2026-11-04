@@ -36,6 +36,14 @@ restore-window-placement.patch
     with _editor_session_create_window_no_draft, and that editor_application_activate in src/editor-application.c
     still presents an existing window instead of restoring the session.
 
+hide-restored-banners.patch
+    Text Editor shows a "Document Restored" banner above every restored document which was never saved to a file,
+    and a "Draft Changes Restored" banner above every restored document with unsaved changes to a file. With
+    restore-window-placement.patch, documents return with their unsaved content and their windows at every start,
+    so a document kept unsaved is expected, and neither banner is shown any more. The window title still shows
+    whether a document is unsaved or modified. The patch removes the branch for restored documents from
+    editor_info_bar_update in src/editor-info-bar.c. Drop it once Text Editor no longer shows these banners.
+
 Check by hand after an upgrade, in a new login, so that the patched mutter runs, and with no Text Editor of the
 previous version still running in the background:
 

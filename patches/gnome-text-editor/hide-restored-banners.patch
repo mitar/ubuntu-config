@@ -1,0 +1,46 @@
+Description: Do not show a banner on restored documents.
+ Text Editor shows "Document Restored" above every restored document which was never saved to a file, and "Draft
+ Changes Restored" above every restored document with unsaved changes to a file. With restore-window-placement.patch,
+ documents return with their unsaved content and their windows at every start, so keeping a document unsaved is a
+ normal way to use Text Editor, and the banners mark every such window as needing attention. The window title still
+ shows whether a document is unsaved or modified.
+Author: Mitar
+Forwarded: not-needed
+Last-Update: 2026-11-04
+diff --git a/src/editor-info-bar.c b/src/editor-info-bar.c
+index 6b259e2..5604d29 100644
+--- a/src/editor-info-bar.c
++++ b/src/editor-info-bar.c
+@@ -115,32 +115,6 @@ editor_info_bar_update (EditorInfoBar *self)
+       gtk_widget_set_visible (GTK_WIDGET (self->save), FALSE);
+       gtk_info_bar_set_revealed (self->discard_infobar, TRUE);
+     }
+-  else if (_editor_document_get_was_restored (self->document))
+-    {
+-      if (editor_document_get_file (self->document) == NULL)
+-        {
+-          gtk_button_set_label (self->save, _("Save _As…"));
+-          gtk_actionable_set_action_name (GTK_ACTIONABLE (self->save), "page.save-as");
+-          gtk_label_set_label (self->title, _("Document Restored"));
+-          gtk_label_set_label (self->subtitle, _("Unsaved document has been restored."));
+-          gtk_widget_set_visible (GTK_WIDGET (self->discard), FALSE);
+-          gtk_widget_set_visible (GTK_WIDGET (self->save), TRUE);
+-        }
+-      else
+-        {
+-          gtk_button_set_label (self->save, _("_Save…"));
+-          gtk_actionable_set_action_name (GTK_ACTIONABLE (self->save), "page.confirm-save");
+-          gtk_button_set_label (self->discard, _("_Discard…"));
+-          gtk_actionable_set_action_target_value (GTK_ACTIONABLE (self->discard), NULL);
+-          gtk_actionable_set_action_name (GTK_ACTIONABLE (self->discard), "page.infobar-discard-changes");
+-          gtk_label_set_label (self->title, _("Draft Changes Restored"));
+-          gtk_label_set_label (self->subtitle, _("Unsaved changes to the document have been restored."));
+-          gtk_widget_set_visible (GTK_WIDGET (self->discard), TRUE);
+-          gtk_widget_set_visible (GTK_WIDGET (self->save), TRUE);
+-        }
+-
+-      gtk_info_bar_set_revealed (self->discard_infobar, TRUE);
+-    }
+   else
+     {
+       gtk_info_bar_set_revealed (self->discard_infobar, FALSE);
