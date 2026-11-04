@@ -433,7 +433,7 @@ index b2aa382..dca34d3 100644
  
  G_END_DECLS
 diff --git a/src/ptyxis-tab.c b/src/ptyxis-tab.c
-index 48cd480..89d7e8d 100644
+index 48cd480..411c846 100644
 --- a/src/ptyxis-tab.c
 +++ b/src/ptyxis-tab.c
 @@ -64,6 +64,7 @@ struct _PtyxisTab
@@ -444,14 +444,16 @@ index 48cd480..89d7e8d 100644
    GdkTexture              *cached_texture;
    AdwBanner               *banner;
    GtkScrolledWindow       *scrolled_window;
-@@ -644,6 +645,14 @@ ptyxis_tab_inspect_action (GtkWidget  *widget,
+@@ -644,6 +645,16 @@ ptyxis_tab_inspect_action (GtkWidget  *widget,
    gtk_window_present (GTK_WINDOW (inspector));
  }
  
 +static void
-+ptyxis_tab_contents_changed_cb (PtyxisTab *self)
++ptyxis_tab_contents_changed_cb (PtyxisTab   *self,
++                                VteTerminal *terminal)
 +{
 +  g_assert (PTYXIS_IS_TAB (self));
++  g_assert (VTE_IS_TERMINAL (terminal));
 +
 +  ptyxis_application_queue_save_session (PTYXIS_APPLICATION_DEFAULT);
 +}
@@ -459,7 +461,7 @@ index 48cd480..89d7e8d 100644
  static void
  ptyxis_tab_map (GtkWidget *widget)
  {
-@@ -1224,6 +1233,7 @@ ptyxis_tab_finalize (GObject *object)
+@@ -1224,6 +1235,7 @@ ptyxis_tab_finalize (GObject *object)
    PtyxisTab *self = (PtyxisTab *)object;
  
    g_clear_pointer (&self->uuid, g_free);
@@ -467,7 +469,7 @@ index 48cd480..89d7e8d 100644
  
    G_OBJECT_CLASS (ptyxis_tab_parent_class)->finalize (object);
  }
-@@ -1539,6 +1549,96 @@ ptyxis_tab_init (PtyxisTab *self)
+@@ -1539,6 +1551,96 @@ ptyxis_tab_init (PtyxisTab *self)
                             G_CALLBACK (ptyxis_tab_invalidate_thumbnail),
                             self,
                             G_CONNECT_SWAPPED);
@@ -579,7 +581,7 @@ index 06c061c..fc97319 100644
                                                                     const char           *initial_title);
  void                ptyxis_tab_set_initial_working_directory_uri  (PtyxisTab            *self,
 diff --git a/src/ptyxis-window.c b/src/ptyxis-window.c
-index 8844575..1a8a70a 100644
+index 5962ba8..ef9a2e9 100644
 --- a/src/ptyxis-window.c
 +++ b/src/ptyxis-window.c
 @@ -399,7 +399,7 @@ update_visible_and_maybe_close (PtyxisWindow *self)
@@ -591,7 +593,7 @@ index 8844575..1a8a70a 100644
        gtk_window_destroy (GTK_WINDOW (self));
        return;
      }
-@@ -1385,7 +1385,16 @@ ptyxis_window_close_request_cb (GObject      *object,
+@@ -1401,7 +1401,16 @@ ptyxis_window_close_request_cb (GObject      *object,
    g_assert (PTYXIS_IS_WINDOW (self));
  
    if (_ptyxis_close_dialog_run_finish (result, &error))
@@ -609,7 +611,7 @@ index 8844575..1a8a70a 100644
  
    self->in_close_request = FALSE;
  }
-@@ -1423,8 +1432,12 @@ ptyxis_window_close_request (GtkWindow *window)
+@@ -1439,8 +1448,12 @@ ptyxis_window_close_request (GtkWindow *window)
  
    ptyxis_window_save_size (self);
  

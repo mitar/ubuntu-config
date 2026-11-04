@@ -266,7 +266,7 @@ index a738beb..d9b5a4a 100644
            the_tab = ptyxis_tab_new (the_profile);
  
 diff --git a/src/ptyxis-window.c b/src/ptyxis-window.c
-index a646563..8844575 100644
+index 66b3fd5..5962ba8 100644
 --- a/src/ptyxis-window.c
 +++ b/src/ptyxis-window.c
 @@ -87,12 +87,22 @@ struct _PtyxisWindow
@@ -292,7 +292,7 @@ index a646563..8844575 100644
    guint                  reset_nonvisible_from_size_allocate : 1;
  };
  
-@@ -1393,7 +1403,7 @@ is_last_window (PtyxisWindow *self)
+@@ -1409,7 +1419,7 @@ is_last_window (PtyxisWindow *self)
          {
            PtyxisWindow *window = PTYXIS_WINDOW (iter->data);
  
@@ -301,7 +301,7 @@ index a646563..8844575 100644
              return FALSE;
          }
      }
-@@ -2001,6 +2011,8 @@ ptyxis_window_finalize (GObject *object)
+@@ -2017,6 +2027,8 @@ ptyxis_window_finalize (GObject *object)
    g_clear_object (&self->profile_bindings);
    g_clear_object (&self->selected_page_signals);
  
@@ -310,7 +310,7 @@ index a646563..8844575 100644
    G_OBJECT_CLASS (ptyxis_window_parent_class)->finalize (object);
  }
  
-@@ -2160,12 +2172,38 @@ ptyxis_window_class_init (PtyxisWindowClass *klass)
+@@ -2176,12 +2188,38 @@ ptyxis_window_class_init (PtyxisWindowClass *klass)
    g_type_ensure (PTYXIS_TYPE_SHRINKER);
  }
  
@@ -349,7 +349,7 @@ index a646563..8844575 100644
    self->active_tab_bindings = g_binding_group_new ();
    self->profile_bindings = g_binding_group_new ();
  
-@@ -2416,6 +2454,71 @@ ptyxis_window_get_single_terminal_mode (PtyxisWindow *self)
+@@ -2432,6 +2470,71 @@ ptyxis_window_get_single_terminal_mode (PtyxisWindow *self)
    return self->single_terminal_mode;
  }
  

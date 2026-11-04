@@ -323,7 +323,7 @@ index b19c212..48cd480 100644
  
  static void
 diff --git a/src/ptyxis-window.c b/src/ptyxis-window.c
-index 58d74b2..a646563 100644
+index 58d74b2..66b3fd5 100644
 --- a/src/ptyxis-window.c
 +++ b/src/ptyxis-window.c
 @@ -420,6 +420,7 @@ ptyxis_window_page_attached_cb (PtyxisWindow *self,
@@ -334,7 +334,7 @@ index 58d74b2..a646563 100644
  }
  
  static void
-@@ -433,6 +434,15 @@ ptyxis_window_page_detached_cb (PtyxisWindow *self,
+@@ -433,6 +434,31 @@ ptyxis_window_page_detached_cb (PtyxisWindow *self,
    g_assert (ADW_IS_TAB_VIEW (tab_view));
  
    update_visible_and_maybe_close (self);
@@ -342,7 +342,23 @@ index 58d74b2..a646563 100644
 +}
 +
 +static void
-+ptyxis_window_queue_save_session_cb (PtyxisWindow *self)
++ptyxis_window_page_reordered_cb (PtyxisWindow *self,
++                                 AdwTabPage   *page,
++                                 int           position,
++                                 AdwTabView   *tab_view)
++{
++  g_assert (PTYXIS_IS_WINDOW (self));
++  g_assert (ADW_IS_TAB_PAGE (page));
++  g_assert (ADW_IS_TAB_VIEW (tab_view));
++
++  ptyxis_application_queue_save_session (PTYXIS_APPLICATION_DEFAULT);
++}
++
++/* For notifications of the window itself and, swapped, of its tab view */
++static void
++ptyxis_window_notify_save_session_cb (PtyxisWindow *self,
++                                      GParamSpec   *pspec,
++                                      gpointer      user_data)
 +{
 +  g_assert (PTYXIS_IS_WINDOW (self));
 +
@@ -350,7 +366,7 @@ index 58d74b2..a646563 100644
  }
  
  static gboolean
-@@ -1487,6 +1497,8 @@ ptyxis_window_notify_zoom_cb (PtyxisWindow *self,
+@@ -1487,6 +1513,8 @@ ptyxis_window_notify_zoom_cb (PtyxisWindow *self,
    gtk_widget_action_set_enabled (GTK_WIDGET (self), "win.zoom-in", can_zoom_in);
    gtk_widget_action_set_enabled (GTK_WIDGET (self), "win.zoom-one", can_zoom_one);
    gtk_widget_action_set_enabled (GTK_WIDGET (self), "win.zoom-out", can_zoom_out);
@@ -359,35 +375,35 @@ index 58d74b2..a646563 100644
  }
  
  static void
-@@ -2218,6 +2230,27 @@ ptyxis_window_init (PtyxisWindow *self)
+@@ -2218,6 +2246,27 @@ ptyxis_window_init (PtyxisWindow *self)
  
    adw_tab_view_set_shortcuts (self->tab_view, 0);
  
 +  /* The rest of what the session saves changes with the tabs themselves */
 +  g_signal_connect_object (self->tab_view,
 +                           "page-reordered",
-+                           G_CALLBACK (ptyxis_window_queue_save_session_cb),
++                           G_CALLBACK (ptyxis_window_page_reordered_cb),
 +                           self,
 +                           G_CONNECT_SWAPPED);
 +  g_signal_connect_object (self->tab_view,
 +                           "notify::selected-page",
-+                           G_CALLBACK (ptyxis_window_queue_save_session_cb),
++                           G_CALLBACK (ptyxis_window_notify_save_session_cb),
 +                           self,
 +                           G_CONNECT_SWAPPED);
 +  g_signal_connect_object (self->tab_view,
 +                           "notify::n-pinned-pages",
-+                           G_CALLBACK (ptyxis_window_queue_save_session_cb),
++                           G_CALLBACK (ptyxis_window_notify_save_session_cb),
 +                           self,
 +                           G_CONNECT_SWAPPED);
 +  g_signal_connect (self,
 +                    "notify::maximized",
-+                    G_CALLBACK (ptyxis_window_queue_save_session_cb),
++                    G_CALLBACK (ptyxis_window_notify_save_session_cb),
 +                    NULL);
 +
    g_binding_group_bind (self->active_tab_bindings, "profile",
                          self->profile_bindings, "source",
                          G_BINDING_SYNC_CREATE);
-@@ -2368,6 +2401,21 @@ ptyxis_window_new (void)
+@@ -2368,6 +2417,21 @@ ptyxis_window_new (void)
    return ptyxis_window_new_for_profile (NULL);
  }
  
