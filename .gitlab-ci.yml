@@ -56,12 +56,16 @@ variables:
     - apt-get build-dep -y -q ./build/"$PACKAGE"/*/
     - chown -R builder:builder build
     - export DEB_BUILD_OPTIONS="$(cat "patches/$PACKAGE/build-options" 2>/dev/null || true)"
-    - su builder -c "cd build/$PACKAGE/*/ && dpkg-buildpackage --build=binary --no-sign --jobs=$(nproc)"
+    # GitLab keeps only the first 4 MiB of the output of a job, which a build exceeds, so the output of the build is
+    # kept as build/$PACKAGE.build, and only its end is printed when the build fails.
+    - su builder -c "cd build/$PACKAGE/*/ && dpkg-buildpackage --build=binary --no-sign --jobs=$(nproc)" > "build/$PACKAGE.build" 2>&1 || { tail -n 200 "build/$PACKAGE.build"; exit 1; }
 
   # The packages are for the tests of the same pipeline.
   artifacts:
+    when: always
     paths:
       - build/*/*.deb
+      - build/*.build
     expire_in: 1 week
 
 build:
@@ -104,8 +108,10 @@ build_firefox:
     BUILD_SOURCES: mozillateam-ubuntu-ppa-resolute.sources
 
   artifacts:
+    when: always
     paths:
       - build/firefox/firefox_*.deb
+      - build/firefox.build
     expire_in: 1 week
 
 # Every test runs mutter from the build, extracted into /tmp/mutter-root, with the dependencies of Ubuntu's mutter
