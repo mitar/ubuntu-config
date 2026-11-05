@@ -1,0 +1,296 @@
+# Builds the patched packages, which runs their test suites with the tests the patches add to them, and then runs the
+# tests in patches/*/tests against those builds, each test in a job of its own.
+
+stages:
+  - build
+  - test
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == 'merge_request_event'
+    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS && $CI_PIPELINE_SOURCE == "push"
+      # To prevent duplicate pipelines, when a branch has a merge request, we only
+      # run a merge request pipeline when the branch is pushed.
+      when: never
+    - if: $CI_COMMIT_BRANCH
+    - if: $CI_COMMIT_TAG
+
+variables:
+  FF_ENABLE_BASH_EXIT_CODE_CHECK: "true"
+  # Disable umask 0000. See: https://gitlab.com/gitlab-org/gitlab-runner/-/issues/1736
+  FF_DISABLE_UMASK_FOR_DOCKER_EXECUTOR: 1
+  FF_SCRIPT_SECTIONS: 1
+  FF_TIMESTAMPS: 1
+  DEBIAN_FRONTEND: noninteractive
+
+# The source is fetched and patched by rebuild-patched-packages.sh, as for a local build, and built as an unprivileged
+# user, as sbuild does, since some test suites check what root is allowed regardless, like reading a file without
+# permission. BUILD_SOURCES are repositories in sources.list.d/ to add, for a source which source-from says comes from
+# one of them.
+.build:
+  stage: build
+
+  image: ubuntu:26.04
+
+  before_script:
+    # The image is minimized: dpkg leaves out documentation, man pages and translations, and man is a stub which
+    # succeeds. Builds and their test suites expect neither, as in the chroot of sbuild.
+    - rm -f /etc/dpkg/dpkg.cfg.d/excludes /usr/bin/man
+    - dpkg-divert --local --rename --remove /usr/bin/man
+    - apt-get update -q
+    - apt-get install -y -q --no-install-recommends ca-certificates dpkg-dev fakeroot patch python3
+    - for source in $BUILD_SOURCES; do cp "sources.list.d/$source" /etc/apt/sources.list.d/ && apt-get update -q; done
+    - useradd --create-home builder
+
+  script:
+    - ./rebuild-patched-packages.sh --prepare=build "$PACKAGE"
+    # Build dependencies the Ubuntu archive does not have come from the repositories extra-repositories names, as for
+    # a local build, each line being a key file in the patch directory followed by the repository's sources.list line.
+    - |
+      if [ -f "patches/$PACKAGE/extra-repositories" ]; then
+        grep -vE '^[[:space:]]*(#|$)' "patches/$PACKAGE/extra-repositories" | while read -r key type rest; do
+          echo "$type [signed-by=$PWD/patches/$PACKAGE/$key] $rest"
+        done > /etc/apt/sources.list.d/extra-repositories.list
+        apt-get update -q
+      fi
+    - apt-get build-dep -y -q ./build/"$PACKAGE"/*/
+    - chown -R builder:builder build
+    - export DEB_BUILD_OPTIONS="$(cat "patches/$PACKAGE/build-options" 2>/dev/null || true)"
+    - su builder -c "cd build/$PACKAGE/*/ && dpkg-buildpackage --build=binary --no-sign --jobs=$(nproc)"
+
+  # The packages are for the tests of the same pipeline.
+  artifacts:
+    paths:
+      - build/*/*.deb
+    expire_in: 1 week
+
+build:
+  extends: .build
+
+  parallel:
+    matrix:
+      - PACKAGE:
+          - gnome-settings-daemon
+          - gnome-text-editor
+          - gtksourceview5
+          - localsearch
+          - ptyxis
+          - tinysparql
+          - vte2.91
+
+build_large:
+  extends: .build
+
+  tags:
+    - saas-linux-2xlarge-amd64
+
+  parallel:
+    matrix:
+      - PACKAGE:
+          - gtk+3.0
+          - gtk4
+          - mutter
+
+# Only the firefox package is kept, which the tests use, since all packages of a build together are about 900 MiB,
+# mostly debug symbols and language packs.
+build_firefox:
+  extends: .build
+
+  tags:
+    - saas-linux-2xlarge-amd64
+
+  variables:
+    PACKAGE: firefox
+    BUILD_SOURCES: mozillateam-ubuntu-ppa-resolute.sources
+
+  artifacts:
+    paths:
+      - build/firefox/firefox_*.deb
+    expire_in: 1 week
+
+# Every test runs mutter from the build, extracted into /tmp/mutter-root, with the dependencies of Ubuntu's mutter
+# installed, and its GSettings schemas, which the patches add keys to, installed from the build with mutter-common. The
+# tests run as an unprivileged user, with bash as login shell, which the Ptyxis test starts in its tabs. TEST_PACKAGES
+# are further packages to install, from the repositories in sources.list.d/ named by TEST_SOURCES too.
+.test:
+  stage: test
+
+  image: ubuntu:26.04
+
+  before_script:
+    - apt-get update -q
+    - apt-get install -y -q --no-install-recommends ca-certificates
+    - for source in $TEST_SOURCES; do cp "sources.list.d/$source" /etc/apt/sources.list.d/ && apt-get update -q; done
+    - apt-get install -y -q --no-install-recommends dbus fuse3 libglib2.0-bin mutter python3 python3-gi util-linux $TEST_PACKAGES
+    - dpkg -i build/mutter/mutter-common_*.deb
+    - mkdir /tmp/mutter-root
+    - for p in mutter libmutter-18-0; do dpkg-deb -x build/mutter/${p}_*.deb /tmp/mutter-root; done
+    - useradd --create-home --shell /bin/bash tester
+    - mkdir out
+    - chown tester:tester out
+
+  artifacts:
+    when: always
+    paths:
+      - out/
+    exclude:
+      - out/**/mesa_shader_cache/**/*
+      - out/**/standard-input.txt
+    expire_in: never
+
+test_mutter_rename:
+  extends: .test
+
+  needs:
+    - job: build_large
+      parallel:
+        matrix:
+          - PACKAGE: mutter
+
+  script:
+    - su tester -c "patches/mutter/tests/run-rename-check.sh /tmp/mutter-root out/rename-check"
+
+# Chromium runs with its sandbox, which needs the namespaces a privileged container allows, as on GitLab's hosted
+# runners. chromium-sandbox is its setuid helper, for when unprivileged user namespaces are not allowed.
+test_mutter_chromium:
+  extends: .test
+
+  needs:
+    - job: build_large
+      parallel:
+        matrix:
+          - PACKAGE: mutter
+
+  variables:
+    TEST_SOURCES: xtradeb-ubuntu-apps-resolute.sources
+    TEST_PACKAGES: chromium chromium-driver chromium-sandbox
+
+  script:
+    - su tester -c "patches/mutter/tests/run-chromium-session.sh /tmp/mutter-root out/chromium-session"
+
+test_text_editor_session:
+  extends: .test
+
+  needs:
+    - job: build
+      parallel:
+        matrix:
+          - PACKAGE: gnome-text-editor
+    - job: build_large
+      parallel:
+        matrix:
+          - PACKAGE:
+              - gtk4
+              - mutter
+
+  variables:
+    TEST_PACKAGES: gnome-text-editor
+
+  parallel:
+    matrix:
+      - SCENARIO:
+          - none
+          - unsupported
+          - supported
+
+  script:
+    - mkdir /tmp/text-editor-root
+    - for p in gnome-text-editor libgtk-4-1; do dpkg-deb -x build/*/${p}_*.deb /tmp/text-editor-root; done
+    - su tester -c "patches/gnome-text-editor/tests/run-text-editor-session.sh /tmp/mutter-root /tmp/text-editor-root out/text-editor-session-$SCENARIO $SCENARIO"
+
+test_text_editor_autosave:
+  extends: .test
+
+  needs:
+    - job: build
+      parallel:
+        matrix:
+          - PACKAGE: gnome-text-editor
+    - job: build_large
+      parallel:
+        matrix:
+          - PACKAGE:
+              - gtk4
+              - mutter
+
+  variables:
+    TEST_PACKAGES: gnome-text-editor
+
+  script:
+    - mkdir /tmp/text-editor-root
+    - for p in gnome-text-editor libgtk-4-1; do dpkg-deb -x build/*/${p}_*.deb /tmp/text-editor-root; done
+    - su tester -c "patches/gnome-text-editor/tests/run-text-editor-autosave.sh /tmp/mutter-root /tmp/text-editor-root out/text-editor-autosave"
+
+# Ptyxis runs with the installed GTK and ptyxis-agent, so both are installed from the build over Ubuntu's.
+test_ptyxis_session:
+  extends: .test
+
+  needs:
+    - job: build
+      parallel:
+        matrix:
+          - PACKAGE: ptyxis
+    - job: build_large
+      parallel:
+        matrix:
+          - PACKAGE:
+              - gtk4
+              - mutter
+
+  variables:
+    TEST_PACKAGES: ptyxis
+
+  script:
+    - dpkg -i build/gtk4/libgtk-4-1_*.deb build/ptyxis/ptyxis_*.deb
+    # Ptyxis starts each shell with systemd-run in a scope of the systemd user instance whenever systemd-run is
+    # installed, and the container runs no systemd. Without systemd-run, Ptyxis starts the shells directly.
+    - mv /usr/bin/systemd-run /usr/bin/systemd-run.disabled
+    - mkdir /tmp/ptyxis-root
+    - dpkg-deb -x build/ptyxis/ptyxis_*.deb /tmp/ptyxis-root
+    - su tester -c "patches/ptyxis/tests/run-ptyxis-session.sh /tmp/mutter-root /tmp/ptyxis-root out/ptyxis-session"
+
+# Firefox runs headless, without mutter.
+test_firefox_wasm:
+  extends: .test
+
+  needs:
+    - build_firefox
+
+  before_script:
+    - apt-get update -q
+    - apt-get install -y -q --no-install-recommends ca-certificates ffmpeg fonts-sil-andika python3 ./build/firefox/firefox_*.deb
+    - useradd --create-home --shell /bin/bash tester
+    - mkdir out
+    - chown tester:tester out
+
+  script:
+    - su tester -c "python3 -I patches/firefox/tests/test_wasm.py /usr/lib/firefox/firefox out/firefox-wasm"
+
+# Firefox runs with the GTK 3 from the build, extracted into /tmp/gtk-root, and with XDG_CURRENT_DESKTOP as on this
+# desktop, ubuntu:GNOME, for which an unpatched Firefox disables session restore.
+test_firefox_session:
+  extends: .test
+
+  needs:
+    - build_firefox
+    - job: build_large
+      parallel:
+        matrix:
+          - PACKAGE:
+              - gtk+3.0
+              - mutter
+
+  variables:
+    TEST_PACKAGES: ./build/firefox/firefox_*.deb
+
+  parallel:
+    matrix:
+      - SCENARIO:
+          - menu-restore
+          - startup-restore
+          - startup-no-ids
+
+  script:
+    - mkdir /tmp/gtk-root
+    - dpkg-deb -x build/gtk+3.0/libgtk-3-0t64_*.deb /tmp/gtk-root
+    - su tester -c "patches/firefox/tests/run-session.sh /tmp/mutter-root /tmp/gtk-root /usr/lib/firefox/firefox ubuntu:GNOME out/firefox-session-$SCENARIO $SCENARIO"

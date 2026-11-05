@@ -23,15 +23,21 @@
 #   sudo ./rebuild-patched-packages.sh --build --force [package...]   rebuild regardless
 #   ./rebuild-patched-packages.sh --status [package...]               show recorded state for each package
 #   ./rebuild-patched-packages.sh --prereqs [package...]              list everything still to be installed, and the build chroot
+#   ./rebuild-patched-packages.sh --prepare=DIR [package...]          fetch each source into DIR/<package> with its patches applied
 #
 # A package is named by its directory under patches/, which is its source package name. Naming packages limits
 # the run to them, and without names every package there is included.
 #
-# Every mode reports missing prerequisites. Only --build treats them as fatal, and it names the whole install in
+# The other modes report missing prerequisites. Only --build treats them as fatal, and it names the whole install in
 # one message rather than stopping at the first gap, so that a cron mail is actionable on its own.
 #
 # --build prints nothing when everything is current, so a daily cron job stays quiet until there is something to
 # say. It prints a summary when it rebuilds, so that a successful rebuild is still mailed as a notification.
+#
+# --prepare is for building elsewhere, such as in CI, without the local repository, the build user and the chroot.
+# It reads the patches from the repository it runs from, fetches the source of each package into DIR/<package>,
+# applies the patches there as a build does, and leaves building the source tree to the caller. Like --build, it
+# enables deb-src for the Ubuntu sources first, which needs root when they lack it.
 #
 #
 # Installing
@@ -43,8 +49,9 @@
 #
 # The build itself runs unprivileged, see Building below.
 #
-# The script always reads the installed patches. Run from the repository, it also reports each installed copy
-# that differs from the repository, so that a change made there and not yet installed does not go unnoticed.
+# Except with --prepare, the script reads the installed patches. Run from the repository, it also reports each
+# installed copy that differs from the repository, so that a change made there and not yet installed does not go
+# unnoticed.
 #
 #
 # Building
@@ -78,7 +85,8 @@
 # add a "build-options" file whose contents are used as DEB_BUILD_OPTIONS. Do not put nocheck there: the tests
 # are how a stale patch is caught. Parallelism does not belong there either, it is passed as -j from BUILD_JOBS.
 # A README in that directory is a good place to record what the patch does and what to re-check after a version
-# bump. Then install the patches with install-rebuild-patched-packages.sh.
+# bump. Then install the patches with install-rebuild-patched-packages.sh, and add the package to the matrix of the
+# build job in .gitlab-ci.yml, or of build_large for a package which needs a larger runner.
 #
 # The patches in series are applied with quilt by dpkg-source, which allows them to change only the upstream source.
 # A quilt patch which changes debian/ is refused here, because dpkg-source treats it as already applied when it
@@ -168,11 +176,17 @@ for arg in "$@"; do
     --prereqs) MODE=prereqs ;;
     --check)   MODE=check ;;
     --force)   FORCE=yes ;;
+    --prepare=*) MODE=prepare; PREPARE_DIR=${arg#--prepare=} ;;
     -h|--help) awk 'NR>1 && !/^#/{exit} NR>1{sub(/^# ?/, ""); print}' "$0"; exit 0 ;;
     -*)        echo "unknown option: $arg (try --help)" >&2; exit 2 ;;
     *)         PACKAGES+=("$arg") ;;
   esac
 done
+if [ "$MODE" = prepare ]; then
+  [ -n "$PREPARE_DIR" ] || { echo "--prepare needs a directory, as --prepare=DIR" >&2; exit 2; }
+  PATCH_DIR=$REPO_DIR/patches
+  [ -d "$PATCH_DIR" ] || { echo "--prepare reads the patches from the repository, but there is no $PATCH_DIR" >&2; exit 2; }
+fi
 for arg in "${PACKAGES[@]}"; do
   [ -f "$PATCH_DIR/$arg/series" ] || { echo "unknown package: $arg, there is no $PATCH_DIR/$arg/series" >&2; exit 2; }
 done
@@ -540,6 +554,20 @@ stage_patches() {
   }
 }
 
+# Fetches the source of a version of a source package into an empty directory and applies its patches there, see
+# stage_patches. Leaves the path of the unpacked source tree in TREE.
+TREE=""
+fetch_patched_source() {
+  local src=$1 version=$2 dir=$3
+  ( cd "$dir" && apt-get source --only-source "$src=$version" ) >/dev/null 2>&1 \
+    || fail "$src: apt-get source failed for $version (is deb-src enabled?)"
+
+  TREE=$(find "$dir" -maxdepth 1 -mindepth 1 -type d | head -1)
+  [ -n "$TREE" ] || fail "$src: apt-get source produced no source tree"
+
+  stage_patches "$src" "$TREE"
+}
+
 # Drop any older build of the binary packages we just produced, so the local repository holds one version of each
 # rather than growing without bound. Only names we actually rebuilt are touched.
 prune_old_debs() {
@@ -587,14 +615,8 @@ rebuild() {
   # Nothing else is printed until the build ends, which for a large package is an hour later.
   echo "$src: rebuilding $version as $local_version ($reason) in $work"
 
-  ( cd "$work" && apt-get source --only-source "$src=$version" ) >/dev/null 2>&1 \
-    || fail "$src: apt-get source failed for $version (is deb-src enabled?)"
-
-  local tree
-  tree=$(find "$work" -maxdepth 1 -mindepth 1 -type d | head -1)
-  [ -n "$tree" ] || fail "$src: apt-get source produced no source tree"
-
-  stage_patches "$src" "$tree"
+  fetch_patched_source "$src" "$version" "$work"
+  local tree=$TREE
 
   local opts="" email status=0
   [ -r "$PATCH_DIR/$src/build-options" ] && opts=$(cat "$PATCH_DIR/$src/build-options")
@@ -789,5 +811,19 @@ case "$MODE" in
       echo
       echo "Rebuilt packages are now the apt candidate. unattended-upgrades or the next apt upgrade installs them."
     fi
+    ;;
+
+  prepare)
+    # Before any version is read, because a missing source index makes every package look current.
+    ensure_deb_src apply
+
+    mkdir -p "$PREPARE_DIR"
+    for src in $(selected_packages); do
+      off=$(official_version "$src")
+      [ -n "$off" ] || fail "$src: cannot determine the version to fetch, is deb-src enabled for its repository?"
+      mkdir "$PREPARE_DIR/$src" || fail "$src: could not create $PREPARE_DIR/$src, which has to be new"
+      fetch_patched_source "$src" "$off" "$PREPARE_DIR/$src"
+      echo "$src: $off with its patches applied in $TREE"
+    done
     ;;
 esac

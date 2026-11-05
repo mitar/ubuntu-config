@@ -11,7 +11,10 @@ SCENARIO is one of:
                    windows without IDs, as every profile used on GNOME before the patches did
 
 A third run then restores the session the second one saved. Each Firefox run writes its output to
-LOG_DIR/runN.log, and a summary of each run is printed. The exit status is 1 when Firefox exited on its own.
+LOG_DIR/runN.log, and a summary of each run is printed. Every run has to have 3 windows, all of them shown, and
+exit with status 0, and the compositor has to restore all 3 windows of the third run, which it does only when
+Firefox uses session management. The script then prints "RESULT: OK" and exits with 0. It exits with 1 when a check
+fails, or when Firefox exited on its own.
 """
 
 import json
@@ -152,12 +155,30 @@ def mapped_toplevels(log_path):
         return sum(1 for line in f if ".get_toplevel(new id xdg_toplevel#" in line)
 
 
+def restored_toplevels(log_path):
+    # The compositor answers each window it places again as it was in the session with restored().
+    with open(log_path, errors="replace") as f:
+        return sum(1 for line in f if "toplevel_session_v1#" in line and ".restored()" in line)
+
+
 def alive_after(proc, seconds):
     try:
         proc.wait(timeout=seconds)
         return False
     except subprocess.TimeoutExpired:
         return True
+
+
+failures = []
+
+
+def report(line, value, expected):
+    """Prints line formatted with value. When value is not the expected one, marks the line as a failure and records it."""
+    if value == expected:
+        print(line % value, flush=True)
+    else:
+        print(line % value + " (FAIL: expected %s)" % expected, flush=True)
+        failures.append(line % value)
 
 
 def main():
@@ -169,14 +190,15 @@ def main():
     write_prefs(profile, 0 if scenario == "menu-restore" else 3, scenario != "startup-no-ids")
     proc, m = start(firefox, profile, os.path.join(log_dir, "run1.log"))
     open_windows(m, 2)
-    print("run 1: %d windows" % window_count(m), flush=True)
+    report("run 1: %s windows", window_count(m), 3)
     # Session store collects window data, and so calls GetWorkspaceID(), every second.
     time.sleep(5)
-    print("run 1: %d windows shown" % mapped_toplevels(os.path.join(log_dir, "run1.log")), flush=True)
-    print("run 1: exit status %s" % quit(m, proc), flush=True)
+    report("run 1: %s windows shown", mapped_toplevels(os.path.join(log_dir, "run1.log")), 3)
+    report("run 1: exit status %s", quit(m, proc), 0)
 
     write_prefs(profile, 0 if scenario == "menu-restore" else 3)
     proc, m = start(firefox, profile, os.path.join(log_dir, "run2.log"))
+    windows = None
     try:
         if scenario == "menu-restore":
             print("run 2: %d windows before restoring" % window_count(m), flush=True)
@@ -187,14 +209,15 @@ def main():
             """)
         time.sleep(3)
         if alive_after(proc, 5):
-            print("run 2: %d windows, still running after the restore" % window_count(m), flush=True)
+            windows = window_count(m)
     except (ConnectionError, OSError):
         pass
     if proc.poll() is not None or not alive_after(proc, 0.1):
         print("run 2: FIREFOX EXITED with status %s" % proc.wait(), flush=True)
         return 1
-    print("run 2: %d windows shown" % mapped_toplevels(os.path.join(log_dir, "run2.log")), flush=True)
-    print("run 2: exit status %s" % quit(m, proc), flush=True)
+    report("run 2: %s windows, still running after the restore", windows, 3)
+    report("run 2: %s windows shown", mapped_toplevels(os.path.join(log_dir, "run2.log")), 3)
+    report("run 2: exit status %s", quit(m, proc), 0)
 
     # A third run restores the session saved by the second one, which shows that the IDs it saved are
     # the ones the compositor knows.
@@ -204,10 +227,13 @@ def main():
     if not alive_after(proc, 5):
         print("run 3: FIREFOX EXITED with status %s" % proc.returncode, flush=True)
         return 1
-    print("run 3: %d windows" % window_count(m), flush=True)
-    print("run 3: %d windows shown" % mapped_toplevels(os.path.join(log_dir, "run3.log")), flush=True)
-    print("run 3: exit status %s" % quit(m, proc), flush=True)
-    return 0
+    report("run 3: %s windows", window_count(m), 3)
+    report("run 3: %s windows shown", mapped_toplevels(os.path.join(log_dir, "run3.log")), 3)
+    report("run 3: %s windows restored by the compositor", restored_toplevels(os.path.join(log_dir, "run3.log")), 3)
+    report("run 3: exit status %s", quit(m, proc), 0)
+
+    print("RESULT: %s" % ("OK" if not failures else "%d check(s) failed" % len(failures)), flush=True)
+    return 1 if failures else 0
 
 
 if __name__ == "__main__":

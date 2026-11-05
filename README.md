@@ -25,7 +25,8 @@ the patched behavior which run during the build where the package has a test sui
 change, building it with sbuild as an unprivileged user in a throwaway chroot, and publishes the result to a local
 APT repository. That repository is pinned above the Ubuntu archive, so unattended-upgrades or the next ordinary
 `apt upgrade` installs the patched build. A daily cron job keeps patched packages current, running root-owned
-copies of the script and patches, installed with `install-rebuild-patched-packages.sh`.
+copies of the script and patches, installed with `install-rebuild-patched-packages.sh`. GitLab CI builds the patched
+packages too and runs the tests in `patches/*/tests` against them (`.gitlab-ci.yml`).
 
 ## Main features
 
@@ -596,7 +597,7 @@ Each script's header documents what it does and why in more detail.
 
 ## GitHub mirror
 
-There is also a [read-only GitHub mirror available](https://github.com/mitar/ubuntu-config),
+There is also a [read-only GitHub mirror available](https://github.com/ubuntu-config/ubuntu-config),
 if you need to fork the project there.
 
 ## License

@@ -1,4 +1,5 @@
-Tests for the patches in patches/firefox/, run by hand. Firefox's own tests do not run in the package build.
+Tests for the patches in patches/firefox/, run by hand and in GitLab CI, see .gitlab-ci.yml. Firefox's own tests
+do not run in the package build.
 
 Both drive Firefox through Marionette, with a new profile in a directory of their own and on a port of their
 own, so they run next to your own Firefox without touching it. Pass the Firefox to test, usually the installed
@@ -30,13 +31,18 @@ Session restore: run-session.sh and driver.py
                        its windows when the check is passed
 
     With the patches, every run reports 3 windows, 3 windows shown and exit status 0 (the second run of
-    menu-restore first reports the 1 window it starts with), and the script exits with 0. The session requests
-    are in the WAYLAND_DEBUG output of each run in the output directory:
+    menu-restore first reports the 1 window it starts with), and the third run reports 3 windows restored by the
+    compositor. The script then prints "RESULT: OK" and exits with 0. A value which differs is marked with FAIL,
+    and the script exits with 1. With ubuntu:GNOME, an unpatched Firefox restores its windows without session
+    management, so only the check of the third run fails. The session requests are in the WAYLAND_DEBUG output of
+    each run in the output directory:
 
       grep -h -o -E '(add|restore)_toplevel\([^)]*"[^"]*"|toplevel_session_v1#[0-9]+\.restored\(\)' /tmp/session-test/run*.log
 
-    The second run adds its windows under new IDs, and the third restores exactly those, each answered with
-    restored(). The D-Bus and portal messages printed on the way are expected in the private session.
+    The second run of menu-restore and startup-no-ids adds its windows under new IDs, the second run of
+    startup-restore restores the windows of the first, and the third run restores exactly the windows of the
+    second, each answered with restored(). The D-Bus and portal messages printed on the way are expected in the
+    private session.
 
 Wasm sandboxed libraries: test_wasm.py
     Runs Firefox headless and makes each of the six libraries do some work: expat parses XML, hunspell checks
@@ -54,6 +60,11 @@ Wasm sandboxed libraries: test_wasm.py
       graphite   loaded, laid out width 459.9
       soundtouch played to 2.00 s at rate 1.5
       still running afterwards: True
+      exit status 0
+    RESULT: OK
+
+    The script exits with 0 then, and with 1 when a library reported an error or Firefox did not keep running or
+    did not exit with status 0.
 
     The test shows that the libraries work, not that they run sandboxed. That they are built sandboxed is
     shown by the check in ../README, which lists the rlbox_wasm2c_ symbols in libxul.so and liblgpllibs.so.

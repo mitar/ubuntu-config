@@ -3,7 +3,9 @@
 Usage: test_wasm.py FIREFOX OUT_DIR
 
 OUT_DIR is removed first, then receives the profile, Firefox's output in firefox.log and the Ogg file the test
-plays. Prints one line for each library, with what it produced or the error it raised.
+plays. Prints one line for each library, with what it produced or the error it raised. When every library produced
+a result and Firefox kept running and then exited with status 0, prints "RESULT: OK" and exits with 0, and
+otherwise exits with 1.
 """
 
 import os
@@ -101,18 +103,27 @@ def main():
     os.environ["MOZ_HEADLESS"] = "1"
     proc, m = driver.start(firefox, profile, os.path.join(out_dir, "firefox.log"))
     script = SCRIPT % {"ogg": ogg, "woff2": WOFF2_FONT, "graphite": GRAPHITE_FONT}
+    ok = True
     try:
         result = m.script(script)
         for key in ("expat", "hunspell", "ogg", "woff2", "graphite", "soundtouch"):
             print("  %-10s %s" % (key, result.get(key)))
+            # A library which failed reports the error it raised, starting with "error".
+            ok = ok and isinstance(result.get(key), str) and not result[key].startswith("error")
         if "fatal" in result:
             print("  FATAL: %s" % result["fatal"])
+            ok = False
     except (ConnectionError, OSError, RuntimeError) as e:
         print("  FAILED: %s" % e)
+        ok = False
     alive = driver.alive_after(proc, 2)
     print("  still running afterwards: %s" % alive)
-    print("  exit status %s" % driver.quit(m, proc))
+    status = driver.quit(m, proc)
+    print("  exit status %s" % status)
+    ok = ok and alive and status == 0
+    print("RESULT: %s" % ("OK" if ok else "FAILED"))
+    return 0 if ok else 1
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

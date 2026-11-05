@@ -1,5 +1,6 @@
 Tests for save-session-on-change.patch, restore-window-placement.patch and restore-screens.patch, together with
-patches/gtk4/ and patches/mutter/, save-toplevels-on-change.patch included, run by hand.
+patches/gtk4/ and patches/mutter/, save-toplevels-on-change.patch included, run by hand and in GitLab CI, see
+.gitlab-ci.yml.
 
 Ptyxis session restore: run-ptyxis-session.sh and ptyxis_session.py
     Checks that Ptyxis keeps its session up to date while it runs, so that after a crash it restores its windows

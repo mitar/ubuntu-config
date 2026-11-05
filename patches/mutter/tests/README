@@ -1,4 +1,4 @@
-Tests for the patches in patches/mutter/, run by hand.
+Tests for the patches in patches/mutter/, run by hand and in GitLab CI, see .gitlab-ci.yml.
 
 Chromium session restore: run-chromium-session.sh and chromium_session.py
     Checks xx-session-management.patch with the client it exists for. Starts a headless mutter with one virtual

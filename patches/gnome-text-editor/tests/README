@@ -1,5 +1,5 @@
 Tests for the patches in patches/gnome-text-editor/ and patches/gtk4/, and for
-patches/mutter/save-toplevels-on-session-destroy.patch with them, run by hand.
+patches/mutter/save-toplevels-on-session-destroy.patch with them, run by hand and in GitLab CI, see .gitlab-ci.yml.
 
 Text Editor session restore: run-text-editor-session.sh, text_editor_session.py and fake_session_manager.py
     Checks that Text Editor, with GTK's save/restore API, names its windows to mutter and has them restored under
