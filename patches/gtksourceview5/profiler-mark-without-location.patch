@@ -1,0 +1,23 @@
+Description: Do not pass a NULL location to g_file_peek_path() when a load from a stream finishes.
+ gtk_source_file_loader_load_finish() ends with a profiler mark which names the file loaded, with
+ g_file_peek_path (loader->location). A loader created with gtk_source_file_loader_new_from_stream() has no location.
+ With the Sysprof support Ubuntu builds GtkSourceView with, the mark's arguments are evaluated also when no profiler
+ runs, so every load from a stream logs two GLib criticals, from g_object_get_qdata() and g_file_get_path(). Text
+ Editor loads what it reads from standard input this way. The mark now names no file for a load without a location.
+Author: Christian Hergert <christian@sourceandstack.com>
+Origin: backport, https://gitlab.gnome.org/GNOME/gtksourceview/-/commit/0efed2a9496917c255cd1ad56a164e5a71ca16f7
+Forwarded: not-needed
+Last-Update: 2026-11-05
+diff --git a/gtksourceview/gtksourcefileloader.c b/gtksourceview/gtksourcefileloader.c
+index 933e990..a60ee8d 100644
+--- a/gtksourceview/gtksourcefileloader.c
++++ b/gtksourceview/gtksourcefileloader.c
+@@ -1283,7 +1283,7 @@ gtk_source_file_loader_load_finish (GtkSourceFileLoader  *loader,
+ 
+ 	GTK_SOURCE_PROFILER_MARK (GTK_SOURCE_PROFILER_CURRENT_TIME - loader->load_begin_time,
+ 				  "GtkSourceFileLoader.load",
+-				  g_file_peek_path (loader->location));
++				  loader->location != NULL ? g_file_peek_path (loader->location) : NULL);
+ 
+ 	return ok;
+ }

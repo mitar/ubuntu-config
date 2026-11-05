@@ -337,6 +337,14 @@ saving, which the restored windows above do at every start, as does an auto-save
 then saves only when it quits. It is patched to save in that case and after the delay changes, and to run its saves one
 at a time, so that a save of a large document cannot replace newer saved state with older (`patches/gnome-text-editor/`).
 
+### Text Editor reads standard input without errors
+
+Text Editor opens what it reads from standard input (`gnome-text-editor -`) as an unsaved document, which GtkSourceView
+loads from a stream. GtkSourceView 5.18 logs two GLib criticals for every load from a stream, from a profiler mark
+naming the file loaded, which Ubuntu's build with Sysprof support evaluates also when no profiler runs. GtkSourceView
+is patched with the upstream fix from 5.21.0 and a test for it (`patches/gtksourceview5/`), and the patches can be
+dropped once Ubuntu ships that version.
+
 ### Terminal windows return after a crash
 
 When the terminal starts after a crash, a reset of the machine or a logout with terminal windows open, its windows

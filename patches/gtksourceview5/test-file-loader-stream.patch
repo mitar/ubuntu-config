@@ -1,0 +1,85 @@
+Description: Test loading from a stream in test-file-loader.
+ The file loader tests load only files, so nothing runs gtk_source_file_loader_load_finish() for a loader created with
+ gtk_source_file_loader_new_from_stream(), which has no location. The new test /file-loader/stream loads a memory
+ stream and checks the text. g_test_init() makes GLib criticals fatal, so the test fails without
+ profiler-mark-without-location.patch in a build with Sysprof support.
+Author: Mitar
+Forwarded: no
+Last-Update: 2026-11-05
+diff --git a/testsuite/test-file-loader.c b/testsuite/test-file-loader.c
+index ef79e11..0915ad2 100644
+--- a/testsuite/test-file-loader.c
++++ b/testsuite/test-file-loader.c
+@@ -227,6 +227,64 @@ test_begin_new_line_detection (void)
+ 	             GTK_SOURCE_NEWLINE_TYPE_CR);
+ }
+ 
++static void
++load_stream_cb (GtkSourceFileLoader *loader,
++                GAsyncResult        *result,
++                gpointer             user_data)
++{
++	GtkSourceBuffer *buffer;
++	GtkTextIter start;
++	GtkTextIter end;
++	gchar *buffer_contents;
++	GError *error = NULL;
++
++	gtk_source_file_loader_load_finish (loader, result, &error);
++	g_assert_no_error (error);
++
++	buffer = gtk_source_file_loader_get_buffer (loader);
++	gtk_text_buffer_get_bounds (GTK_TEXT_BUFFER (buffer), &start, &end);
++	buffer_contents = gtk_text_iter_get_slice (&start, &end);
++
++	g_assert_cmpstr (buffer_contents, ==, "hello world");
++
++	g_free (buffer_contents);
++
++	g_main_loop_quit (main_loop);
++}
++
++/* A loader created for a stream has no location, which finishing the load
++ * has to cope with.
++ */
++static void
++test_stream (void)
++{
++	GInputStream *stream;
++	GtkSourceBuffer *buffer;
++	GtkSourceFile *file;
++	GtkSourceFileLoader *loader;
++
++	main_loop = g_main_loop_new (NULL, FALSE);
++
++	stream = g_memory_input_stream_new_from_data ("hello world\n", -1, NULL);
++	buffer = gtk_source_buffer_new (NULL);
++	file = gtk_source_file_new ();
++	loader = gtk_source_file_loader_new_from_stream (buffer, file, stream);
++
++	gtk_source_file_loader_load_async (loader,
++					   G_PRIORITY_DEFAULT,
++					   NULL, NULL, NULL, NULL,
++					   (GAsyncReadyCallback) load_stream_cb,
++					   NULL);
++
++	g_main_loop_run (main_loop);
++	g_main_loop_unref (main_loop);
++
++	g_object_unref (loader);
++	g_object_unref (file);
++	g_object_unref (buffer);
++	g_object_unref (stream);
++}
++
+ gint
+ main (gint   argc,
+       gchar *argv[])
+@@ -236,6 +294,7 @@ main (gint   argc,
+ 	g_test_add_func ("/file-loader/end-line-stripping", test_end_line_stripping);
+ 	g_test_add_func ("/file-loader/end-new-line-detection", test_end_new_line_detection);
+ 	g_test_add_func ("/file-loader/begin-new-line-detection", test_begin_new_line_detection);
++	g_test_add_func ("/file-loader/stream", test_stream);
+ 
+ 	return g_test_run ();
+ }
