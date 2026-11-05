@@ -242,12 +242,13 @@ the processor slower without anything else showing it. A day on which the laptop
 04:00 is skipped, and the measurement made the next day.
 
 A measurement holds the fan at a full duty cycle and the power profile at performance for about 25 minutes. With
-the fan at full speed at rest, the temperatures stand in for the room's, since no sensor measures it, and the fan's
-speed shows the fan's state: it falls as the fan wears, and rises as dust clogs the fins, because a blocked fan has
-less air to push. Then come 7-Zip's benchmark on all threads and on one, and perf's context switch and system call
-benchmarks, which is where kernel mitigations cost the most. A steady load follows until the heatsink has warmed
-up, which gives the thermal resistance of the cooling, the degrees the APU rises above the air inside per watt, and
-the cooldown after it gives the time constant with which the temperature falls. Both grow as dust accumulates. The
+the fan at full speed at rest, it records the temperatures and the power, and the fan's speed shows the fan's
+state: it falls as the fan wears, and rises as dust clogs the fins, because a blocked fan has less air to push.
+Then come 7-Zip's benchmark on all threads and on one, and perf's context switch and system call benchmarks, which
+is where kernel mitigations cost the most. A steady load follows until the heatsink has warmed up. Compared with
+the idle phase, it gives the thermal resistance of the cooling: how many degrees the APU warms per watt more it
+draws. The room's temperature cancels out of that difference, so no sensor for it is needed. The
+cooldown after it gives the time constant with which the temperature falls. Both grow as dust accumulates. The
 fan runs at full speed throughout, so that dust shows in these two and not in the scores. Nothing is recorded when
 other processes used more than 1% of the CPU time during any of the phases, since that would have cost the scores
 about as much, nor when anything powered the NPU, which heats the same package and shares its power budget, nor when

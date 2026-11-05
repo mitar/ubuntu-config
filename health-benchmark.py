@@ -4,12 +4,12 @@
 A measurement holds the fan at a full duty cycle and the power profile at performance for about 25 minutes, and
 appends a row to /var/lib/health-benchmark/results.csv with what it found in each of its phases:
 
-- idle: once the load has been low for a while, the temperatures, which stand in for the room's, and the fan's speed
-  at a full duty cycle, which falls as the fan wears and rises as dust clogs the fins it blows through,
+- idle: once the load has been low for a while, the temperatures and the power at rest, and the fan's speed at a
+  full duty cycle, which falls as the fan wears and rises as dust clogs the fins it blows through,
 - benchmarks: 7-Zip's built-in benchmark on all threads and on one, and perf's context switch and system call
   benchmarks, with their scores and how long each ran,
-- steady load: the temperature and the power once the heatsink has warmed up, which give the thermal resistance of
-  the cooling in degrees per watt,
+- steady load: the temperature and the power once the heatsink has warmed up, which compared with those at idle give
+  the thermal resistance of the cooling in degrees per watt,
 - cooldown: how fast the temperature falls after the load stops, given as the time constant of its decay.
 
 The row also records the firmware, microcode, kernel and its mitigations, so that a change in the scores can be
@@ -85,10 +85,10 @@ IDLE_REQUIRED_S = 180
 IDLE_TIMEOUT_S = 1800
 CLOCK_TICKS = os.sysconf('SC_CLK_TCK')
 
-# The idle phase runs the fan at full speed for IDLE_PHASE_S, so that the air inside comes close to the room's, and
-# averages its last AMBIENT_WINDOW_S.
+# The idle phase runs the fan at full speed for IDLE_PHASE_S, so that the temperatures settle as they do under the
+# steady load, and averages its last IDLE_WINDOW_S.
 IDLE_PHASE_S = 300
-AMBIENT_WINDOW_S = 60
+IDLE_WINDOW_S = 60
 # The heatsink warms up over minutes, so the steady phase averages only its last STEADY_WINDOW_S.
 STEADY_S = 600
 STEADY_WINDOW_S = 240
@@ -763,7 +763,7 @@ def measure(trigger, note):
         # The other phases are checked at the end, but a system which is busy already is better left alone now than
         # after running the fan at full speed for another 20 minutes.
         measurement.check_foreign()
-        window = tail(samples, AMBIENT_WINDOW_S)
+        window = tail(samples, IDLE_WINDOW_S)
         row.update(averages('idle', window))
         row['fan_rpm_full'] = mean(window, 'fan_rpm')
         if row['fan_rpm_full'] is None or row['fan_rpm_full'] < FAN_FULL_MIN_RPM:
@@ -960,13 +960,16 @@ def number(row, key):
 
 
 def thermal_resistance(row):
-    """Returns how many degrees the hottest point of the APU rises above the air inside per watt, under the steady
-    load. The EC's board sensor at idle with the fan at full speed stands in for the air, since no sensor measures
-    the room."""
-    tctl, ambient, power = number(row, 'steady_tctl'), number(row, 'idle_ec_local'), number(row, 'steady_power_w')
-    if tctl is None or ambient is None or not power:
+    """Returns how many degrees the hottest point of the APU warms per watt more the package draws, from idle to the
+    steady load, both with the fan at full speed, or None when the row lacks a value."""
+    # At either load the temperature is the room's plus the thermal resistance times the power, so the difference
+    # between the two leaves the room's temperature out. No sensor measures the room, and an idle temperature which
+    # stands in for it moves with what the package draws at idle.
+    idle_tctl, steady_tctl = number(row, 'idle_tctl'), number(row, 'steady_tctl')
+    idle_power, steady_power = number(row, 'idle_power_w'), number(row, 'steady_power_w')
+    if None in (idle_tctl, steady_tctl, idle_power, steady_power) or steady_power <= idle_power:
         return None
-    return (tctl - ambient) / power
+    return (steady_tctl - idle_tctl) / (steady_power - idle_power)
 
 
 # label, how to read the value from a row, unit, format, and whether higher is better
