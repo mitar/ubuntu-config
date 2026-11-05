@@ -322,6 +322,12 @@ with it. Mutter is therefore also patched to implement the request
 (`patches/mutter/xdg-toplevel-session-rename.patch`), reported as
 [mutter issue 5177](https://gitlab.gnome.org/GNOME/mutter/-/work_items/5177).
 
+A link opened from another application, like a terminal, while Firefox is not running opens in a window of its own on
+the current workspace, as it does while Firefox runs, when the profile opens external links in new windows
+(`browser.link.open_newwindow.override.external` set to 2 in `about:config`). Firefox itself restores the first
+window of the previous session into the window it opened for the link, so the link would become a tab of that window,
+on its workspace (`patches/firefox/session-restore-external-link-window.patch`).
+
 ### Firefox's sandbox has its user namespaces
 
 Firefox isolates its content processes in user namespaces of their own. Ubuntu allows unprivileged user namespaces

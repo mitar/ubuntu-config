@@ -8,7 +8,7 @@ own, so they run next to your own Firefox without touching it. Pass the Firefox 
 Session restore: run-session.sh and driver.py
     Starts a headless mutter with one virtual monitor in a D-Bus session of its own and runs Firefox three
     times against it: the first run opens three windows and quits, the second starts again and restores that
-    session, and the third restores the session the second one saved. It covers the three fixes of the session
+    session, and the third restores the session the second one saved. It covers the fixes of the session
     patches and mutter's side of the protocol, but not whether windows return to their workspaces, which needs
     a desktop.
 
@@ -29,13 +29,21 @@ Session restore: run-session.sh and driver.py
       startup-restore  the second run restores at startup
       startup-no-ids   like startup-restore, from a profile saved without IDs; Firefox 159 shows none of
                        its windows when the check is passed
+      startup-url      like startup-restore, with a page of its own in each window, and the second run starts
+                       with a URL on the command line while external links open in new windows; Firefox 159
+                       opens the URL as a tab of the first restored window
+      startup-url-tab  like startup-url, with external links opening in tabs, as by default; the URL opens as a
+                       tab of the first restored window, with and without the patches
 
     With the patches, every run reports 3 windows, 3 windows shown and exit status 0 (the second run of
     menu-restore first reports the 1 window it starts with), and the third run reports 3 windows restored by the
-    compositor. The script then prints "RESULT: OK" and exits with 0. A value which differs is marked with FAIL,
-    and the script exits with 1. With ubuntu:GNOME, an unpatched Firefox restores its windows without session
-    management, so only the check of the third run fails. The session requests are in the WAYLAND_DEBUG output of
-    each run in the output directory:
+    compositor. In startup-url, the second and the third run report 4 windows instead: in the second, 3 of them
+    are restored by the compositor, the URL is alone in the fourth, and that window has the focus. The second run
+    of startup-url and startup-url-tab also reports the pages of the tabs of each window. The script then prints
+    "RESULT: OK" and exits with 0. A value which differs is marked with FAIL, and the script exits with 1. With
+    ubuntu:GNOME, an unpatched Firefox restores its windows without session management, so only the checks of
+    windows restored by the compositor fail, and in startup-url also those of the fourth window. The session
+    requests are in the WAYLAND_DEBUG output of each run in the output directory:
 
       grep -h -o -E '(add|restore)_toplevel\([^)]*"[^"]*"|toplevel_session_v1#[0-9]+\.restored\(\)' /tmp/session-test/run*.log
 

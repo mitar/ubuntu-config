@@ -61,6 +61,17 @@ wayland-session-restore-on-gnome.patch
     protocol on GNOME, in widget/gtk/nsWindowWayland.cpp (MoveToWorkspace), widget/gtk/nsWindow.cpp
     (SessionRestoreFinished) and widget/gtk/nsAppShell.cpp (IsSessionRestoreSupported).
 
+session-restore-external-link-window.patch
+    Opens a link from another application in a window of its own when Firefox is not running yet, as it opens one
+    while Firefox runs, when external links open in new windows (browser.link.open_newwindow.override.external
+    set to 2). Without it, the session store restores the first window of the saved session into the window
+    Firefox opened for the link, so the link becomes a tab of that window, on whichever workspace it returns to.
+    With it, every saved window is restored into a window of its own, and the window with the link is shown last,
+    when session restore finishes (the second patch above), so that GNOME places it on the current workspace and
+    focuses it. Other values of the preference keep Firefox's behaviour, a tab in the first saved window (Mozilla
+    bug 1565050). tests/run-session.sh checks both with the startup-url and startup-url-tab scenarios. Not
+    reported to Mozilla yet.
+
 wasm-sandboxed-libraries.patch (debian-series)
     Builds graphite, ogg, hunspell, expat, woff2 and soundtouch as wasm sandboxed libraries, as Mozilla's own
     builds do, where the packaging disables them. Ubuntu 26.04's wasm32 toolchain has two bugs which block that,
