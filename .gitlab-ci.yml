@@ -30,7 +30,11 @@ variables:
 .build:
   stage: build
 
-  image: ubuntu:26.04
+  image: registry.gitlab.com/tozd/docker/base:ubuntu-resolute
+
+  variables:
+    # The image sets LC_ALL to en_US.UTF-8, and sbuild builds with C.UTF-8.
+    LC_ALL: C.UTF-8
 
   before_script:
     # GitLab's hosted runners set vm.overcommit_memory to 1, so the kernel grants any allocation, while Ubuntu's default
@@ -128,7 +132,7 @@ build_firefox:
 .test:
   stage: test
 
-  image: ubuntu:26.04
+  image: registry.gitlab.com/tozd/docker/base:ubuntu-resolute
 
   before_script:
     - apt-get update -q
