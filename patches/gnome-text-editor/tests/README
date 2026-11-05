@@ -69,6 +69,20 @@ Text Editor auto-save: run-text-editor-autosave.sh and text_editor_autosave.py
     written when the later save was requested, and fails when the machine writes the draft faster than that, since
     then it tests nothing. It ends Text Editor with SIGTERM, since quitting asks what to do with the unsaved draft.
 
+    cursor-moved opens a file of three lines, waits for the session saved with the cursor at its start, and presses
+    Down twice through mutter's remote desktop API (org.gnome.Mutter.RemoteDesktop on the private bus), which sends
+    the keys to the focused Text Editor window. It then waits for a session saved with the cursor elsewhere, so that a
+    save requested before the keys were pressed does not count. Where the cursor ends up is not checked, since the
+    first key is sometimes lost.
+
+    tab-selected, tab-moved, window-maximized and window-resized open two files in one window, the second one once the
+    first one is saved, because a file opened while the only page of a window still loads replaces that page. They wait
+    for the session saved with the second page selected, and then press keys the same way: Ctrl+Page Up selects the
+    first page, Ctrl+Shift+Page Up moves the selected page in front of the other one, Alt+F10 (mutter's
+    toggle-maximized) maximizes the window and Alt+F8 (mutter's begin-resize) followed by Right five times and Return
+    widens it. Each waits for a session saved with that change, and also checks that the state saved when Text Editor
+    quits has it, which shows that the keys had an effect. Super+Up does not maximize in the headless mutter.
+
     windows-restored-by-gtk runs Text Editor twice with the same XDG homes. The first run opens a file and quits, and
     with restore-window-placement.patch and the GTK of patches/gtk4/ in ROOT, GTK saves its window state. The second
     run starts without files, GTK restores the window before Text Editor enables auto-save, and Text Editor has to

@@ -73,6 +73,28 @@ schedule-auto-save-after-early-changes.patch, reschedule-auto-save-on-delay-chan
     restore-window-placement.patch. Drop each patch once Text Editor has the change. After a version bump, check
     that _editor_session_mark_dirty in src/editor-session.c is still the only place an auto-save is scheduled.
 
+auto-save-on-state-changes.patch
+    Text Editor's session state has more than the drafts and which windows and pages there are: the selection of
+    every page, the size of every window, whether it is maximized, the order of its pages and which one is selected,
+    and the language and the encoding of every page, all of which the session restore applies. Only changes of the
+    text, of the drafts and of which windows and pages there are schedule an auto-save, though, so a crash restores the
+    rest as it was at the last such change, usually the last edit. The patch marks the session dirty also from a
+    document's cursor-moved signal and its language and encoding notifications, from the notifications of a window's
+    default size and maximized state, and from its tab view's selected page and its page-reordered, page-attached and
+    page-detached signals, which cover a page dragged in from another window. Typing moves the cursor, but schedules no
+    further saves, because an auto-save already scheduled saves the cursor too, and a save after only such a change
+    writes session.gvariant without drafts. GTK updates the default size of a window when it is resized while it is not
+    maximized, fullscreen or tiled, which is the size the session state has.
+
+    The session state marks the window which had the focus as well, but the session restore does not read it, so a
+    change of focus schedules no auto-save.
+
+    The patch is local only and not proposed upstream. It is tested by the scenarios cursor-moved, tab-selected,
+    tab-moved, window-maximized and window-resized of tests/run-text-editor-autosave.sh. The language and the encoding
+    are set in dialogs, which the test does not drive. After a version bump, check that editor_session_add_page and
+    editor_session_add_window in src/editor-session.c still exist and that the session state has no new parts which
+    are changed without marking the session dirty.
+
 Check by hand after an upgrade, in a new login, so that the patched mutter runs, and with no Text Editor of the
 previous version still running in the background:
 

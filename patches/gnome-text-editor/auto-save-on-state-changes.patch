@@ -1,0 +1,119 @@
+Description: Autosave the session when anything else the session state has changes.
+ The session state has the selection of every page, the size of every window, whether it is maximized, the order of
+ its pages and which one is selected, and the language and the encoding of every page, and the session restore applies
+ them, but only changes of the text, of the drafts and of which windows and pages there are schedule an auto-save, so
+ a crash restores the rest as it was at the last such change, usually the last edit. The session is now marked dirty
+ also when the cursor of a document moves, when the default size or the maximized state of a window changes, when its
+ tab view selects another page or has a page reordered, attached or detached, which includes a page dragged in from
+ another window, and when the language or the encoding of a document changes. Typing moves the cursor, but schedules
+ no further saves, since an auto-save already scheduled saves the cursor as well, and a save after only such a change
+ writes session.gvariant without drafts. GTK updates the default size of a window when it is resized while it is not
+ maximized, fullscreen or tiled, which is the size the session state has.
+Author: Mitar
+Forwarded: no
+Last-Update: 2026-11-05
+diff --git a/src/editor-session.c b/src/editor-session.c
+index a388567..601402b 100644
+--- a/src/editor-session.c
++++ b/src/editor-session.c
+@@ -665,6 +665,27 @@ get_default_size (EditorSession *self,
+   return *width > 0 && *height > 0;
+ }
+ 
++static void
++editor_session_notify_cb (EditorSession *self,
++                          GParamSpec    *pspec,
++                          GObject       *object)
++{
++  g_assert (EDITOR_IS_SESSION (self));
++
++  _editor_session_mark_dirty (self);
++}
++
++static void
++editor_session_tab_view_page_cb (EditorSession *self,
++                                 AdwTabPage    *page,
++                                 int            position,
++                                 AdwTabView    *tab_view)
++{
++  g_assert (EDITOR_IS_SESSION (self));
++
++  _editor_session_mark_dirty (self);
++}
++
+ /**
+  * editor_session_add_window:
+  * @self: an #EditorSession
+@@ -680,6 +701,46 @@ editor_session_add_window (EditorSession *self,
+ 
+   g_ptr_array_add (self->windows, g_object_ref_sink (window));
+ 
++  /* The session state has the size of every window, whether it is
++   * maximized, the order of its pages, which include the pages moved
++   * there from another window, and which one of them is selected.
++   */
++  g_signal_connect_object (window,
++                           "notify::default-width",
++                           G_CALLBACK (editor_session_notify_cb),
++                           self,
++                           G_CONNECT_SWAPPED);
++  g_signal_connect_object (window,
++                           "notify::default-height",
++                           G_CALLBACK (editor_session_notify_cb),
++                           self,
++                           G_CONNECT_SWAPPED);
++  g_signal_connect_object (window,
++                           "notify::maximized",
++                           G_CALLBACK (editor_session_notify_cb),
++                           self,
++                           G_CONNECT_SWAPPED);
++  g_signal_connect_object (window->tab_view,
++                           "notify::selected-page",
++                           G_CALLBACK (editor_session_notify_cb),
++                           self,
++                           G_CONNECT_SWAPPED);
++  g_signal_connect_object (window->tab_view,
++                           "page-attached",
++                           G_CALLBACK (editor_session_tab_view_page_cb),
++                           self,
++                           G_CONNECT_SWAPPED);
++  g_signal_connect_object (window->tab_view,
++                           "page-detached",
++                           G_CALLBACK (editor_session_tab_view_page_cb),
++                           self,
++                           G_CONNECT_SWAPPED);
++  g_signal_connect_object (window->tab_view,
++                           "page-reordered",
++                           G_CALLBACK (editor_session_tab_view_page_cb),
++                           self,
++                           G_CONNECT_SWAPPED);
++
+   g_signal_emit (self, signals [WINDOW_ADDED], 0, window);
+ 
+   _editor_session_mark_dirty (self);
+@@ -920,6 +981,25 @@ editor_session_add_page (EditorSession *self,
+                            self,
+                            G_CONNECT_SWAPPED);
+ 
++  /* The session state has the selection of every page as well */
++  g_signal_connect_object (document,
++                           "cursor-moved",
++                           G_CALLBACK (editor_session_document_changed_cb),
++                           self,
++                           G_CONNECT_SWAPPED);
++
++  /* And the language and the encoding of every page */
++  g_signal_connect_object (document,
++                           "notify::language",
++                           G_CALLBACK (editor_session_notify_cb),
++                           self,
++                           G_CONNECT_SWAPPED);
++  g_signal_connect_object (document,
++                           "notify::encoding",
++                           G_CALLBACK (editor_session_notify_cb),
++                           self,
++                           G_CONNECT_SWAPPED);
++
+   g_ptr_array_add (self->pages, g_object_ref (page));
+ 
+   _editor_window_add_page (window, page);

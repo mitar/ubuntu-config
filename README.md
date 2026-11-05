@@ -346,6 +346,8 @@ loses only the last seconds of typing. Text Editor 50 stops doing so when its se
 saving, which the restored windows above do at every start, as does an auto-save delay other than the default, and it
 then saves only when it quits. It is patched to save in that case and after the delay changes, and to run its saves one
 at a time, so that a save of a large document cannot replace newer saved state with older (`patches/gnome-text-editor/`).
+It is also patched to save when the cursor moves, a window is resized or maximized, a tab is selected or moved, or the
+language or encoding of a document changes, so that a crash restores all of them as they were a few seconds before.
 
 ### Text Editor reads standard input without errors
 

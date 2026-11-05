@@ -39,6 +39,16 @@ SCENARIOS = [
 
 DEFAULT_DELAY = 3
 
+XK_DOWN = 0xff54
+XK_RIGHT = 0xff53
+XK_PAGE_UP = 0xff55
+XK_RETURN = 0xff0d
+XK_F8 = 0xffc5
+XK_F10 = 0xffc7
+XK_SHIFT_L = 0xffe1
+XK_CONTROL_L = 0xffe3
+XK_ALT_L = 0xffe9
+
 # The size of the text slow-draft-save reads from standard input. Text Editor writes a draft at a few megabytes a
 # second, so writing this one lasts several seconds.
 SLOW_DRAFT_MEGABYTES = 24
@@ -270,6 +280,179 @@ def run_slow_draft_scenario(text_editor, out):
         proc.wait()
 
 
+def saved_selections(path, uri):
+    """The selections saved for the pages of uri in Text Editor's session state at path, as [(line, offset), ...]."""
+    with open(path, "rb") as f:
+        data = f.read()
+    state = GLib.Variant.new_from_bytes(GLib.VariantType("a{sv}"), GLib.Bytes.new(data), False).unpack()
+    return [p.get("selection") for w in state.get("windows", []) for p in w.get("pages", []) if p.get("uri") == uri]
+
+
+def press_keys(chords):
+    """Presses key combinations one after the other, through mutter's remote desktop API, in the focused window.
+
+    Each chord is a tuple of keysyms, pressed in their order and released in the reverse one, so a modifier comes
+    first, as in (XK_CONTROL_L, XK_PAGE_UP).
+    """
+    bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+    desktop = Gio.DBusProxy.new_sync(bus, Gio.DBusProxyFlags.NONE, None, "org.gnome.Mutter.RemoteDesktop",
+                                     "/org/gnome/Mutter/RemoteDesktop", "org.gnome.Mutter.RemoteDesktop", None)
+    session_path = desktop.call_sync("CreateSession", None, Gio.DBusCallFlags.NONE, -1, None).unpack()[0]
+    session = Gio.DBusProxy.new_sync(bus, Gio.DBusProxyFlags.NONE, None, "org.gnome.Mutter.RemoteDesktop", session_path,
+                                     "org.gnome.Mutter.RemoteDesktop.Session", None)
+    session.call_sync("Start", None, Gio.DBusCallFlags.NONE, -1, None)
+    for chord in chords:
+        for keysym, pressed in [(k, True) for k in chord] + [(k, False) for k in reversed(chord)]:
+            session.call_sync("NotifyKeyboardKeysym", GLib.Variant("(ub)", (keysym, pressed)), Gio.DBusCallFlags.NONE, -1,
+                              None)
+            time.sleep(0.05)
+        time.sleep(0.2)
+    session.call_sync("Stop", None, Gio.DBusCallFlags.NONE, -1, None)
+
+
+def run_cursor_scenario(text_editor, out):
+    """Checks that moving the cursor is autosaved, since the session state has the selection of every page.
+
+    The cursor is moved with the Down key, which mutter's remote desktop API sends to the focused Text Editor window.
+    The save is recognized by its content, a selection which is no longer at the start of the file, so that a save
+    requested before the key was pressed does not count.
+    """
+    name = "cursor-moved"
+    base = os.path.join(out, name)
+    env = scenario_env(base)
+    delay = DEFAULT_DELAY
+    path, uri = make_file(base, "lines.txt")
+    with open(path, "w") as f:
+        f.write("one\ntwo\nthree\n")
+    start = [(0, 0), (0, 0)]
+
+    with open(os.path.join(base, "text-editor.log"), "w") as log:
+        started_ns = time.time_ns()
+        proc = subprocess.Popen([text_editor, path], stdout=log, stderr=subprocess.STDOUT, env=env)
+        if not wait_for_name():
+            check(False, "%s: Text Editor registered on the session bus" % name)
+            proc.kill()
+            proc.wait()
+            return
+        after = wait_for_save(env, started_ns, delay + SLACK, uri)
+        check(after is not None and saved_selections(state_path(env), uri) == [start],
+              "%s: the session was autosaved with the cursor at the start of the file" % name)
+
+        time.sleep(1)
+        pressed_ns = time.time_ns()
+        press_keys([(XK_DOWN,), (XK_DOWN,)])
+
+        def moved():
+            try:
+                return (os.stat(state_path(env)).st_mtime_ns > pressed_ns and
+                        saved_selections(state_path(env), uri) not in ([], [start]))
+            except (FileNotFoundError, GLib.Error):
+                return False
+
+        saved = wait_for(moved, delay + SLACK)
+        check(saved, "%s: the session was autosaved with the moved cursor (%s)" % (
+            name, saved_selections(state_path(env), uri) if saved else "not within %d s" % (delay + SLACK)))
+        quit_text_editor(proc)
+    check(proc.returncode == 0, "%s: Text Editor exited with status %s" % (name, proc.returncode))
+
+
+def first_window(path):
+    """The first window of Text Editor's session state at path, as its size, whether it is maximized, the URIs of its
+    pages in their order and the URI of its selected page, or None when there is no window or no state.
+    """
+    try:
+        with open(path, "rb") as f:
+            data = f.read()
+        state = GLib.Variant.new_from_bytes(GLib.VariantType("a{sv}"), GLib.Bytes.new(data), False).unpack()
+    except (FileNotFoundError, GLib.Error):
+        return None
+    windows = state.get("windows", [])
+    if not windows:
+        return None
+    pages = windows[0].get("pages", [])
+    return {
+        "size": windows[0].get("size"),
+        "maximized": windows[0].get("maximized"),
+        "pages": [p.get("uri") for p in pages],
+        "selected": next((p.get("uri") for p in pages if p.get("is-active")), None),
+    }
+
+
+# Each window scenario has the key combinations which change the window, a description of the change and whether the
+# saved window shows it, given the window saved before the keys. The keys go to the focused Text Editor window,
+# Ctrl+Page Up and Ctrl+Shift+Page Up to its tab view, Alt+F10 (toggle-maximized) and Alt+F8 (begin-resize) to
+# mutter's window keybindings.
+WINDOW_SCENARIOS = [
+    ("tab-selected", [(XK_CONTROL_L, XK_PAGE_UP)], "the first page selected",
+     lambda before, after: after["selected"] == before["pages"][0]),
+    ("tab-moved", [(XK_CONTROL_L, XK_SHIFT_L, XK_PAGE_UP)], "the selected page moved in front of the other one",
+     lambda before, after: after["pages"] == list(reversed(before["pages"]))),
+    ("window-maximized", [(XK_ALT_L, XK_F10)], "the window maximized",
+     lambda before, after: after["maximized"] is True),
+    ("window-resized", [(XK_ALT_L, XK_F8)] + [(XK_RIGHT,)] * 5 + [(XK_RETURN,)], "the window resized",
+     lambda before, after: after["size"] != before["size"]),
+]
+
+
+def run_window_scenario(text_editor, out, name, chords, description, changed):
+    """Checks that a change of a window, which the session state has, is autosaved.
+
+    Text Editor opens two files in one window, so that the second one is selected, and the keys then change the
+    window. The save is recognized by its content, so that a save requested before the keys were pressed does not
+    count. The state saved when Text Editor quits has to show the change as well, which shows that the keys had an
+    effect at all.
+    """
+    base = os.path.join(out, name)
+    env = scenario_env(base)
+    delay = DEFAULT_DELAY
+    first, first_uri = make_file(base, "first.txt")
+    second, second_uri = make_file(base, "second.txt")
+    path = state_path(env)
+
+    with open(os.path.join(base, "text-editor.log"), "w") as log:
+        started_ns = time.time_ns()
+        proc = subprocess.Popen([text_editor, first], stdout=log, stderr=subprocess.STDOUT, env=env)
+        if not wait_for_name():
+            check(False, "%s: Text Editor registered on the session bus" % name)
+            proc.kill()
+            proc.wait()
+            return
+        # A file opened while the only page of the window still loads replaces that page, so the second file is
+        # opened once the first one is saved with the session.
+        wait_for_save(env, started_ns, delay + SLACK, first_uri)
+        subprocess.run([text_editor, second], stdout=log, stderr=subprocess.STDOUT, env=env, check=True)
+
+        def both_saved():
+            window = first_window(path)
+            return window is not None and window["pages"] == [first_uri, second_uri] and window["selected"] == second_uri
+
+        ready = wait_for(both_saved, delay + SLACK)
+        check(ready, "%s: the session was autosaved with both files in one window, the second one selected" % name)
+        if ready:
+            before = first_window(path)
+            check(before["maximized"] is False, "%s: the window was saved as not maximized" % name)
+            time.sleep(1)
+            pressed_ns = time.time_ns()
+            press_keys(chords)
+
+            def saved_changed():
+                window = first_window(path)
+                try:
+                    return os.stat(path).st_mtime_ns > pressed_ns and window is not None and changed(before, window)
+                except FileNotFoundError:
+                    return False
+
+            saved = wait_for(saved_changed, delay + SLACK)
+            check(saved, "%s: the session was autosaved with %s (%s)" % (
+                name, description, first_window(path) if saved else "not within %d s" % (delay + SLACK)))
+        quit_text_editor(proc)
+    check(proc.returncode == 0, "%s: Text Editor exited with status %s" % (name, proc.returncode))
+    if ready:
+        after = first_window(path)
+        check(after is not None and changed(before, after),
+              "%s: quitting saved the session with %s, so the keys had an effect" % (name, description))
+
+
 def run_restored_windows_scenario(text_editor, out):
     """Checks that Text Editor autosaves after GTK restored its windows.
 
@@ -325,6 +508,9 @@ def main():
     for scenario in SCENARIOS:
         run_scenario(text_editor, out, scenario)
     run_slow_draft_scenario(text_editor, out)
+    run_cursor_scenario(text_editor, out)
+    for name, chords, description, changed in WINDOW_SCENARIOS:
+        run_window_scenario(text_editor, out, name, chords, description, changed)
     run_restored_windows_scenario(text_editor, out)
     print("RESULT: %s" % ("OK" if not failures else "%d check(s) failed" % len(failures)))
     return 0 if not failures else 1
