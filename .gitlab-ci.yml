@@ -25,8 +25,7 @@ variables:
 
 # The source is fetched and patched by rebuild-patched-packages.sh, as for a local build, and built as an unprivileged
 # user, as sbuild does, since some test suites check what root is allowed regardless, like reading a file without
-# permission. BUILD_SOURCES are repositories in sources.list.d/ to add, for a source which source-from says comes from
-# one of them.
+# permission.
 .build:
   stage: build
 
@@ -50,7 +49,10 @@ variables:
     - dpkg-divert --local --rename --remove /usr/bin/man
     - apt-get update -q
     - apt-get install -y -q --no-install-recommends ca-certificates dpkg-dev fakeroot patch python3
-    - for source in $BUILD_SOURCES; do cp "sources.list.d/$source" /etc/apt/sources.list.d/ && apt-get update -q; done
+    # Firefox's source comes from the Mozilla Team PPA, see patches/firefox/source-from. The PPA publishes only Firefox,
+    # Firefox ESR and Thunderbird, which no other package builds with, so it is added for every build.
+    - cp sources.list.d/mozillateam-ubuntu-ppa-resolute.sources /etc/apt/sources.list.d/
+    - apt-get update -q
     - useradd --create-home builder
 
   script:
@@ -71,12 +73,16 @@ variables:
     # kept as build/$PACKAGE.build, and only its end is printed when the build fails.
     - su builder -c "cd build/$PACKAGE/*/ && dpkg-buildpackage --build=binary --no-sign --jobs=$(nproc)" > "build/$PACKAGE.build" 2>&1 || { tail -n 200 "build/$PACKAGE.build"; exit 1; }
 
-  # The packages are for the tests of the same pipeline.
+  # The packages are for the tests of the same pipeline. Debug symbols are left out, which are 825 MB of the 952 MB of
+  # packages a build of Firefox produces.
   artifacts:
     when: always
     paths:
       - build/*/*.deb
       - build/*.build
+    exclude:
+      - build/*/*-dbg_*.deb
+      - build/*/*-mozsymbols_*.deb
     expire_in: 1 week
 
 build:
@@ -103,28 +109,10 @@ build_large:
   parallel:
     matrix:
       - PACKAGE:
+          - firefox
           - gtk+3.0
           - gtk4
           - mutter
-
-# Only the firefox package is kept, which the tests use, since all packages of a build together are about 900 MiB,
-# mostly debug symbols and language packs.
-build_firefox:
-  extends: .build
-
-  tags:
-    - saas-linux-2xlarge-amd64
-
-  variables:
-    PACKAGE: firefox
-    BUILD_SOURCES: mozillateam-ubuntu-ppa-resolute.sources
-
-  artifacts:
-    when: always
-    paths:
-      - build/firefox/firefox_*.deb
-      - build/firefox.build
-    expire_in: 1 week
 
 # Every test runs mutter from the build, extracted into /tmp/mutter-root, with the dependencies of Ubuntu's mutter
 # installed, and its GSettings schemas, which the patches add keys to, installed from the build with mutter-common. The
@@ -272,7 +260,10 @@ test_firefox_wasm:
   extends: .test
 
   needs:
-    - build_firefox
+    - job: build_large
+      parallel:
+        matrix:
+          - PACKAGE: firefox
 
   before_script:
     - apt-get update -q
@@ -290,11 +281,11 @@ test_firefox_session:
   extends: .test
 
   needs:
-    - build_firefox
     - job: build_large
       parallel:
         matrix:
           - PACKAGE:
+              - firefox
               - gtk+3.0
               - mutter
 
