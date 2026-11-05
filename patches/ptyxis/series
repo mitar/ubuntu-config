@@ -4,6 +4,7 @@ palette-highlight-colours.patch
 visual-bell-without-animations.patch
 working-directory-from-proc.patch
 register-app-id-before-gtk-init.patch
+restore-session-on-new-window-action.patch
 save-session-on-change.patch
 restore-window-placement.patch
 restore-screens.patch

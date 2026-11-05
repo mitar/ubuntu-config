@@ -33,6 +33,15 @@ register-app-id-before-gtk-init.patch
     by an empty application ID, because Ptyxis calls gtk_init before GTK registers the ID with
     the portal, and GNOME Shell leaves out inhibitors whose ID names no application.
 
+restore-session-on-new-window-action.patch
+    Upstream's commit b4777fd, on main but in no release yet. GNOME Shell starts Ptyxis from the
+    dock and the overview with its new-window action rather than by activating it, and Ptyxis
+    restored its session only when activated, so a terminal started that way always opened a
+    blank window (Ptyxis issue 560). The action now restores the session first when no window
+    is open. restore-window-placement.patch adds that the hidden windows GTK creates for its
+    restored window state do not count as open windows. Drop the patch once Ubuntu ships a
+    Ptyxis with the commit.
+
 save-session-on-change.patch
     Saves the session, the windows with their tabs and the directory of each tab, 3 seconds after
     it changes. Upstream saves it only when the last window is closed, so after a crash, a reset
@@ -40,8 +49,8 @@ save-session-on-change.patch
     windows, the next start restores the tabs of the last time all windows were closed, which
     can be days old (Ptyxis issue 603). A window created for a single command, such as one
     started from a .desktop file with Terminal=true, is left out of the session, since it would
-    be restored as a shell without its command. A candidate for an upstream merge request on
-    issue 603.
+    be restored as a shell without its command. Nothing is saved this way until the saved
+    session is restored, so that a Ptyxis started for something else does not replace it.
 
 restore-window-placement.patch
     Lets Ptyxis's windows return to their workspace, monitor, position and size when it restores

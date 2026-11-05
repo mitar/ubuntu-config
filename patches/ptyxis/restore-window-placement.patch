@@ -20,9 +20,9 @@ Description: Restore windows to their places with the session save/restore API o
  it runs with it.
 Author: Mitar
 Forwarded: not-needed
-Last-Update: 2026-11-04
+Last-Update: 2026-11-06
 diff --git a/src/ptyxis-application.c b/src/ptyxis-application.c
-index 91b0505..ec9de2d 100644
+index 85012b7..ca4fd0e 100644
 --- a/src/ptyxis-application.c
 +++ b/src/ptyxis-application.c
 @@ -227,7 +227,8 @@ ptyxis_application_open (GApplication  *app,
@@ -152,7 +152,17 @@ index 91b0505..ec9de2d 100644
  
    properties[PROP_CONTAINERS] =
      g_param_spec_object ("containers", NULL, NULL,
-@@ -2270,7 +2349,8 @@ has_session_window (PtyxisApplication *self)
+@@ -1501,7 +1580,8 @@ ptyxis_application_new_window_action (GSimpleAction *action,
+        windows != NULL;
+        windows = windows->next)
+     {
+-      if (PTYXIS_IS_WINDOW (windows->data))
++      if (PTYXIS_IS_WINDOW (windows->data) &&
++          !ptyxis_window_get_restore_pending (windows->data))
+         {
+           has_windows = TRUE;
+           break;
+@@ -2289,7 +2369,8 @@ has_session_window (PtyxisApplication *self)
         iter = iter->next)
      {
        if (PTYXIS_IS_WINDOW (iter->data) &&

@@ -134,7 +134,10 @@ def activate(action):
                    check=True, stdout=subprocess.DEVNULL)
 
 
-def start(ptyxis, log_path):
+def start(ptyxis, log_path, launch="command-line"):
+    """Starts Ptyxis from its command line, or with launch "new-window" or "activate" as a D-Bus service which is then
+    asked to activate its new-window action, as GNOME Shell does when Ptyxis is started from the dock or the
+    overview, or to activate itself, as D-Bus activation without an action does."""
     log = open(log_path, "w")
     # ptyxis-agent starts each shell through systemd-run --user when systemd-run is found, which needs the user's
     # systemd manager in XDG_RUNTIME_DIR, and the test has a runtime directory of its own. A systemd-run first on
@@ -147,7 +150,20 @@ def start(ptyxis, log_path):
     os.chmod(stub, 0o755)
     env = dict(os.environ, WAYLAND_DEBUG="1", PATH=os.path.realpath(stub_dir) + ":" + os.environ["PATH"])
     # A process group of its own, so that the crash ends the agent and the shells with it.
-    return subprocess.Popen([ptyxis], stdout=log, stderr=subprocess.STDOUT, env=env, start_new_session=True)
+    if launch == "command-line":
+        return subprocess.Popen([ptyxis], stdout=log, stderr=subprocess.STDOUT, env=env, start_new_session=True)
+    proc = subprocess.Popen([ptyxis, "--gapplication-service"], stdout=log, stderr=subprocess.STDOUT, env=env,
+                            start_new_session=True)
+    bus = Gio.bus_get_sync(Gio.BusType.SESSION)
+    wait_until(lambda: bus.call_sync("org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus",
+                                     "NameHasOwner", GLib.Variant("(s)", (APP_ID,)), GLib.VariantType("(b)"),
+                                     0, -1, None).unpack()[0])
+    if launch == "new-window":
+        method, args = "ActivateAction", GLib.Variant("(sava{sv})", ("new-window", [], {}))
+    else:
+        method, args = "Activate", GLib.Variant("(a{sv})", ({},))
+    bus.call_sync(APP_ID, "/org/gnome/Ptyxis", "org.freedesktop.Application", method, args, None, 0, -1, None)
+    return proc
 
 
 def end_group(proc):
@@ -283,13 +299,14 @@ def main():
     mode = stat.S_IMODE(os.stat(screens_path()).st_mode)
     check(mode == 0o600, "the screens file is readable only by its owner (mode %o)" % mode)
 
-    # Run 2: with a new mutter, restores both windows under their names of run 1, each tab with the screen it had,
-    # dimmed, above the output of a new shell started in the tab's directory. A tab which is not the selected one of its window starts
-    # its shell only once it is shown, so it shows just the screen of run 1.
+    # Run 2: with a new mutter, and Ptyxis started as GNOME Shell's dock starts it, restores both windows under their
+    # names of run 1, each tab with the screen it had, dimmed, above the output of a new shell started in the tab's
+    # directory. A tab which is not the selected one of its window starts its shell only once it is shown, so it shows
+    # just the screen of run 1.
     with open(os.path.join(home, "run"), "w") as f:
         f.write("2\n")
     log2 = os.path.join(out, "run2.log")
-    proc = start(ptyxis, log2)
+    proc = start(ptyxis, log2, launch="new-window")
     check(wait_until(lambda: len(scan(log2)["restored_toplevel"]) >= 2), "run 2: the compositor restored both windows")
     check(wait_until(lambda: all_screens().count("second run in") == 2),
           "run 2: the session saved the screens of the new shells")
@@ -333,9 +350,10 @@ def main():
     print("Ptyxis session after closing: %s" % session_closed)
     check(window_dirs(session_closed) == window_dirs(last_window), "run 2: the session kept the window closed last")
 
-    # Run 3: restores the window closed last, with new shells in the directories of its tabs and without screens.
+    # Run 3: with Ptyxis activated without an action, restores the window closed last, with new shells in the
+    # directories of its tabs and without screens.
     log3 = os.path.join(out, "run3.log")
-    proc = start(ptyxis, log3)
+    proc = start(ptyxis, log3, launch="activate")
     check(wait_until(lambda: len(scan(log3)["restored_toplevel"]) >= 1), "run 3: the compositor restored the window")
     check(wait_until(lambda: os.path.exists(screens_path()) and "second run in" in all_screens()),
           "run 3: the session saved the screen of the new shell")

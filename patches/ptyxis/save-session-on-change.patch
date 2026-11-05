@@ -17,9 +17,9 @@ Description: Save the session a few seconds after it changes, not only when the 
 Author: Mitar
 Bug: https://gitlab.gnome.org/chergert/ptyxis/-/work_items/603
 Forwarded: no
-Last-Update: 2026-11-04
+Last-Update: 2026-11-06
 diff --git a/src/ptyxis-application.c b/src/ptyxis-application.c
-index e06d672..91b0505 100644
+index 07593df..85012b7 100644
 --- a/src/ptyxis-application.c
 +++ b/src/ptyxis-application.c
 @@ -40,6 +40,11 @@
@@ -91,7 +91,7 @@ index e06d672..91b0505 100644
    g_clear_pointer (&self->next_title_prefix, g_free);
    g_clear_pointer (&self->exited, g_hash_table_unref);
    g_clear_pointer (&self->system_font_name, g_free);
-@@ -2137,23 +2171,78 @@ ptyxis_application_get_os_name (PtyxisApplication *self)
+@@ -2156,23 +2190,78 @@ ptyxis_application_get_os_name (PtyxisApplication *self)
    return ptyxis_client_get_os_name (self->client);
  }
  
@@ -175,7 +175,7 @@ index e06d672..91b0505 100644
  }
  
  void
-@@ -2164,24 +2253,83 @@ ptyxis_application_save_session (PtyxisApplication *self)
+@@ -2183,24 +2272,83 @@ ptyxis_application_save_session (PtyxisApplication *self)
  
    g_return_if_fail (PTYXIS_IS_APPLICATION (self));
  

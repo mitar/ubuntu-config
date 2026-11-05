@@ -16,6 +16,11 @@ Ptyxis session restore: run-ptyxis-session.sh and ptyxis_session.py
     the window closed last, with new shells and without screens. Without patches/mutter/save-toplevels-on-change.patch
     the new mutter knows neither the session nor the windows, and the restore checks of the second run fail.
 
+    Each run starts Ptyxis in another way: the first from its command line, the second as a D-Bus service asked to
+    activate its new-window action, as GNOME Shell starts it from the dock and the overview, and the third as a D-Bus
+    service asked to activate itself. Without restore-session-on-new-window-action.patch the second run opens a blank
+    window instead of restoring the session.
+
     The test presses keys through mutter's remote desktop interface. Without a keyboard, mutter gives no window the
     keyboard focus, and GTK saves its window state only while a window of the application has it.
 
