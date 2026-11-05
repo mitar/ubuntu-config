@@ -69,6 +69,12 @@ Text Editor auto-save: run-text-editor-autosave.sh and text_editor_autosave.py
     written when the later save was requested, and fails when the machine writes the draft faster than that, since
     then it tests nothing. It ends Text Editor with SIGTERM, since quitting asks what to do with the unsaved draft.
 
+    windows-restored-by-gtk runs Text Editor twice with the same XDG homes. The first run opens a file and quits, and
+    with restore-window-placement.patch and the GTK of patches/gtk4/ in ROOT, GTK saves its window state. The second
+    run starts without files, GTK restores the window before Text Editor enables auto-save, and Text Editor has to
+    autosave after the start and after opening a second file. When GTK saved no window state, as with Ubuntu's GTK or
+    a Text Editor without the patch, the scenario prints a line starting with "skip:" and checks nothing.
+
     ROOT is a directory Text Editor was installed into, for example with meson install --destdir, or its package was
     extracted into, with libgtk-4-1 extracted there too when it is to run with that GTK:
 

@@ -1,0 +1,55 @@
+Description: Reschedule a pending auto-save when the auto-save delay changes.
+ Changing auto-save-delay removes the pending auto-save and marks the session dirty to schedule one with the new
+ delay, but the session is still dirty from the change which scheduled the removed one, so neither that change nor
+ any later one is autosaved until Text Editor quits. This happens when auto-save-delay changes, with gsettings or
+ dconf-editor, while Text Editor runs and within the delay after a change. A scheduled auto-save is now tracked by its
+ timeout source, and the separate dirty flag, which removing the source left set, is gone.
+Author: Mitar
+Forwarded: no
+Last-Update: 2026-11-05
+diff --git a/src/editor-session-private.h b/src/editor-session-private.h
+index aa7b729..ba26b56 100644
+--- a/src/editor-session-private.h
++++ b/src/editor-session-private.h
+@@ -52,7 +52,6 @@ struct _EditorSession
+   guint               auto_save : 1;
+   guint               did_restore : 1;
+   guint               restore_pages : 1;
+-  guint               dirty : 1;
+   guint               can_clear_history : 1;
+ };
+ 
+diff --git a/src/editor-session.c b/src/editor-session.c
+index c15e396..27cf0c6 100644
+--- a/src/editor-session.c
++++ b/src/editor-session.c
+@@ -1403,8 +1403,6 @@ editor_session_save_async (EditorSession       *self,
+   g_return_if_fail (EDITOR_IS_SESSION (self));
+   g_return_if_fail (!cancellable || G_IS_CANCELLABLE (cancellable));
+ 
+-  self->dirty = FALSE;
+-
+   g_variant_builder_init (&builder, G_VARIANT_TYPE ("a{sv}"));
+   g_variant_builder_add_parsed (&builder, "{'version', <%u>}", 1);
+   add_draft_state (self, &builder);
+@@ -2630,16 +2628,13 @@ _editor_session_mark_dirty (EditorSession *self)
+ {
+   g_return_if_fail (EDITOR_IS_SESSION (self));
+ 
+-  /* The session is marked dirty only together with scheduling the
+-   * auto-save, as nothing would save it while auto-save is disabled.
+-   * Enabling auto-save marks the session dirty itself.
++  /* An auto-save already scheduled saves this change as well. Nothing
++   * saves the session while auto-save is disabled, and enabling auto-save
++   * marks the session dirty itself.
+    */
+-  if (self->dirty || !self->auto_save)
++  if (!self->auto_save || self->auto_save_source != 0)
+     return;
+ 
+-  self->dirty = TRUE;
+-
+-  g_clear_handle_id (&self->auto_save_source, g_source_remove);
+   self->auto_save_source = g_timeout_add_seconds (self->auto_save_delay,
+                                                   editor_session_auto_save_timeout_cb,
+                                                   self);

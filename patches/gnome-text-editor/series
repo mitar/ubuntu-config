@@ -1,2 +1,5 @@
 restore-window-placement.patch
 hide-restored-banners.patch
+schedule-auto-save-after-early-changes.patch
+reschedule-auto-save-on-delay-change.patch
+run-saves-one-at-a-time.patch

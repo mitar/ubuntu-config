@@ -329,6 +329,14 @@ own state file and reads it whenever Text Editor starts. It does not register Te
 would otherwise start Text Editor again at the next login and then skip that login's autostart applications. Upstream
 GTK hid the API again for 4.24, because the asynchronous API meant to replace it was not ready.
 
+### Text Editor keeps unsaved documents also after a crash
+
+Text Editor saves its unsaved documents a few seconds after every change, so that a crash or a reset of the machine
+loses only the last seconds of typing. Text Editor 50 stops doing so when its session changes before it enables
+saving, which the restored windows above do at every start, as does an auto-save delay other than the default, and it
+then saves only when it quits. It is patched to save in that case and after the delay changes, and to run its saves one
+at a time, so that a save of a large document cannot replace newer saved state with older (`patches/gnome-text-editor/`).
+
 ### Terminal windows return after a crash
 
 When the terminal starts after a crash, a reset of the machine or a logout with terminal windows open, its windows

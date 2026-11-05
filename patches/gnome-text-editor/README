@@ -44,6 +44,35 @@ hide-restored-banners.patch
     whether a document is unsaved or modified. The patch removes the branch for restored documents from
     editor_info_bar_update in src/editor-info-bar.c. Drop it once Text Editor no longer shows these banners.
 
+schedule-auto-save-after-early-changes.patch, reschedule-auto-save-on-delay-change.patch, run-saves-one-at-a-time.patch
+    Text Editor autosaves its session, the drafts of unsaved documents and session.gvariant, auto-save-delay seconds
+    (3 by default) after a change, so that a crash or a power loss loses only the last seconds. Three bugs in
+    src/editor-session.c undo that, and each patch fixes one of them. The patches are the three commits of the
+    branch fix-autosave of https://gitlab.gnome.org/mitar/gnome-text-editor, written against Text Editor's main
+    branch, which they apply to as they do to 50.1. They are not yet proposed upstream as a merge request.
+
+    schedule-auto-save-after-early-changes.patch: Text Editor schedules an auto-save only when a change marks a
+    clean session dirty, and a change while auto-save is still disabled marks the session dirty without scheduling
+    one, after which nothing is autosaved until Text Editor quits. With restore-window-placement.patch this happens
+    at every start after the first, because Text Editor creates the windows GTK restores before it enables
+    auto-save. Without the patch it happens with any auto-save-delay other than the default, which Text Editor
+    applies first. The patch marks the session dirty only together with scheduling an auto-save.
+
+    reschedule-auto-save-on-delay-change.patch: changing auto-save-delay while an auto-save is pending removes it,
+    and marking the session dirty again schedules none, because the session is still dirty. The patch tracks a
+    scheduled auto-save by its timeout source instead of a separate dirty flag.
+
+    run-saves-one-at-a-time.patch: a save captures the session state when it is requested, and writes it after its
+    drafts, which takes seconds for a large draft, so a later save could write its newer state first and then be
+    overwritten with the older one. The patch runs saves one at a time, in the order they are requested, replaces
+    a waiting auto-save by a newer one, and completes the saves still waiting when a save for shutdown finishes
+    without running them, since Text Editor quits then.
+
+    The patches add no test to Text Editor's test suite, which has no tests of the session. They are tested by
+    tests/run-text-editor-autosave.sh, see tests/README, whose scenario windows-restored-by-gtk covers the start with
+    restore-window-placement.patch. Drop each patch once Text Editor has the change. After a version bump, check
+    that _editor_session_mark_dirty in src/editor-session.c is still the only place an auto-save is scheduled.
+
 Check by hand after an upgrade, in a new login, so that the patched mutter runs, and with no Text Editor of the
 previous version still running in the background:
 

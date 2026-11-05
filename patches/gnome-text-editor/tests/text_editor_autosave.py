@@ -270,11 +270,62 @@ def run_slow_draft_scenario(text_editor, out):
         proc.wait()
 
 
+def run_restored_windows_scenario(text_editor, out):
+    """Checks that Text Editor autosaves after GTK restored its windows.
+
+    With patches/gnome-text-editor/restore-window-placement.patch and the save/restore API of patches/gtk4/, GTK
+    restores the windows of the last run before Text Editor enables auto-save, and Text Editor creates a window for
+    each of them, which changes the session while auto-save is still disabled. The first run opens a file and quits,
+    so that GTK saves its window state, and the second run restores it. Without GTK's window state there is nothing to
+    restore, as with Ubuntu's GTK or a Text Editor without the patch, and the scenario is skipped.
+    """
+    name = "windows-restored-by-gtk"
+    base = os.path.join(out, name)
+    env = scenario_env(base)
+    delay = DEFAULT_DELAY
+    first, first_uri = make_file(base, "first.txt")
+    second, second_uri = make_file(base, "second.txt")
+
+    with open(os.path.join(base, "text-editor-run1.log"), "w") as log:
+        proc = subprocess.Popen([text_editor, first], stdout=log, stderr=subprocess.STDOUT, env=env)
+        if not wait_for_name():
+            check(False, "%s: run 1: Text Editor registered on the session bus" % name)
+            proc.kill()
+            proc.wait()
+            return
+        time.sleep(2)
+        quit_text_editor(proc)
+    gtk_state = os.path.join(env["XDG_STATE_HOME"], "%s@fallback.state" % APP_ID)
+    if not os.path.exists(gtk_state):
+        print("skip: %s: GTK saved no window state, so it restores no window" % name)
+        return
+
+    with open(os.path.join(base, "text-editor-run2.log"), "w") as log:
+        started_ns = time.time_ns()
+        proc = subprocess.Popen([text_editor], stdout=log, stderr=subprocess.STDOUT, env=env)
+        if not wait_for_name():
+            check(False, "%s: run 2: Text Editor registered on the session bus" % name)
+            proc.kill()
+            proc.wait()
+            return
+        after = wait_for_save(env, started_ns, delay + SLACK, first_uri)
+        check(after is not None, "%s: run 2: the session was autosaved after GTK restored the window (%s)" % (
+            name, describe(after, delay + SLACK)))
+        opened_ns = time.time_ns()
+        subprocess.run([text_editor, second], stdout=log, stderr=subprocess.STDOUT, env=env, check=True)
+        after = wait_for_save(env, opened_ns, delay + SLACK, second_uri)
+        check(after is not None, "%s: run 2: the session was autosaved with the second file (%s)" % (
+            name, describe(after, delay + SLACK)))
+        quit_text_editor(proc)
+    check(proc.returncode == 0, "%s: run 2: Text Editor exited with status %s" % (name, proc.returncode))
+
+
 def main():
     text_editor, out = sys.argv[1:3]
     for scenario in SCENARIOS:
         run_scenario(text_editor, out, scenario)
     run_slow_draft_scenario(text_editor, out)
+    run_restored_windows_scenario(text_editor, out)
     print("RESULT: %s" % ("OK" if not failures else "%d check(s) failed" % len(failures)))
     return 0 if not failures else 1
 

@@ -1,0 +1,200 @@
+Description: Run session saves one at a time.
+ A save captures the session state when it is requested and writes it only after the drafts it saves are written.
+ Saves run at the same time, so a save writing a large draft finishes after a later one, which has no draft left to
+ write, and writes its older state over the newer one, which a crash then restores. Text Editor writes a draft at a
+ few megabytes a second, so a large draft keeps a save busy for seconds. Saves now run one at a time, in the order they
+ are requested, each with the state from when it was requested. A waiting auto-save is replaced by a newer one, and
+ saves still waiting when a save for shutdown finishes are completed without running, since Text Editor quits then.
+Author: Mitar
+Forwarded: no
+Last-Update: 2026-11-05
+diff --git a/src/editor-session-private.h b/src/editor-session-private.h
+index ba26b56..de459d6 100644
+--- a/src/editor-session-private.h
++++ b/src/editor-session-private.h
+@@ -48,11 +48,14 @@ struct _EditorSession
+   guint               auto_save_delay;
+   guint               auto_save_source;
+ 
++  GQueue              pending_saves;
++
+ 
+   guint               auto_save : 1;
+   guint               did_restore : 1;
+   guint               restore_pages : 1;
+   guint               can_clear_history : 1;
++  guint               saving : 1;
+ };
+ 
+ EditorSession *_editor_session_new                    (void);
+diff --git a/src/editor-session.c b/src/editor-session.c
+index 27cf0c6..a388567 100644
+--- a/src/editor-session.c
++++ b/src/editor-session.c
+@@ -45,6 +45,8 @@ typedef struct
+   GPtrArray    *forgot;
+   guint         n_active;
+   guint         remember_recent_files : 1;
++  guint         shutting_down : 1;
++  guint         auto_save : 1;
+ } EditorSessionSave;
+ 
+ typedef struct
+@@ -1387,21 +1389,26 @@ editor_session_save_draft_cb (GObject      *object,
+                                          g_steal_pointer (&task));
+ }
+ 
+-void
+-editor_session_save_async (EditorSession       *self,
++static void editor_session_run_save          (EditorSession *self,
++                                              GTask         *owned_task);
++static void editor_session_save_completed_cb (EditorSession *self,
++                                              GParamSpec    *pspec,
++                                              GTask         *task);
++
++static void
++editor_session_queue_save (EditorSession       *self,
+                            gboolean             shutting_down,
++                           gboolean             auto_save,
+                            GCancellable        *cancellable,
+                            GAsyncReadyCallback  callback,
+                            gpointer             user_data)
+ {
+   g_autoptr(GVariant) vstate = NULL;
+   g_autoptr(GTask) task = NULL;
+-  g_autofree gchar *drafts_dir = NULL;
+   EditorSessionSave *state;
+   GVariantBuilder builder;
+ 
+-  g_return_if_fail (EDITOR_IS_SESSION (self));
+-  g_return_if_fail (!cancellable || G_IS_CANCELLABLE (cancellable));
++  g_assert (EDITOR_IS_SESSION (self));
+ 
+   g_variant_builder_init (&builder, G_VARIANT_TYPE ("a{sv}"));
+   g_variant_builder_add_parsed (&builder, "{'version', <%u>}", 1);
+@@ -1441,12 +1448,63 @@ editor_session_save_async (EditorSession       *self,
+         g_ptr_array_add (state->forgot, g_object_ref (file));
+     }
+ 
++  state->shutting_down = !!shutting_down;
++  state->auto_save = !!auto_save;
++
+   g_application_hold (state->app);
+ 
+   task = g_task_new (self, cancellable, callback, user_data);
+   g_task_set_source_tag (task, editor_session_save_async);
+   g_task_set_task_data (task, state, (GDestroyNotify) editor_session_save_free);
+ 
++  /* Saves run one at a time, in the order they are requested, each with
++   * the state of the session from when it was requested. A save writes
++   * that state only after it wrote its drafts, so a save writing a large
++   * draft would otherwise finish after a later one and replace the newer
++   * state that one wrote.
++   */
++  if (self->saving)
++    {
++      GTask *last = g_queue_peek_tail (&self->pending_saves);
++
++      /* A waiting auto-save is replaced by this newer one. */
++      if (auto_save &&
++          last != NULL &&
++          ((EditorSessionSave *)g_task_get_task_data (last))->auto_save)
++        {
++          g_queue_pop_tail (&self->pending_saves);
++          g_task_return_boolean (last, TRUE);
++          g_object_unref (last);
++        }
++
++      g_queue_push_tail (&self->pending_saves, g_steal_pointer (&task));
++      return;
++    }
++
++  editor_session_run_save (self, g_steal_pointer (&task));
++}
++
++/* Saves the drafts and then writes the state of the session saved with
++ * @owned_task, whose reference is passed to the save.
++ */
++static void
++editor_session_run_save (EditorSession *self,
++                         GTask         *owned_task)
++{
++  g_autoptr(GTask) task = owned_task;
++  g_autofree gchar *drafts_dir = NULL;
++  EditorSessionSave *state = g_task_get_task_data (task);
++
++  g_assert (EDITOR_IS_SESSION (self));
++  g_assert (!self->saving);
++
++  self->saving = TRUE;
++  g_signal_connect_object (task,
++                           "notify::completed",
++                           G_CALLBACK (editor_session_save_completed_cb),
++                           self,
++                           G_CONNECT_SWAPPED);
++
+   drafts_dir = g_build_filename (g_get_user_data_dir (), APP_ID, "drafts", NULL);
+   g_mkdir_with_parents (drafts_dir, 0750);
+ 
+@@ -1486,6 +1544,52 @@ editor_session_save_async (EditorSession       *self,
+                                          g_steal_pointer (&task));
+ }
+ 
++void
++editor_session_save_async (EditorSession       *self,
++                           gboolean             shutting_down,
++                           GCancellable        *cancellable,
++                           GAsyncReadyCallback  callback,
++                           gpointer             user_data)
++{
++  g_return_if_fail (EDITOR_IS_SESSION (self));
++  g_return_if_fail (!cancellable || G_IS_CANCELLABLE (cancellable));
++
++  editor_session_queue_save (self, shutting_down, FALSE, cancellable, callback, user_data);
++}
++
++static void
++editor_session_save_completed_cb (EditorSession *self,
++                                  GParamSpec    *pspec,
++                                  GTask         *task)
++{
++  EditorSessionSave *state = g_task_get_task_data (task);
++  GTask *next;
++
++  g_assert (EDITOR_IS_SESSION (self));
++  g_assert (G_IS_TASK (task));
++
++  self->saving = FALSE;
++
++  /* The application quits once a save for shutdown has finished, so the
++   * saves waiting for it are completed without running. They would write
++   * a state which is not marked as shut down, and which has no windows
++   * when the last window was closed, over the one saved for shutdown.
++   */
++  if (state->shutting_down)
++    {
++      while ((next = g_queue_pop_head (&self->pending_saves)))
++        {
++          g_task_return_boolean (next, TRUE);
++          g_object_unref (next);
++        }
++
++      return;
++    }
++
++  if ((next = g_queue_pop_head (&self->pending_saves)))
++    editor_session_run_save (self, next);
++}
++
+ gboolean
+ editor_session_save_finish (EditorSession  *self,
+                             GAsyncResult   *result,
+@@ -2467,7 +2571,7 @@ editor_session_auto_save_timeout_cb (gpointer user_data)
+   self->auto_save_source = 0;
+ 
+   g_debug ("Performing auto-save of session state");
+-  editor_session_save_async (self, FALSE, NULL, NULL, NULL);
++  editor_session_queue_save (self, FALSE, TRUE, NULL, NULL, NULL);
+ 
+   return G_SOURCE_REMOVE;
+ }

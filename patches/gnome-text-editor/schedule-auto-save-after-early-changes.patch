@@ -1,0 +1,35 @@
+Description: Schedule auto-save for changes made before it is enabled.
+ Text Editor schedules an auto-save only when a change marks a clean session dirty. A change while auto-save is still
+ disabled marks the session dirty without scheduling one, so enabling auto-save and every later change find the
+ session dirty already, and nothing is autosaved until Text Editor quits, so a crash loses every change since the
+ start. With restore-window-placement.patch, every start after the first changes the session that early, because
+ Text Editor creates a window for each one GTK restores before auto-save is enabled. Text Editor itself does the same
+ with an auto-save-delay other than the default, which it applies before it enables auto-save. The session is now
+ marked dirty only when auto-save is enabled and an auto-save is scheduled with it.
+Author: Mitar
+Forwarded: no
+Last-Update: 2026-11-05
+diff --git a/src/editor-session.c b/src/editor-session.c
+index 36bee4a..c15e396 100644
+--- a/src/editor-session.c
++++ b/src/editor-session.c
+@@ -2630,14 +2630,15 @@ _editor_session_mark_dirty (EditorSession *self)
+ {
+   g_return_if_fail (EDITOR_IS_SESSION (self));
+ 
+-  if (self->dirty)
++  /* The session is marked dirty only together with scheduling the
++   * auto-save, as nothing would save it while auto-save is disabled.
++   * Enabling auto-save marks the session dirty itself.
++   */
++  if (self->dirty || !self->auto_save)
+     return;
+ 
+   self->dirty = TRUE;
+ 
+-  if (!self->auto_save)
+-    return;
+-
+   g_clear_handle_id (&self->auto_save_source, g_source_remove);
+   self->auto_save_source = g_timeout_add_seconds (self->auto_save_delay,
+                                                   editor_session_auto_save_timeout_cb,
