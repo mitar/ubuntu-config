@@ -114,6 +114,42 @@ build_firefox:
       - build/firefox.build
     expire_in: 1 week
 
+# TODO: Remove this job once the timeout of the gtk:image test in the build of GTK 4 is resolved.
+#       The test expects bad-image-data/bug793470-crasher.png, a 935820x854554 PNG, to fail to load. GTK's PNG loader
+#       asks for an 800 GB buffer for it, which the kernel refuses at once when vm.overcommit_memory is 0. meson runs
+#       tests with MALLOC_PERTURB_, with which glibc writes every block it hands out, so on a kernel which grants the
+#       buffer, the test writes until meson's timeout ends it. The job shows the runner's setting and runs the subtest from
+#       Ubuntu's own gtk-4-tests, which the patches do not change, with and without MALLOC_PERTURB_, showing its memory use.
+diagnose_gtk4_image:
+  stage: build
+
+  image: ubuntu:26.04
+
+  tags:
+    - saas-linux-2xlarge-amd64
+
+  needs: []
+
+  script:
+    - "sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/ubuntu.sources"
+    - apt-get update -q
+    - apt-get install -y -q --no-install-recommends gtk-4-tests procps xz-utils
+    - apt-get source --download-only gtk4
+    - tar -xf gtk4_*.orig.tar.xz --strip-components=3 -C /usr/libexec/installed-tests/gtk-4.0/gdk --wildcards '*/testsuite/gdk/bad-image-data/*'
+    - cat /proc/sys/vm/overcommit_memory
+    - grep -E 'MemTotal|SwapTotal|CommitLimit' /proc/meminfo
+    - useradd --create-home tester
+    - cd /usr/libexec/installed-tests/gtk-4.0/gdk
+    - su tester -c "timeout 120 ./image" || echo "exit status $?"
+    - |
+      su tester -c "MALLOC_PERTURB_=244 exec timeout 60 ./image -p /image/fail/bug793470-crasher.png" &
+      for i in $(seq 12); do
+        sleep 5
+        pid=$(pgrep -u tester -x image) || break
+        echo "after $((i * 5)) s: $(grep VmRSS "/proc/$pid/status")"
+      done
+      wait $! || echo "exit status $?"
+
 # Every test runs mutter from the build, extracted into /tmp/mutter-root, with the dependencies of Ubuntu's mutter
 # installed, and its GSettings schemas, which the patches add keys to, installed from the build with mutter-common. The
 # tests run as an unprivileged user, with bash as login shell, which the Ptyxis test starts in its tabs. TEST_PACKAGES
