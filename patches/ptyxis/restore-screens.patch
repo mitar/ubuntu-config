@@ -17,9 +17,9 @@ Description: Show the screen each tab had when the session ended, dimmed, when i
  light text on a dark background but darkens dark text on a light one.
 Author: Mitar
 Forwarded: no
-Last-Update: 2026-11-04
+Last-Update: 2026-11-05
 diff --git a/src/ptyxis-application.c b/src/ptyxis-application.c
-index ec9de2d..dc71119 100644
+index ec9de2d..8be0d7e 100644
 --- a/src/ptyxis-application.c
 +++ b/src/ptyxis-application.c
 @@ -66,6 +66,18 @@ struct _PtyxisApplication
@@ -109,7 +109,7 @@ index ec9de2d..dc71119 100644
  
    g_clear_pointer (&self->next_title_prefix, g_free);
    g_clear_pointer (&self->exited, g_hash_table_unref);
-@@ -2324,19 +2367,148 @@ ptyxis_application_write_session (PtyxisApplication *self,
+@@ -2324,19 +2367,151 @@ ptyxis_application_write_session (PtyxisApplication *self,
                                         g_object_ref (self));
  }
  
@@ -247,7 +247,10 @@ index ec9de2d..dc71119 100644
 +  if (is_standalone (self))
 +    return;
 +
-+  if (screens != NULL)
++  /* No tab with a screen is the same as no screens saved, and the empty
++   * dictionary would serialize to no data at all, which GLib refuses to write.
++   */
++  if (screens != NULL && g_variant_n_children (screens) > 0)
 +    {
 +      g_autoptr(GBytes) screens_bytes = g_variant_get_data_as_bytes (screens);
 +
@@ -260,7 +263,7 @@ index ec9de2d..dc71119 100644
  }
  
  static gboolean
-@@ -2378,7 +2550,7 @@ ptyxis_application_save_session_timeout_cb (gpointer user_data)
+@@ -2378,7 +2553,7 @@ ptyxis_application_save_session_timeout_cb (gpointer user_data)
    if (!has_session_window (self))
      return;
  

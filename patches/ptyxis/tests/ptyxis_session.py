@@ -33,7 +33,8 @@ PATTERNS = {
     "error": re.compile(r'wl_display#\d+\.error\(|[Pp]rotocol error'),
 }
 
-# The first run prints "first run, tab N" in each new shell, later runs "second run in" and the directory.
+# The first run prints "first run, tab N" in each new shell, later runs "second run in" and the directory. The first
+# tab shows nothing for its first 5 seconds, so that Ptyxis saves its session once while no tab has a screen.
 BASHRC = r"""# Written by ptyxis_session.py for the shells of the Ptyxis under test.
 PS1='prompt$ '
 PROMPT_COMMAND=
@@ -41,6 +42,7 @@ if [ "$(cat "$HOME/run")" = 1 ]; then
   n=$(( $(cat "$HOME/tabs" 2>/dev/null || echo 0) + 1 ))
   echo "$n" > "$HOME/tabs"
   mkdir -p "$HOME/tab$n" && cd "$HOME/tab$n"
+  [ "$n" = 1 ] && sleep 5
   echo "first run, tab $n"
 else
   echo "second run in $PWD"
@@ -134,7 +136,16 @@ def activate(action):
 
 def start(ptyxis, log_path):
     log = open(log_path, "w")
-    env = dict(os.environ, WAYLAND_DEBUG="1")
+    # ptyxis-agent starts each shell through systemd-run --user when systemd-run is found, which needs the user's
+    # systemd manager in XDG_RUNTIME_DIR, and the test has a runtime directory of its own. A systemd-run first on
+    # PATH which fails makes the agent start the shells directly.
+    stub_dir = os.path.join(os.environ["HOME"], "..", "bin")
+    os.makedirs(stub_dir, exist_ok=True)
+    stub = os.path.join(stub_dir, "systemd-run")
+    with open(stub, "w") as f:
+        f.write("#!/bin/sh\nexit 1\n")
+    os.chmod(stub, 0o755)
+    env = dict(os.environ, WAYLAND_DEBUG="1", PATH=os.path.realpath(stub_dir) + ":" + os.environ["PATH"])
     # A process group of its own, so that the crash ends the agent and the shells with it.
     return subprocess.Popen([ptyxis], stdout=log, stderr=subprocess.STDOUT, env=env, start_new_session=True)
 
