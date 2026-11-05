@@ -28,6 +28,10 @@ APT repository. That repository is pinned above the Ubuntu archive, so unattende
 copies of the script and patches, installed with `install-rebuild-patched-packages.sh`. GitLab CI builds the patched
 packages too and runs the tests in `patches/*/tests` against them (`.gitlab-ci.yml`).
 
+Packages whose vendors publish a `.deb` but no APT repository are published to the same local repository:
+`fetch-vendor-debs.py` downloads the newest version of each daily and verifies it, and unattended-upgrades or the next
+`apt upgrade` upgrades it where it is installed.
+
 ## Main features
 
 ### Keyboard like on macOS
@@ -115,6 +119,19 @@ unshare mode needs no root even to set up the chroot, so everything runs as an u
 package's build scripts and test suite cannot change the system. Builds run in `/tmp`, whose limit on the number
 of files is raised, since a Firefox build holds more files there than systemd's default allows
 (`systemd/tmp.mount.d/`).
+
+### Packages without an APT repository kept up to date
+
+For packages whose vendors publish a `.deb` but no APT repository, a daily cron job downloads the newest version of
+each into the local APT repository of the patched packages (`fetch-vendor-debs.py`, `install-fetch-vendor-debs.sh`,
+`cron.daily/`), from which unattended-upgrades upgrades the installed ones like any other package. One which is not
+installed is only downloaded, ready for `apt install`. Which packages are fetched is configured in the script, from
+one of two kinds of sources: a fixed URL which redirects to the newest `.deb`, signed by the vendor and verified
+against the vendor's key kept in `vendor-debs/`, or a GitHub release asset, verified against the SHA256 GitHub
+publishes for it. A version lower than the one already in the repository is never published, since the repository's
+pin would make APT downgrade to it, and a download has to carry the package name it is fetched as, so that a vendor
+cannot replace another package through it. When a vendor changes its signing key, the daily fetch fails, naming the
+new key, until the key in `vendor-debs/` is replaced and installed again.
 
 ### Daily mail of failures and errors
 
@@ -556,8 +573,9 @@ settings in `gnome-extensions/`. Custom extensions are installed from the reposi
   itself needs, such as GNOME Shell extensions, are installed by the scripts.
 
 - Optionally a mail transport, such as `nullmailer`, which relays through your mail provider and queues mail
-  while offline, with `MAILTO` set in `/etc/anacrontab`, so that the daily rebuild and the daily digest of
-  failures and errors can mail their reports. Without one, their output is logged to syslog only.
+  while offline, with `MAILTO` set in `/etc/anacrontab`, so that the daily rebuild, the daily download of packages
+  without an APT repository and the daily digest of failures and errors can mail their reports. Without one, their
+  output is logged to syslog only.
 
 ## Applying everything
 
@@ -581,7 +599,15 @@ Run each script first without `--apply` to see what it would change. The general
    sudo apt upgrade
    ```
 
-4. Configure the desktop, the keyboard, and the terminal, in this order:
+4. Download the packages which have no APT repository into the local repository. The installed ones are then upgraded
+   by unattended-upgrades or `apt upgrade`, and the others can be installed with `apt install`:
+
+   ```sh
+   ./install-fetch-vendor-debs.sh --apply
+   sudo fetch-vendor-debs --fetch
+   ```
+
+5. Configure the desktop, the keyboard, and the terminal, in this order:
 
    ```sh
    ./configure-gnome-desktop.sh --apply
@@ -589,14 +615,14 @@ Run each script first without `--apply` to see what it would change. The general
    ./configure-ptyxis.sh --apply
    ```
 
-5. Install the daily measurement of cooling and performance, and the daily mail of failures and errors:
+6. Install the daily measurement of cooling and performance, and the daily mail of failures and errors:
 
    ```sh
    ./install-health-benchmark.sh --apply
    ./install-journal-digest.sh --apply
    ```
 
-`./all.sh` runs steps 2 to 5 in this order, showing what each script would change, and `./all.sh --apply`
+`./all.sh` runs steps 2 to 6 in this order, showing what each script would change, and `./all.sh --apply`
 applies them all, leaving logging out and back in for the end. Run it as your own user, without sudo: it calls
 sudo itself for the steps which need root, and asks for the password then.
 

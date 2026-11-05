@@ -314,6 +314,16 @@ warn() {
   return 0
 }
 
+# Reported like fail, but the run continues and exits with a failure only at its end. Used where what remains to be
+# done does not depend on what failed.
+FAILED=0
+error() {
+  echo "rebuild-patched-packages: $*" >&2
+  command -v logger >/dev/null && logger -p daemon.err -t rebuild-patched-packages -- "$*" || true
+  FAILED=1
+  return 0
+}
+
 # official_version reads the source indexes, so an update published only as a binary is invisible to it. ESM is
 # the case that matters: ubuntu-pro-client writes its sources with Types: deb and no deb-src, while pinning them
 # at 510, above the archive. Once ESM starts carrying a package patched here, a security update there would leave
@@ -709,9 +719,14 @@ rebuild() {
 }
 
 refresh_repo() {
-  ( cd "$LOCAL_REPO" && dpkg-scanpackages . /dev/null 2>/dev/null | gzip -9c > Packages.gz ) \
-    || fail "failed to regenerate $LOCAL_REPO/Packages.gz"
-  apt-get update -qq || fail "apt-get update failed after publishing rebuilt packages"
+  # Written under a name starting with a dot and renamed into place, so that apt never reads a partial index.
+  ( cd "$LOCAL_REPO" && dpkg-scanpackages . /dev/null 2>/dev/null | gzip -9c > .Packages.gz.new \
+      && chmod 644 .Packages.gz.new && mv .Packages.gz.new Packages.gz ) \
+    || fail "rebuilt packages are not in the index of the local repository yet, failed to regenerate" \
+            "$LOCAL_REPO/Packages.gz"
+  # A failed update does not undo the index, which apt reads at its next update, so the run continues.
+  apt-get update -qq \
+    || error "the index of the local repository is regenerated, but apt sees it only after its next successful update"
 }
 
 prereq_report=$(check_prereqs)
@@ -811,6 +826,7 @@ case "$MODE" in
       echo
       echo "Rebuilt packages are now the apt candidate. unattended-upgrades or the next apt upgrade installs them."
     fi
+    [ "$FAILED" -eq 0 ] || exit 1
     ;;
 
   prepare)

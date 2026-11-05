@@ -45,6 +45,10 @@ if [ "$MODE" = apply ]; then
   sudo rebuild-patched-packages --build
   sudo apt upgrade
 
+  step "Packages without an APT repository"
+  ./install-fetch-vendor-debs.sh --apply
+  sudo fetch-vendor-debs --fetch
+
   step "Desktop"
   ./configure-gnome-desktop.sh --apply
 
@@ -71,6 +75,10 @@ else
   step "Patched packages"
   ./install-rebuild-patched-packages.sh
   ./rebuild-patched-packages.sh
+
+  step "Packages without an APT repository"
+  ./install-fetch-vendor-debs.sh
+  ./fetch-vendor-debs.py
 
   step "Desktop"
   ./configure-gnome-desktop.sh
