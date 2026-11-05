@@ -51,7 +51,7 @@ cleanup() {
   kill "$MUTTER_PID" 2>/dev/null || true
   findmnt -rn -o TARGET | grep -F "$RUNTIME_DIR/" | while read -r mountpoint; do
     fusermount3 -u -z "$mountpoint" 2>/dev/null || true
-  done
+  done || true
   rm -rf "${RUNTIME_DIR:?}"
 }
 trap cleanup EXIT
