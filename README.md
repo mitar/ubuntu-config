@@ -250,9 +250,10 @@ up, which gives the thermal resistance of the cooling, the degrees the APU rises
 the cooldown after it gives the time constant with which the temperature falls. Both grow as dust accumulates. The
 fan runs at full speed throughout, so that dust shows in these two and not in the scores. Nothing is recorded when
 other processes used more than 1% of the CPU time during any of the phases, since that would have cost the scores
-about as much, nor when the screen is unlocked, AC power is disconnected or the laptop suspends during the
-measurement. Such a day is skipped, while a measurement which fails, for example because the EC stopped reading its
-sensors (see [Processor throttling](#processor-throttling)), leaves `health-benchmark.service` failed, which the
+about as much, nor when anything powered the NPU, which heats the same package and shares its power budget, nor when
+the screen is unlocked, AC power is disconnected or the laptop suspends during the measurement. Such a day is
+skipped, while a measurement which fails, for example because the EC stopped reading its sensors (see
+[Processor throttling](#processor-throttling)), leaves `health-benchmark.service` failed, which the
 [daily mail](#daily-mail-of-failures-and-errors) then reports.
 
 7-Zip is a static build of a pinned release, verified by its checksum, so that its scores stay comparable across

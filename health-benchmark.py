@@ -29,11 +29,11 @@ Usage
                                          abnormally left it at a fixed duty cycle (root)
 
 A note marks a measurement in the report, for example "after cleaning the fan". A manual measurement first waits for
-the load to drop. A measurement is not recorded when other processes used more than 1% of the CPU time during any
-of its phases, since that would have cost the scores about as much. It is also abandoned when the screen is
-unlocked during a scheduled measurement, AC power is disconnected, or the laptop suspends. These end it with a
-message and a successful exit status, while failures, such as an EC which stopped reading its sensors, exit with
-an error.
+the load to drop. A measurement is not recorded when other processes used more than 1% of the CPU time during any of
+its phases, since that would have cost the scores about as much, or when anything powered the NPU, which heats the
+same package and shares its power budget. It is also abandoned when the screen is unlocked during a scheduled
+measurement, AC power is disconnected, or the laptop suspends. These end it with a message and a successful exit
+status, while failures, such as an EC which stopped reading its sensors, exit with an error.
 
 
 Comparability
@@ -124,7 +124,12 @@ METRICS_REVISION = 3
 METRICS_TEMPERATURE_SOC = 6
 METRICS_TEMPERATURE_CORE = 8
 METRICS_TEMPERATURE_SKIN = 40
+METRICS_AVERAGE_GFX_ACTIVITY = 42
+METRICS_AVERAGE_VCN_ACTIVITY = 44
 METRICS_AVERAGE_SOCKET_POWER = 112
+METRICS_AVERAGE_GFX_POWER = 124
+# The NPU's clock, which the table still calls the IPU's. It reads 0 while the NPU is powered down.
+METRICS_AVERAGE_IPUCLK_FREQUENCY = 180
 # The entries of the per-core arrays which belong to a core on this processor: the four Zen 5 cores occupy the even
 # entries 0 to 6 and the eight Zen 5c cores the entries 8 to 15. The other entries carry values unrelated to any core.
 METRICS_CORE_SLOTS = (0, 2, 4, 6, 8, 9, 10, 11, 12, 13, 14, 15)
@@ -151,19 +156,27 @@ EC_SENSORS = {
     'cpu@4c': 'ec_apu',
 }
 
+# The runtime power state the kernel keeps for the NPU: "active" while anything holds it powered, be it a workload or
+# only a tool which queries it, and "suspended" a few seconds after nothing does.
+NPU_STATUS_FILES = '/sys/bus/pci/drivers/amdxdna/*/power/runtime_status'
+
 TEMPERATURES = ('tctl', 'core_max', 'soc', 'skin', 'ec_local', 'ec_cpu', 'ec_ddr', 'ec_apu')
-TRACE_FIELDS = ('t', 'phase', 'busy_pct', 'power_w', 'fan_rpm', 'fan_target') + TEMPERATURES
+# Measured alongside the temperatures because the graphics and the NPU heat the same package as the cores do.
+GRAPHICS = ('gfx_power_w', 'gfx_activity_pct')
+TRACE_FIELDS = (
+    ('t', 'phase', 'busy_pct', 'power_w', 'fan_rpm', 'fan_target') + TEMPERATURES + GRAPHICS +
+    ('vcn_activity_pct', 'npu_active', 'npu_clock_mhz'))
 
 FIELDS = [
     'timestamp', 'trigger', 'note', 'duration_s', 'foreign_cpu_pct', 'platform_profile',
     'bios_version', 'bios_date', 'ec_version', 'kernel', 'kernel_build', 'cmdline', 'microcode', 'cpu_model',
     'mem_total_kb', 'uptime_s', 'amd_pstate', 'governor', 'epp', 'vulnerabilities',
     'sevenzip_version', 'sevenzip_sha256', 'perf_version',
-    'idle_busy_pct', 'idle_power_w', *(f'idle_{name}' for name in TEMPERATURES), 'fan_rpm_full',
+    'idle_busy_pct', 'idle_power_w', *(f'idle_{name}' for name in TEMPERATURES + GRAPHICS), 'fan_rpm_full',
     *(f'{prefix}_{name}' for prefix in ('sevenzip_all', 'sevenzip_one') for name in (
         'compress_mips', 'decompress_mips', 'mips', 'wall_s', 'power_w', 'tctl_max', 'thermal_pct', 'power_limit_pct')),
     *(f'{prefix}_{name}' for prefix in ('perf_pipe', 'perf_syscall') for name in ('ops', 'wall_s')),
-    'steady_power_w', *(f'steady_{name}' for name in TEMPERATURES), 'steady_fan_rpm',
+    'steady_power_w', *(f'steady_{name}' for name in TEMPERATURES + GRAPHICS), 'steady_fan_rpm',
     'steady_thermal_pct', 'steady_power_limit_pct', 'steady_prochot_pct',
     'cooldown_tau_tctl_s', 'cooldown_tau_soc_s', 'cooldown_tau_ec_cpu_s', 'cooldown_end_tctl', 'cooldown_end_ec_cpu',
 ]
@@ -264,7 +277,8 @@ def unlocked_session():
 
 
 class Sensors:
-    """Reads the temperatures, the power, the fan and the CPU load which a measurement samples."""
+    """Reads the temperatures, the power, the fan, the CPU load, and the use of the graphics and the NPU, which a
+    measurement samples."""
 
     def __init__(self):
         self.metrics_file = None
@@ -302,12 +316,16 @@ class Sensors:
         if missing:
             raise Failure(f'the EC does not report the sensors {", ".join(sorted(missing))}')
 
+        # Without the amdxdna driver loaded the NPU stays powered down, so finding no device leaves nothing to check.
+        self.npu_files = sorted(glob.glob(NPU_STATUS_FILES))
+
         self.cpu_times = read_cpu_times()
 
     def read(self):
         """Returns one sample: temperatures in degrees Celsius (None for a sensor which failed to read), the package
-        power in watts, the fan speed and target in RPM, the share of CPU time busy since the previous sample, and the
-        throttle residency counters."""
+        power and the graphics power in watts, the graphics and video activity in percent, the fan speed and target in
+        RPM, the share of CPU time busy since the previous sample, whether the NPU is powered and its clock in MHz,
+        and the throttle residency counters."""
         with open(self.metrics_file, 'rb') as file:
             metrics = decode_metrics(file.read())
         if metrics is None:
@@ -325,6 +343,11 @@ class Sensors:
             'core_max': metrics['core_max'],
             'soc': metrics['soc'],
             'skin': metrics['skin'],
+            'gfx_power_w': metrics['gfx_power_w'],
+            'gfx_activity_pct': metrics['gfx_activity_pct'],
+            'vcn_activity_pct': metrics['vcn_activity_pct'],
+            'npu_active': int(any(read_text(path) == 'active' for path in self.npu_files)),
+            'npu_clock_mhz': metrics['npu_clock_mhz'],
             'residency': metrics['residency'],
         }
         for name, path in self.ec_files.items():
@@ -344,12 +367,16 @@ def decode_metrics(data):
         (value,) = struct.unpack_from('<H', data, METRICS_TEMPERATURE_CORE + 2 * slot)
         if value != METRICS_UNSET:
             core_max = max(core_max or 0, value / 100)
-    # Temperatures are in hundredths of a degree Celsius and power is in milliwatts.
+    # Temperatures are in hundredths of a degree Celsius, power is in milliwatts, and activity is in percent.
     return {
         'core_max': core_max,
         'soc': struct.unpack_from('<H', data, METRICS_TEMPERATURE_SOC)[0] / 100,
         'skin': struct.unpack_from('<H', data, METRICS_TEMPERATURE_SKIN)[0] / 100,
         'power_w': struct.unpack_from('<I', data, METRICS_AVERAGE_SOCKET_POWER)[0] / 1000,
+        'gfx_power_w': struct.unpack_from('<I', data, METRICS_AVERAGE_GFX_POWER)[0] / 1000,
+        'gfx_activity_pct': struct.unpack_from('<H', data, METRICS_AVERAGE_GFX_ACTIVITY)[0],
+        'vcn_activity_pct': struct.unpack_from('<H', data, METRICS_AVERAGE_VCN_ACTIVITY)[0],
+        'npu_clock_mhz': struct.unpack_from('<H', data, METRICS_AVERAGE_IPUCLK_FREQUENCY)[0],
         'residency': {key: struct.unpack_from('<I', data, offset)[0] for key, offset in METRICS_RESIDENCY.items()},
     }
 
@@ -423,8 +450,8 @@ def fit_decay(points):
 
 class Measurement:
     """Samples the sensors once a second through the phases of a measurement, accounts for the CPU time other
-    processes use in each phase, and abandons the measurement when its conditions no longer hold: AC power, a locked
-    screen for a scheduled one, no suspend, and working EC sensors."""
+    processes use in each phase and notes the phases in which the NPU was powered, and abandons the measurement when
+    its conditions no longer hold: AC power, a locked screen for a scheduled one, no suspend, and working EC sensors."""
 
     def __init__(self, sensors, scheduled):
         self.sensors = sensors
@@ -435,6 +462,8 @@ class Measurement:
         self.apu_failures = 0
         # The share of all CPU time which other processes used, by phase.
         self.foreign = {}
+        # The phases in which the NPU was powered, in order, as the keys of a dict.
+        self.npu_phases = {}
 
     @contextlib.contextmanager
     def accounted(self, phase):
@@ -461,7 +490,12 @@ class Measurement:
         return ', '.join(f'{phase} {share:.2f}%' for phase, share in self.foreign.items())
 
     def check_foreign(self):
-        """Raises Skip when other processes used more than FOREIGN_CPU_PERCENT of the CPU time in any phase so far."""
+        """Raises Skip when the NPU was powered, or other processes used more than FOREIGN_CPU_PERCENT of the CPU time,
+        in any phase so far."""
+        # Nothing in a measurement uses the NPU, so whatever powered it was another process, whose heat and share of
+        # the package's power budget the CPU time does not show.
+        if self.npu_phases:
+            raise Skip(f'the NPU was powered during {", ".join(self.npu_phases)}')
         phase = max(self.foreign, key=self.foreign.get)
         if self.foreign[phase] > FOREIGN_CPU_PERCENT:
             raise Skip(f'other processes used {self.foreign[phase]:.1f}% of the CPU time during {phase}, more than '
@@ -473,6 +507,8 @@ class Measurement:
         sample['t'] = time.monotonic() - self.start
         sample['phase'] = phase
         self.trace.append(sample)
+        if sample['npu_active']:
+            self.npu_phases[phase] = None
 
         if boot_gap() - self.boot_gap > SUSPEND_GAP_S:
             raise Skip('the system was suspended')
@@ -589,9 +625,9 @@ def perf_bench(measurement, prefix, arguments):
 
 
 def averages(prefix, samples):
-    """Returns the mean temperatures, power and fan speed of samples as columns with the given prefix."""
+    """Returns the mean temperatures, power and graphics use of samples as columns with the given prefix."""
     columns = {f'{prefix}_power_w': mean(samples, 'power_w')}
-    for name in TEMPERATURES:
+    for name in TEMPERATURES + GRAPHICS:
         columns[f'{prefix}_{name}'] = mean(samples, name)
     return columns
 
