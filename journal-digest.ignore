@@ -44,3 +44,7 @@
 # debug messages for transaction failures", where a quirk to skip it is asked about:
 # https://lore.kernel.org/all/20260721193310.1179300-1-saverio.pub2@gmail.com/
 ^kernel: pci \S+: DOE: \[500\] failed to (cache features : -5|create mailbox: -5)$
+
+# At a login, the login screen's GNOME Shell asks polkit about an action just before it exits, and polkit finds the
+# process, or its connection to the bus, gone when it evaluates the request.
+^polkitd: Error converting subject to JS object: (Process [0-9]+ terminated|GDBus\.Error:org\.freedesktop\.DBus\.Error\.NameHasNoOwner: Could not get credentials of name ':[0-9.]+': no such name)$
