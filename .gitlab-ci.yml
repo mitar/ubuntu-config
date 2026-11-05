@@ -86,6 +86,7 @@ build:
     matrix:
       - PACKAGE:
           - gnome-settings-daemon
+          - gnome-shell
           - gnome-text-editor
           - gtksourceview5
           - localsearch

@@ -1,0 +1,28 @@
+Source package: gnome-shell
+
+no-screenshots-while-locked.patch
+    Hides the screenshot button in quick settings while the screen is locked, and makes Print, which
+    opens the screenshot UI, and Shift+Print, which saves a screenshot of the whole screen, do nothing
+    there. GNOME Shell offers them on the lock screen on purpose, as its maintainer confirmed in
+    https://gitlab.gnome.org/GNOME/gnome-shell/-/issues/9469: the lock screen shows nothing private,
+    and screen recording, selecting a window and Alt+Print are already not offered while locked.
+    Anyone at the locked machine could still save screenshots into ~/Pictures/Screenshots and replace
+    what is in the clipboard with them. Upstream keeps its behavior, so this patch stays.
+
+    The InteractiveScreenshot method of org.gnome.Shell.Screenshot, through which the screenshot
+    portal lets an application ask the user for a screenshot, is left as it is and still opens the
+    screenshot UI while locked.
+
+    The keybindings are added in the constructor of ScreenshotUI in js/ui/screenshot.js, where
+    restrictedModes already leaves out the lock screen for screen recording and Alt+Print, and the
+    button is ScreenshotItem in js/ui/status/system.js. After a version bump, check that nothing else
+    opening the screenshot UI was added with action modes which include the lock screen.
+
+    The patch adds no test. The build runs gnome-shell's tests, which start the whole shell too, but
+    none of them locks the screen or opens the screenshot UI.
+
+    Check by hand after a rebuild and a new login, with the screen locked:
+
+      quick settings     should show no screenshot button, and show it again after unlocking
+      Print              should open no screenshot UI
+      Shift+Print        should save no new file into ~/Pictures/Screenshots

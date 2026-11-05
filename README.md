@@ -257,6 +257,13 @@ extension stays enabled on the lock screen and keeps an invisible copy of every 
 dock, the top bar or another panel, so the space left for windows does not change. The copies follow the reserved
 space a few seconds after it changes, for example when the dock is moved to another side of the screen.
 
+### No screenshots on the lock screen
+
+GNOME Shell offers screenshots on the lock screen, from a button in quick settings and with Print and Shift+Print, so
+anyone at the locked machine could save screenshots into the Pictures folder and replace what is in the clipboard.
+GNOME Shell is patched so that the button is hidden and both keys do nothing while the screen is locked
+(`patches/gnome-shell/`).
+
 ### Signal and Slack open where they were placed
 
 Signal and Slack start at login on their own workspace and in their own place on the screen. On Wayland a window

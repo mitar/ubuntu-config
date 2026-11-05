@@ -1,0 +1,60 @@
+Description: Offer no screenshots while the session is locked.
+ GNOME Shell offers its screenshot UI on the lock screen, from the screenshot button in quick settings and
+ with Print, and Shift+Print saves a screenshot of the whole screen there. Upstream keeps this on purpose:
+ the lock screen shows nothing private, and screen recording, selecting a window and Alt+Print are already
+ unavailable while locked. Anyone at the locked machine can still save screenshots into the user's Pictures
+ folder and replace what the user has in the clipboard with them, so here no screenshot is offered at all.
+ .
+ Print and Shift+Print are bound in the same restricted action modes as Alt+Print and screen recording, and
+ the button is hidden while the session is locked. Quick settings stay the same across locking, so the
+ button's visibility follows the session mode as it changes, as the settings button next to it does, and is
+ no longer set once when the button is created.
+Author: Mitar
+Bug: https://gitlab.gnome.org/GNOME/gnome-shell/-/issues/9469
+Forwarded: not-needed
+Last-Update: 2026-11-05
+--- a/js/ui/screenshot.js
++++ b/js/ui/screenshot.js
+@@ -1420,7 +1420,7 @@
+             'show-screenshot-ui',
+             new Gio.Settings({schema_id: 'org.gnome.shell.keybindings'}),
+             Meta.KeyBindingFlags.IGNORE_AUTOREPEAT,
+-            uiModes,
++            restrictedModes,
+             showScreenshotUI
+         );
+ 
+@@ -1459,7 +1459,7 @@
+             'screenshot',
+             new Gio.Settings({schema_id: 'org.gnome.shell.keybindings'}),
+             Meta.KeyBindingFlags.IGNORE_AUTOREPEAT,
+-            uiModes,
++            restrictedModes,
+             async () => {
+                 try {
+                     const shooter = new Shell.Screenshot();
+--- a/js/ui/status/system.js
++++ b/js/ui/status/system.js
+@@ -114,7 +114,6 @@
+             style_class: 'icon-button',
+             can_focus: true,
+             icon_name: 'screenshooter-symbolic',
+-            visible: !Main.sessionMode.isGreeter,
+             accessible_name: _('Take Screenshot'),
+         });
+ 
+@@ -127,6 +126,14 @@
+             });
+             topMenu.close(PopupAnimation.NONE);
+         });
++
++        Main.sessionMode.connectObject('updated', () => this._sync(), this);
++        this._sync();
++    }
++
++    _sync() {
++        this.visible =
++            !Main.sessionMode.isGreeter && !Main.sessionMode.isLocked;
+     }
+ });
+ 
