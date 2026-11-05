@@ -37,3 +37,43 @@ Text Editor session restore: run-text-editor-session.sh, text_editor_session.py 
     The full WAYLAND_DEBUG output of each run is in the output directory as run1.log, run2.log and run3.log, and the
     calls the session manager received are in session-manager.log. The D-Bus and portal messages printed on the way
     are expected in the private session.
+
+Text Editor auto-save: run-text-editor-autosave.sh and text_editor_autosave.py
+    Checks that Text Editor autosaves its session, with the drafts of unsaved documents, a few seconds after every
+    change, as set by auto-save-delay, also when that setting is not its default. Starts a headless mutter with one
+    virtual monitor in a D-Bus session of its own, and Text Editor in it once for each scenario, each time with XDG
+    homes of its own and GSettings read from a keyfile there, with the schema of the Text Editor tested. Each
+    scenario waits for the session saved after the start, opens two files one after the other in the running
+    instance, waits each time for the session saved with that file, and quits through the app.quit action, which
+    saves the session as well.
+
+    default-delay leaves auto-save-delay at its default of 3 seconds. delay-set-before-start sets it to 5 seconds
+    before Text Editor starts. Text Editor binds the setting while it starts, before it enables auto-save, so the
+    session changes while auto-save is still disabled. When _editor_session_mark_dirty then marks the session dirty
+    without scheduling an auto-save, enabling auto-save and every later change find the session dirty already, and
+    only quitting saves it, so every autosave check of that scenario fails. Text Editor 50.1 does that.
+
+    delay-changed-while-pending changes auto-save-delay from 3 to 4 seconds with gsettings one second after the first
+    file opened, while its auto-save is pending. Changing the delay removes the pending auto-save, and when
+    _editor_session_mark_dirty then finds the session dirty already, it schedules none with the new delay, so neither
+    file is autosaved. A save sooner than the new delay after the change is the one scheduled before, which means
+    Text Editor did not notice the change, and fails the check that the save followed the new delay.
+
+    slow-draft-save sets auto-save-delay to 1 second and passes 24 MB of text to Text Editor on standard input, with
+    gnome-text-editor -, which opens it as an unsaved draft. Text Editor writes a draft at a few megabytes a second,
+    so the save which writes it lasts several seconds. A save captures the session state when it is requested and
+    writes it after its drafts, and writing a draft for the first time adds it to the session's list of drafts and
+    requests another save, so only the state of that later save lists the draft. When saves run at the same time, the
+    later one has no draft to write and writes its state first, and the first one then writes its older state over
+    it, so the session saved last does not list the draft. The scenario checks that the draft was still being
+    written when the later save was requested, and fails when the machine writes the draft faster than that, since
+    then it tests nothing. It ends Text Editor with SIGTERM, since quitting asks what to do with the unsaved draft.
+
+    ROOT is a directory Text Editor was installed into, for example with meson install --destdir, or its package was
+    extracted into, with libgtk-4-1 extracted there too when it is to run with that GTK:
+
+      ./run-text-editor-autosave.sh /tmp/mutter-root /tmp/text-editor-root /tmp/text-editor-autosave-test
+
+    The script prints one line for each check, with the seconds from the change to the save, and finally
+    "RESULT: OK", and exits with 0. Text Editor's output of each scenario is in SCENARIO/text-editor.log in the
+    output directory.
