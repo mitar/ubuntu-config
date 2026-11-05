@@ -91,8 +91,10 @@ Ptyxis, Ubuntu's terminal, is patched and configured (`patches/ptyxis/`, `config
 
 Every third-party repository is configured from this repository (`sources.list.d/`), each with its signing key
 embedded in its source, so that APT trusts the key for that repository only. Keys which vendors had put where APT
-trusts them for every repository, as Slack's daily cron job does, are removed and kept from coming back. ProtonVPN's
-repository is the exception: Proton's own package configures it, and the script installs that package when missing.
+trusts them for every repository, as Slack's daily cron job does, are removed and kept from coming back. VS Code's
+package replaces its source with Microsoft's own on every upgrade unless its debconf answer says not to manage the
+repository, which the script sets. ProtonVPN's repository is the exception: Proton's own package configures it, and
+the script installs that package when missing.
 
 Third-party repositories are pinned by hostname, with an allowlist of the packages actually in use and a default
 deny for everything else from them, so a vendor repository cannot replace an Ubuntu package by publishing a higher

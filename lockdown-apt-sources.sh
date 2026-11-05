@@ -27,8 +27,10 @@
 # and --apply list any other source file, which something outside this repository added.
 #
 # A vendor's new signing key therefore does not arrive by itself: apt update fails for that repository until the
-# key in its file here is replaced and --apply runs again. Claude Desktop and VS Code do not add a source of their
-# own while one for their repository exists, and Slack's cron job is kept from adding one by /etc/default/slack.
+# key in its file here is replaced and --apply runs again. Claude Desktop does not add a source of its own while one
+# for its repository exists. VS Code's package deletes vscode.sources on every upgrade and writes its own in its place
+# unless its debconf answer says not to, which --apply sets, see VSCODE_REPO_QUESTION. Slack's cron job is kept from
+# adding one by /etc/default/slack.
 #
 #
 # How the pins work
@@ -135,8 +137,8 @@ SOURCES_SRC=$REPO_DIR/sources.list.d
 SOURCES_DEST=/etc/apt/sources.list.d
 # What those sources replace: the files the repositories were configured with before, and the keys these named.
 # Two of the keys sat in /etc/apt/trusted.gpg.d, where APT trusts a key for every repository. Each is moved into
-# the backup directory. claude-desktop and code write their keys under /usr/share/keyrings again at every upgrade,
-# so those two are left alone.
+# the backup directory. claude-desktop writes its key under /usr/share/keyrings again at every upgrade, so that one is
+# left alone. code writes microsoft.gpg only while its debconf answer allows it, see VSCODE_REPO_QUESTION.
 REPLACED='
 /etc/apt/sources.list.d/claude-desktop.list
 /etc/apt/sources.list.d/mozilla.list
@@ -148,10 +150,15 @@ REPLACED='
 /etc/apt/keyrings/naps2.gpg
 /usr/share/keyrings/nodesource.gpg
 /usr/share/keyrings/signal-desktop-keyring.gpg
+/usr/share/keyrings/microsoft.gpg
 '
 # Read by the daily cron job of slack-desktop, which otherwise adds a slack.list of its own and puts Slack's key
 # into /etc/apt/trusted.gpg.d. No package owns the file.
 SLACK_DEFAULTS=/etc/default/slack
+# The postrm of the code package deletes vscode.sources and /usr/share/keyrings/microsoft.gpg on every upgrade, not only
+# on removal, and its postinst then writes Microsoft's own source and key in their place. Both leave the repository
+# alone when the answer to this debconf question is false.
+VSCODE_REPO_QUESTION=code/add-microsoft-repo
 # ProtonVPN's repository is configured by Proton's protonvpn-stable-release package, whose protonvpn-stable.sources
 # is a conffile, so a file from this repository in its place would make dpkg ask at every upgrade of that package.
 # Once installed, the package updates itself from that repository, so only a missing one is installed, from this
@@ -627,6 +634,12 @@ proton_release_installed() {
   dpkg-query -W -f='${Status}' protonvpn-stable-release 2>/dev/null | grep -q 'ok installed'
 }
 
+# Print the answer to VSCODE_REPO_QUESTION, nothing when there is none. Works without root, which only warns that the
+# passwords database cannot be read.
+vscode_repo_answer() {
+  debconf-show code 2>/dev/null | sed -n "s|^. $VSCODE_REPO_QUESTION: ||p"
+}
+
 # Print one line for each change the sources from this repository make, and fail when there is none.
 sources_changes() {
   local src dst f none=true
@@ -638,6 +651,9 @@ sources_changes() {
       echo "replace $dst"; none=false
     fi
   done
+  if [ "$(vscode_repo_answer)" != false ]; then
+    echo "set debconf $VSCODE_REPO_QUESTION to false"; none=false
+  fi
   for f in $REPLACED; do
     if [ -e "$f" ]; then
       echo "move $f into the backup directory"; none=false
@@ -654,7 +670,7 @@ sources_changes() {
 
 # Make the changes sources_changes lists. What is replaced or overwritten is copied into $BACKUP first.
 sources_apply() {
-  local src dst f tmpdir
+  local src dst f tmpdir answer
   mkdir -p "$BACKUP"
   cp -a "$SOURCES_DEST" "$BACKUP/"
   if [ -e "$SLACK_DEFAULTS" ]; then
@@ -667,6 +683,11 @@ sources_apply() {
       echo "installed $dst"
     fi
   done
+  answer=$(vscode_repo_answer)
+  if [ "$answer" != false ]; then
+    echo "code $VSCODE_REPO_QUESTION boolean false" | debconf-set-selections
+    echo "set debconf $VSCODE_REPO_QUESTION to false (was ${answer:-unset})"
+  fi
   for f in $REPLACED; do
     if [ -e "$f" ]; then
       mkdir -p "$BACKUP/replaced$(dirname "$f")"
