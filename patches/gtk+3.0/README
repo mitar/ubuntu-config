@@ -18,8 +18,19 @@ wayland-export-xdg-toplevel-symbols.patch (debian-series)
     the build on any exported symbol the file does not list. It changes the packaging, so it is
     applied from debian-series rather than series.
 
-Drop both once Ubuntu ships a GTK 3 with the commit, which is any 3.24.53 or newer, after checking
-that its symbols file lists gdk_wayland_window_get_xdg_toplevel.
+run-clipboard-tests-alone.patch
+    Makes the build's test suite run the clipboard and textbuffer tests with no other test at the same
+    time. All tests share the one X display xvfb-run starts for them, and both tests copy and paste
+    through its CLIPBOARD selection. When one takes the selection while the other is between a copy and
+    a paste, the paste goes through the X server and has not arrived when textbuffer checks the text,
+    so textbuffer fails now and then, which fails the build. Next to clipboard running in a loop,
+    textbuffer failed 5 of 300 runs, and alone none. The patch is local only and changes only how the
+    tests are scheduled.
+
+Drop wayland-export-xdg-toplevel.patch and wayland-export-xdg-toplevel-symbols.patch once Ubuntu
+ships a GTK 3 with the commit, which is any 3.24.53 or newer, after checking that its symbols file
+lists gdk_wayland_window_get_xdg_toplevel. Keep run-clipboard-tests-alone.patch while the test suite
+runs clipboard and textbuffer next to other tests.
 
 Check by hand after an upgrade:
 

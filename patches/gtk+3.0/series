@@ -1,1 +1,2 @@
 wayland-export-xdg-toplevel.patch
+run-clipboard-tests-alone.patch

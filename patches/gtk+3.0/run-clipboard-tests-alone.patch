@@ -1,0 +1,34 @@
+Description: Run the tests which use the CLIPBOARD selection with no other test at the same time.
+ All tests run on the one X display xvfb-run starts for them, and both clipboard and textbuffer copy and paste through
+ its CLIPBOARD selection. When one of them takes the selection while the other is between a copy and a paste, that
+ paste goes through the X server and has not arrived when the test checks the text, so textbuffer fails with, for
+ example, ("defabc" == "abcdefabc"). Next to clipboard running in a loop, textbuffer failed 5 of 300 runs this way,
+ and alone none of 300.
+Author: Mitar <mitar.git@tnode.com>
+Forwarded: no
+Last-Update: 2026-11-05
+--- a/testsuite/gtk/meson.build
++++ b/testsuite/gtk/meson.build
+@@ -56,6 +56,14 @@
+ xfail = [
+ ]
+ 
++# Tests which copy and paste through the CLIPBOARD selection of the display, which all tests share. A test which takes
++# the selection while another is between its copy and its paste makes that paste go through the X server, so it has
++# not arrived when the test checks the text. They run with no other test at the same time.
++clipboard_tests = [
++  'clipboard',
++  'textbuffer',
++]
++
+ is_debug = get_option('buildtype').startswith('debug')
+ 
+ test_cargs = []
+@@ -108,6 +116,7 @@
+               'GTK_TEST_MESON=1',
+             ],
+        suite: suites,
++       is_parallel: not clipboard_tests.contains(test_name),
+   )
+ endforeach
+ 
