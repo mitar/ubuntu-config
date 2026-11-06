@@ -34,7 +34,7 @@ restore-window-placement.patch
     Drop the patch once Text Editor uses a save/restore API which a GTK in Ubuntu has. After a version bump of
     Text Editor, check that editor_session_restore_v1 in src/editor-session.c still creates the windows it restores
     with _editor_session_create_window_no_draft, and that editor_application_activate in src/editor-application.c
-    still presents an existing window instead of restoring the session.
+    still restores the session only when no window is open.
 
 hide-restored-banners.patch
     Text Editor shows a "Document Restored" banner above every restored document which was never saved to a file,
@@ -95,9 +95,34 @@ auto-save-on-state-changes.patch
     editor_session_add_window in src/editor-session.c still exist and that the session state has no new parts which
     are changed without marking the session dirty.
 
+launch-opens-new-window.patch
+    Makes a start of Text Editor behave like a launch while it runs: the restored windows return to their places
+    without being activated, and the launch, or files opened from outside, such as with xdg-open or from the
+    terminal, open in a new window on the current workspace, which has the focus. Text Editor restored its session
+    by presenting each restored window, and GTK gives the activation token of the launch to the first window it
+    shows, so with a valid token, as from the dock, GNOME switched to that window's workspace. Files opened from
+    outside became tabs of the most recently used window, wherever it was, and a launch opened no new window.
+
+    Restored windows are now shown with GTK's automatic startup notification off, and a restored window whose files
+    and drafts were all removed is discarded rather than given a new draft. The request which restored the session
+    opens a window of its own afterwards: a new window with a draft for a launch, or one with the files. While Text
+    Editor runs, activation and files opened from outside open a new window as well. A file which is open already
+    is shown in its window, as before. Mutter focuses a window which maps without a token and shows several newly
+    mapped windows in an order of its own, so the new window waits until mutter showed each restored window on a
+    monitor, or 250 ms after the last of them drew its first frame, since one on another workspace is not shown,
+    and at most a second. A window with only an unmodified draft is saved without pages and not restored, so a
+    launch adds no window to the next start, but GTK saves its window state, which the next start discards.
+
+    The patch is local only and not proposed upstream. It is tested by tests/run-text-editor-session.sh, whose
+    second run is launched with an activation token. After a version bump, check that editor_session_restore_v1
+    still shows its windows in one place and that editor_application_restore_cb still runs after every restore.
+
 Check by hand after an upgrade, in a new login, so that the patched mutter runs, and with no Text Editor of the
 previous version still running in the background:
 
   open two windows with a document each on different workspaces, quit with Ctrl+Q, and start Text Editor again:
-  both windows should return to their workspaces and places. The first start after installing the patch has no
-  names saved yet, so the windows are placed from the second start on.
+  both windows should return to their workspaces and places, and a new window with an empty document should open on
+  the current workspace, with the focus. The first start after installing the patch has no names saved yet, so the
+  windows are placed from the second start on.
+  open a file from the terminal with gnome-text-editor or xdg-open while Text Editor runs: it should open in a new
+  window on the current workspace.

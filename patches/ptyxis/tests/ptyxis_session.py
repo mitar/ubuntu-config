@@ -6,7 +6,7 @@ PTYXIS is the ptyxis binary to run, and MUTTER_ROOT the directory mutter was ext
 on the Wayland display named by WAYLAND_DISPLAY. OUT_DIR is the home directory and XDG base directories
 run-ptyxis-session.sh set up, and receives Ptyxis's output, with its Wayland requests and events, as runN.log, and
 mutter's as mutterN.log. The first run ends with SIGKILL of mutter and Ptyxis, as when the machine crashes, and mutter
-is started again. The second run ends by closing both windows with Alt+F4. The shells Ptyxis starts read
+is started again. The second run ends by closing its three windows with Alt+F4. The shells Ptyxis starts read
 OUT_DIR/home/.bashrc, written here, which in the first run moves each shell into a directory of its own and prints a
 line naming it, and in later runs prints the directory it started in. The exit status is 0 when every check passed.
 """
@@ -32,6 +32,10 @@ PATTERNS = {
     "restored_toplevel": re.compile(r'xx_toplevel_session_v1#\d+\.restored\(xdg_toplevel#\d+\)'),
     "error": re.compile(r'wl_display#\d+\.error\(|[Pp]rotocol error'),
 }
+
+# The activation token the later runs are launched with, as GNOME Shell passes one in the platform data. The
+# compositor does not know it and ignores it, but the WAYLAND_DEBUG output shows the window Ptyxis presents it with.
+TOKEN = "ptyxis-session-test-token"
 
 # The first run prints "first run, tab N" in each new shell, later runs "second run in" and the directory. The first
 # tab shows nothing for its first 5 seconds, so that Ptyxis saves its session once while no tab has a screen.
@@ -128,6 +132,40 @@ def screens_by_dir(windows):
     return {d: screen for _, tabs in windows for d, screen in tabs}
 
 
+def toplevel_kinds(log_path, surface_events):
+    """Returns for each line matched by the pattern surface_events, whose last group is a wl_surface ID, whether the
+    window of that surface is one the compositor restored ("restored"), another one ("new"), or none (None)."""
+    xdg_surfaces, toplevels, restored, found = {}, {}, set(), []
+    with open(log_path, errors="replace") as log:
+        for line in log:
+            if match := re.search(r"-> xdg_wm_base#\d+\.get_xdg_surface\(new id xdg_surface#(\d+), wl_surface#(\d+)\)", line):
+                xdg_surfaces[match[1]] = match[2]
+            elif match := re.search(r"-> xdg_surface#(\d+)\.get_toplevel\(new id xdg_toplevel#(\d+)\)", line):
+                toplevels[xdg_surfaces.get(match[1])] = match[2]
+            elif match := re.search(r"xx_toplevel_session_v1#\d+\.restored\(xdg_toplevel#(\d+)\)", line):
+                restored.add(match[1])
+            elif match := surface_events.search(line):
+                found.append(toplevels.get(match.groups()[-1]))
+    return [None if t is None else "restored" if t in restored else "new" for t in found]
+
+
+def activated(log_path, token=None):
+    """The kind of window, see toplevel_kinds, of each activation request with token, or with any token."""
+    token_pattern = re.escape(token) if token else r'[^"]*'
+    return toplevel_kinds(log_path, re.compile(r'-> xdg_activation_v1#\d+\.activate\("%s", wl_surface#(\d+)\)' % token_pattern))
+
+
+def focused(log_path):
+    """The kind of window, see toplevel_kinds, which received the keyboard focus last, or None."""
+    kinds = toplevel_kinds(log_path, re.compile(r"wl_keyboard#\d+\.enter\(\d+, wl_surface#(\d+),"))
+    return kinds[-1] if kinds else None
+
+
+def split_windows(windows, ids):
+    """Splits session windows into those with one of ids and the others."""
+    return [w for w in windows if w[0] in ids], [w for w in windows if w[0] not in ids]
+
+
 def activate(action):
     subprocess.run(["gdbus", "call", "--session", "--dest", APP_ID, "--object-path", "/org/gnome/Ptyxis",
                     "--method", "org.gtk.Actions.Activate", action, "[]", "{}"],
@@ -158,10 +196,11 @@ def start(ptyxis, log_path, launch="command-line"):
     wait_until(lambda: bus.call_sync("org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus",
                                      "NameHasOwner", GLib.Variant("(s)", (APP_ID,)), GLib.VariantType("(b)"),
                                      0, -1, None).unpack()[0])
+    platform_data = {"activation-token": GLib.Variant("s", TOKEN)}
     if launch == "new-window":
-        method, args = "ActivateAction", GLib.Variant("(sava{sv})", ("new-window", [], {}))
+        method, args = "ActivateAction", GLib.Variant("(sava{sv})", ("new-window", [], platform_data))
     else:
-        method, args = "Activate", GLib.Variant("(a{sv})", ({},))
+        method, args = "Activate", GLib.Variant("(a{sv})", (platform_data,))
     bus.call_sync(APP_ID, "/org/gnome/Ptyxis", "org.freedesktop.Application", method, args, None, 0, -1, None)
     return proc
 
@@ -299,21 +338,33 @@ def main():
     mode = stat.S_IMODE(os.stat(screens_path()).st_mode)
     check(mode == 0o600, "the screens file is readable only by its owner (mode %o)" % mode)
 
-    # Run 2: with a new mutter, and Ptyxis started as GNOME Shell's dock starts it, restores both windows under their
-    # names of run 1, each tab with the screen it had, dimmed, above the output of a new shell started in the tab's
-    # directory. A tab which is not the selected one of its window starts its shell only once it is shown, so it shows
-    # just the screen of run 1.
+    # Run 2: with a new mutter, and Ptyxis started with its new-window action and an activation token, as GNOME Shell
+    # may start it, restores both windows under their names of run 1, each tab with the screen it had, dimmed, above
+    # the output of a new shell started in the tab's directory, and opens a new window beside them. A tab which is not
+    # the selected one of its window starts its shell only once it is shown, so it shows just the screen of run 1. The
+    # new window receives the token and the focus, and no restored window is activated.
     with open(os.path.join(home, "run"), "w") as f:
         f.write("2\n")
     log2 = os.path.join(out, "run2.log")
     proc = start(ptyxis, log2, launch="new-window")
+    ids1 = [i for i, _ in session1]
     check(wait_until(lambda: len(scan(log2)["restored_toplevel"]) >= 2), "run 2: the compositor restored both windows")
-    check(wait_until(lambda: all_screens().count("second run in") == 2),
+    check(wait_until(lambda: len(session_windows()) == 3), "run 2: a new window opened beside the restored ones")
+    check(wait_until(lambda: all_screens().count("second run in") == 3),
           "run 2: the session saved the screens of the new shells")
+    check(wait_until(lambda: focused(log2) == "new"), "run 2: the new window has the keyboard focus")
     session2 = session_windows()
+    restored2, new2 = split_windows(session2, ids1)
+    check(activated(log2, TOKEN) == ["new"], "run 2: the activation token was presented with the new window only (%s)"
+          % activated(log2, TOKEN))
+    check("restored" not in activated(log2), "run 2: no restored window was activated (%s)" % activated(log2))
 
-    # Then both windows are closed. The session saves the window closed last with its tabs, as Ptyxis does without
-    # the patches, but removes the screens, so that only a session which ended with its windows open shows them.
+    # Then the three windows are closed, the new one, which has the focus, first. The session saves the window closed
+    # last with its tabs, as Ptyxis does without the patches, but removes the screens, so that only a session which
+    # ended with its windows open shows them.
+    mutter.keyboard.close_window()
+    check(wait_until(lambda: len(session_windows()) == 2), "run 2: the session saved closing the new window")
+    check(sorted(i for i, _ in session_windows()) == sorted(ids1), "run 2: the restored windows are left")
     mutter.keyboard.close_window()
     check(wait_until(lambda: len(session_windows()) == 1), "run 2: the session saved closing the first window")
     check(os.path.exists(screens_path()), "run 2: the screens are kept while a window is open")
@@ -333,10 +384,12 @@ def main():
     check(len(run2["get_session"]) == 1 and run2["get_session"][0][1] == '"%s"' % run1["created"][0],
           "run 2: the session of run 1 was requested")
     check(len(run2["restored_session"]) == 1, "run 2: the compositor restored the session")
-    check(sorted(run2["restore_toplevel"]) == sorted(run1["restore_toplevel"]), "run 2: the windows used their names of run 1")
-    check(sorted(i for i, _ in session2) == sorted(i for i, _ in session1), "run 2: the windows kept their IDs")
-    check(window_dirs(session2) == [tab_dirs[:2], tab_dirs[2:]], "run 2: each tab kept its window and directory")
-    screens2 = screens_by_dir(session2)
+    check(set(run1["restore_toplevel"]) <= set(run2["restore_toplevel"]) and len(run2["restore_toplevel"]) == 3,
+          "run 2: the restored windows used their names of run 1, and the new window a name of its own")
+    check(sorted(i for i, _ in restored2) == sorted(ids1), "run 2: the windows kept their IDs")
+    check(window_dirs(restored2) == [tab_dirs[:2], tab_dirs[2:]], "run 2: each tab kept its window and directory")
+    check(len(new2) == 1 and len(new2[0][1]) == 1, "run 2: the new window has one tab")
+    screens2 = screens_by_dir(restored2)
     for n, d in zip((1, 2, 3), tab_dirs):
         check("first run, tab %d" % n in screens2.get(d, ""), "run 2: tab %d shows its screen of run 1" % n)
     for n in (2, 3):
@@ -350,20 +403,29 @@ def main():
     print("Ptyxis session after closing: %s" % session_closed)
     check(window_dirs(session_closed) == window_dirs(last_window), "run 2: the session kept the window closed last")
 
-    # Run 3: with Ptyxis activated without an action, restores the window closed last, with new shells in the
-    # directories of its tabs and without screens.
+    # Run 3: with Ptyxis activated without an action and with an activation token, restores the window closed last,
+    # with new shells in the directories of its tabs and without screens, and opens a new window beside it, which
+    # receives the token and the focus.
     log3 = os.path.join(out, "run3.log")
     proc = start(ptyxis, log3, launch="activate")
     check(wait_until(lambda: len(scan(log3)["restored_toplevel"]) >= 1), "run 3: the compositor restored the window")
-    check(wait_until(lambda: os.path.exists(screens_path()) and "second run in" in all_screens()),
-          "run 3: the session saved the screen of the new shell")
+    check(wait_until(lambda: len(session_windows()) == 2), "run 3: a new window opened beside the restored one")
+    check(wait_until(lambda: os.path.exists(screens_path()) and len(session_windows()) == 2 and
+                     all("second run in" in "".join(screen for _, screen in tabs) for _, tabs in session_windows())),
+          "run 3: the session saved the screens of the new shells of both windows")
+    check(wait_until(lambda: focused(log3) == "new"), "run 3: the new window has the keyboard focus")
     session3 = session_windows()
+    restored3, new3 = split_windows(session3, [i for i, _ in session_closed])
     crash(proc)
     run3 = scan(log3)
     summary(3, run3)
     print("Ptyxis session: %s" % session3)
     check(not run3["error"], "run 3: no protocol error")
-    check(window_dirs(session3) == window_dirs(last_window), "run 3: the window closed last was restored with its tabs")
+    check(window_dirs(restored3) == window_dirs(last_window), "run 3: the window closed last was restored with its tabs")
+    check(len(new3) == 1, "run 3: the new window was saved beside it")
+    check(activated(log3, TOKEN) == ["new"], "run 3: the activation token was presented with the new window only (%s)"
+          % activated(log3, TOKEN))
+    check("restored" not in activated(log3), "run 3: no restored window was activated (%s)" % activated(log3))
     check("first run" not in all_screens(), "run 3: no tab shows a screen of an earlier run")
 
     check(mutter.running(), "mutter kept running")

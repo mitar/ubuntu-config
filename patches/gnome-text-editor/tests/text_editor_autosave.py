@@ -48,6 +48,7 @@ XK_F10 = 0xffc7
 XK_SHIFT_L = 0xffe1
 XK_CONTROL_L = 0xffe3
 XK_ALT_L = 0xffe9
+XK_2 = 0x0032
 
 # The size of the text slow-draft-save reads from standard input. Text Editor writes a draft at a few megabytes a
 # second, and at more than ten on a fast machine, so writing this one lasts several seconds. Text Editor then uses
@@ -398,10 +399,10 @@ WINDOW_SCENARIOS = [
 def run_window_scenario(text_editor, out, name, chords, description, changed):
     """Checks that a change of a window, which the session state has, is autosaved.
 
-    Text Editor opens two files in one window, so that the second one is selected, and the keys then change the
-    window. The save is recognized by its content, so that a save requested before the keys were pressed does not
-    count. The state saved when Text Editor quits has to show the change as well, which shows that the keys had an
-    effect at all.
+    Text Editor opens two files in one window, both given on its command line, since a file opened later from the
+    command line opens in a window of its own. Alt+2 selects the second one, and the keys then change the window. The
+    save is recognized by its content, so that a save requested before the keys were pressed does not count. The state
+    saved when Text Editor quits has to show the change as well, which shows that the keys had an effect at all.
     """
     base = os.path.join(out, name)
     env = scenario_env(base)
@@ -411,23 +412,22 @@ def run_window_scenario(text_editor, out, name, chords, description, changed):
     path = state_path(env)
 
     with open(os.path.join(base, "text-editor.log"), "w") as log:
-        started_ns = time.time_ns()
-        proc = subprocess.Popen([text_editor, first], stdout=log, stderr=subprocess.STDOUT, env=env)
+        proc = subprocess.Popen([text_editor, first, second], stdout=log, stderr=subprocess.STDOUT, env=env)
         if not wait_for_name():
             check(False, "%s: Text Editor registered on the session bus" % name)
             proc.kill()
             proc.wait()
             return
-        # A file opened while the only page of the window still loads replaces that page, so the second file is
-        # opened once the first one is saved with the session.
-        wait_for_save(env, started_ns, delay + SLACK, first_uri)
-        subprocess.run([text_editor, second], stdout=log, stderr=subprocess.STDOUT, env=env, check=True)
 
-        def both_saved():
+        def both_saved(selected=None):
             window = first_window(path)
-            return window is not None and window["pages"] == [first_uri, second_uri] and window["selected"] == second_uri
+            return (window is not None and window["pages"] == [first_uri, second_uri] and
+                    (selected is None or window["selected"] == selected))
 
         ready = wait_for(both_saved, delay + SLACK)
+        if ready:
+            press_keys([(XK_ALT_L, XK_2)])
+            ready = wait_for(lambda: both_saved(second_uri), delay + SLACK)
         check(ready, "%s: the session was autosaved with both files in one window, the second one selected" % name)
         if ready:
             before = first_window(path)

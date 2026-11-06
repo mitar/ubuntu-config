@@ -8,3 +8,4 @@ restore-session-on-new-window-action.patch
 save-session-on-change.patch
 restore-window-placement.patch
 restore-screens.patch
+launch-opens-new-window.patch

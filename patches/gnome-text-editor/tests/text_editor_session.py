@@ -17,7 +17,7 @@ import subprocess
 import sys
 import time
 
-from gi.repository import GLib
+from gi.repository import Gio, GLib
 
 APP_ID = "org.gnome.TextEditor"
 
@@ -32,6 +32,10 @@ PATTERNS = {
     "remove": re.compile(r'-> xx_toplevel_session_v1#\d+\.remove\(\)'),
     "error": re.compile(r'wl_display#\d+\.error\(|[Pp]rotocol error'),
 }
+
+# The activation token the second run is launched with, in both variables launchers set. The compositor does not
+# know it and ignores it, but the WAYLAND_DEBUG output shows the window Text Editor presents it with.
+TOKEN = "text-editor-session-test-token"
 
 failures = []
 
@@ -70,10 +74,57 @@ def quit_text_editor(proc):
         check(False, "Text Editor quit within 30 seconds")
 
 
-def start(text_editor, args, log_path):
+def start(text_editor, args, log_path, token=None):
     log = open(log_path, "w")
     env = dict(os.environ, WAYLAND_DEBUG="1")
+    if token:
+        env.update(XDG_ACTIVATION_TOKEN=token, DESKTOP_STARTUP_ID=token)
     return subprocess.Popen([text_editor] + args, stdout=log, stderr=subprocess.STDOUT, env=env)
+
+
+def toplevel_kinds(log_path, surface_events):
+    """Returns for each line matched by the pattern surface_events, whose last group is a wl_surface ID, whether the
+    window of that surface is one the compositor restored ("restored"), another one ("new"), or none (None)."""
+    xdg_surfaces, toplevels, restored, found = {}, {}, set(), []
+    with open(log_path, errors="replace") as log:
+        for line in log:
+            if match := re.search(r"-> xdg_wm_base#\d+\.get_xdg_surface\(new id xdg_surface#(\d+), wl_surface#(\d+)\)", line):
+                xdg_surfaces[match[1]] = match[2]
+            elif match := re.search(r"-> xdg_surface#(\d+)\.get_toplevel\(new id xdg_toplevel#(\d+)\)", line):
+                toplevels[xdg_surfaces.get(match[1])] = match[2]
+            elif match := re.search(r"xx_toplevel_session_v1#\d+\.restored\(xdg_toplevel#(\d+)\)", line):
+                restored.add(match[1])
+            elif match := surface_events.search(line):
+                found.append(toplevels.get(match.groups()[-1]))
+    return [None if t is None else "restored" if t in restored else "new" for t in found]
+
+
+def activated(log_path, token=None):
+    """The kind of window, see toplevel_kinds, of each activation request with token, or with any token."""
+    token_pattern = re.escape(token) if token else r'[^"]*'
+    return toplevel_kinds(log_path, re.compile(r'-> xdg_activation_v1#\d+\.activate\("%s", wl_surface#(\d+)\)' % token_pattern))
+
+
+def focused(log_path):
+    """The kind of window, see toplevel_kinds, which received the keyboard focus last, or None."""
+    kinds = toplevel_kinds(log_path, re.compile(r"wl_keyboard#\d+\.enter\(\d+, wl_surface#(\d+),"))
+    return kinds[-1] if kinds else None
+
+
+def add_keyboard():
+    """Adds a keyboard to mutter's seat through its remote desktop API, by pressing Shift, so that mutter gives the
+    keyboard focus to windows. Returns the remote desktop session, which keeps the keyboard until it is stopped."""
+    bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+    desktop = Gio.DBusProxy.new_sync(bus, Gio.DBusProxyFlags.NONE, None, "org.gnome.Mutter.RemoteDesktop",
+                                     "/org/gnome/Mutter/RemoteDesktop", "org.gnome.Mutter.RemoteDesktop", None)
+    path = desktop.call_sync("CreateSession", None, Gio.DBusCallFlags.NONE, -1, None).unpack()[0]
+    session = Gio.DBusProxy.new_sync(bus, Gio.DBusProxyFlags.NONE, None, "org.gnome.Mutter.RemoteDesktop", path,
+                                     "org.gnome.Mutter.RemoteDesktop.Session", None)
+    session.call_sync("Start", None, Gio.DBusCallFlags.NONE, -1, None)
+    for pressed in (True, False):
+        session.call_sync("NotifyKeyboardKeysym", GLib.Variant("(ub)", (0xffe1, pressed)), Gio.DBusCallFlags.NONE, -1,
+                          None)
+    return session
 
 
 def load_variant(path, type_string):
@@ -83,9 +134,10 @@ def load_variant(path, type_string):
 
 
 def editor_windows():
-    """The windows of Text Editor's session state, as (window ID, URIs of the pages)."""
+    """The windows of Text Editor's session state which have pages, as (window ID, URIs of the pages)."""
     state = load_variant(os.path.join(GLib.get_user_data_dir(), APP_ID, "session.gvariant"), "a{sv}")
-    return [(w.get("window-id"), sorted(p.get("uri", "") for p in w.get("pages", []))) for w in state.get("windows", [])]
+    return [(w.get("window-id"), sorted(p.get("uri", "") for p in w.get("pages", [])))
+            for w in state.get("windows", []) if w.get("pages")]
 
 
 def gtk_windows(path):
@@ -142,11 +194,17 @@ def main():
           "GTK and Text Editor saved the same two window IDs")
     check(sorted(u for _, pages in editor1 for u in pages) == uris, "Text Editor saved both files")
 
-    # Run 2: restores the session, and with it both windows under the names of run 1.
+    # Run 2: launched with an activation token, restores the session, and with it both windows under the names of
+    # run 1, and opens a new window with a draft beside them, which receives the token and the keyboard focus. No
+    # restored window is activated. Without a keyboard, mutter gives no window the focus.
+    keyboard = add_keyboard()
     log2 = os.path.join(out, "run2.log")
-    proc2 = proc = start(text_editor, [], log2)
+    proc2 = proc = start(text_editor, [], log2, TOKEN)
     check(wait_for(log2, "restored_toplevel", 2), "run 2: the compositor restored both windows")
+    check(wait_for(log2, "restore_toplevel", 3), "run 2: a new window was named to the compositor beside them")
     time.sleep(2)
+    check(focused(log2) == "new", "run 2: the new window has the keyboard focus (%s)" % focused(log2))
+    keyboard.call_sync("Stop", None, Gio.DBusCallFlags.NONE, -1, None)
     quit_text_editor(proc)
     run2 = scan(log2)
     summary(2, run2)
@@ -154,17 +212,21 @@ def main():
     check(len(run2["get_session"]) == 1 and run2["get_session"][0][1] == '"%s"' % session1,
           "run 2: the session of run 1 was requested")
     check(len(run2["restored_session"]) == 1, "run 2: the compositor restored the session")
-    check(sorted(run2["restore_toplevel"]) == sorted(run1["restore_toplevel"]), "run 2: the windows used their names of run 1")
+    check(set(run1["restore_toplevel"]) <= set(run2["restore_toplevel"]) and len(run2["restore_toplevel"]) == 3,
+          "run 2: the restored windows used their names of run 1, and the new window a name of its own")
+    check(activated(log2, TOKEN) == ["new"], "run 2: the activation token was presented with the new window only (%s)"
+          % activated(log2, TOKEN))
+    check("restored" not in activated(log2), "run 2: no restored window was activated (%s)" % activated(log2))
 
     session2, gtk2 = gtk_windows(state_path)
     editor2 = editor_windows()
     print("GTK state: session %s, windows %s" % (session2, gtk2))
     print("Text Editor session: windows %s" % editor2)
-    check(sorted(gtk2) == sorted(gtk1), "run 2: GTK saved the same windows again")
-    check(sorted(editor2) == sorted(editor1), "run 2: each window has the file it had in run 1")
+    check(set(gtk1) <= set(gtk2) and len(gtk2) == 3, "run 2: GTK saved the same windows again and the new one")
+    check(sorted(editor2) == sorted(editor1), "run 2: each window has the file it had in run 1, the new one none")
 
-    # Run 3: --ignore-session makes the session restore open one new window instead of restoring the two, so the
-    # two windows created for GTK's restored window state are destroyed without ever being shown.
+    # Run 3: --ignore-session makes the session restore open one new window instead of restoring the windows, so the
+    # three windows created for GTK's restored window state are destroyed without ever being shown.
     log3 = os.path.join(out, "run3.log")
     proc = start(text_editor, ["--ignore-session"], log3)
     check(wait_for(log3, "restore_toplevel", 1), "run 3: a window was named to the compositor")
@@ -174,12 +236,12 @@ def main():
     run3 = scan(log3)
     summary(3, run3)
     check(not run3["error"], "run 3: no protocol error")
-    check(len(run3["restore_toplevel"]) == 1 and run3["restore_toplevel"][0] not in run1["restore_toplevel"],
+    check(len(run3["restore_toplevel"]) == 1 and run3["restore_toplevel"][0] not in run2["restore_toplevel"],
           "run 3: only the new window was named, under a new name")
     check(not run3["restored_toplevel"], "run 3: no window was restored")
     _, gtk3 = gtk_windows(state_path)
     print("GTK state: windows %s" % gtk3)
-    check(len(gtk3) == 1 and gtk3[0][0] not in [i for i, _ in gtk1] and gtk3[0][1] == run3["restore_toplevel"][0],
+    check(len(gtk3) == 1 and gtk3[0][0] not in [i for i, _ in gtk2] and gtk3[0][1] == run3["restore_toplevel"][0],
           "run 3: GTK saved only the new window")
     for run, p in ((1, proc1), (2, proc2), (3, proc)):
         check(p.returncode == 0, "run %d: Text Editor exited with 0, not %s" % (run, p.returncode))

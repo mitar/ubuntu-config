@@ -1,6 +1,6 @@
-Tests for save-session-on-change.patch, restore-window-placement.patch and restore-screens.patch, together with
-patches/gtk4/ and patches/mutter/, save-toplevels-on-change.patch included, run by hand and in GitLab CI, see
-.gitlab-ci.yml.
+Tests for save-session-on-change.patch, restore-window-placement.patch, restore-screens.patch and
+launch-opens-new-window.patch, together with patches/gtk4/ and patches/mutter/, save-toplevels-on-change.patch
+included, run by hand and in GitLab CI, see .gitlab-ci.yml.
 
 Ptyxis session restore: run-ptyxis-session.sh and ptyxis_session.py
     Checks that Ptyxis keeps its session up to date while it runs, so that after a crash it restores its windows
@@ -9,17 +9,24 @@ Ptyxis session restore: run-ptyxis-session.sh and ptyxis_session.py
     its own and runs Ptyxis three times in it, with GSettings in memory, so that its defaults apply, and with a home
     directory and XDG directories of its own, so that it runs next to your own Ptyxis without touching its session.
 
-    The first run opens a window with two tabs and a second window with one, each tab in a directory of its own, and
-    once Ptyxis saved its session and GTK its window state, mutter and Ptyxis are ended with SIGKILL, as in a crash
-    of the machine, and a new mutter is started. The second run restores both windows, each tab with the screen of
-    the first run above the output of a new shell, and then closes both windows with Alt+F4. The third run restores
-    the window closed last, with new shells and without screens. Without patches/mutter/save-toplevels-on-change.patch
-    the new mutter knows neither the session nor the windows, and the restore checks of the second run fail.
+    The first run opens a window with two tabs and a second window with one, each tab in a directory of its own,
+    and once Ptyxis saved its session and GTK its window state, mutter and Ptyxis are ended with SIGKILL, as in a
+    crash of the machine, and a new mutter is started. The second run restores both windows, each tab with the
+    screen of the first run above the output of a new shell, and opens a new window beside them, which has to
+    receive the activation token of the launch and the keyboard focus, while no restored window may be activated.
+    It then closes the three windows with Alt+F4, the new one first. The third run restores the window closed last,
+    with new shells and without screens, and again opens a new window, which receives the token and the focus.
+    Without patches/mutter/save-toplevels-on-change.patch the new mutter knows neither the session nor the windows,
+    and the restore checks of the second run fail.
 
     Each run starts Ptyxis in another way: the first from its command line, the second as a D-Bus service asked to
-    activate its new-window action, as GNOME Shell starts it from the dock and the overview, and the third as a D-Bus
-    service asked to activate itself. Without restore-session-on-new-window-action.patch the second run opens a blank
-    window instead of restoring the session.
+    activate its new-window action, as GNOME Shell does for example from the New Window item of the dock's menu,
+    and the third as a D-Bus service asked to activate itself, as GNOME Shell does when Ptyxis is started from the
+    dock or the overview. The later runs pass an activation token in the platform data, as GNOME Shell does, which
+    mutter does not know and ignores, while the WAYLAND_DEBUG output shows the window Ptyxis presents it with.
+    Without restore-session-on-new-window-action.patch the second run opens a blank window instead of restoring the
+    session, and without launch-opens-new-window.patch the launches open no new window and the first restored
+    window receives the token.
 
     The test presses keys through mutter's remote desktop interface. Without a keyboard, mutter gives no window the
     keyboard focus, and GTK saves its window state only while a window of the application has it.

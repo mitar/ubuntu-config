@@ -4,3 +4,4 @@ schedule-auto-save-after-early-changes.patch
 reschedule-auto-save-on-delay-change.patch
 run-saves-one-at-a-time.patch
 auto-save-on-state-changes.patch
+launch-opens-new-window.patch

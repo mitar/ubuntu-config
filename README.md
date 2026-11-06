@@ -370,6 +370,12 @@ own state file and reads it whenever Text Editor starts. It does not register Te
 would otherwise start Text Editor again at the next login and then skip that login's autostart applications. Upstream
 GTK hid the API again for 4.24, because the asynchronous API meant to replace it was not ready.
 
+Starting Text Editor, from the dock or by opening a file from the terminal or the file manager, behaves as it does while
+Text Editor runs: the restored windows return to their places without being activated, and the launch opens a new
+window on the current workspace, which has the focus, with an empty document or the files. A file opened while Text
+Editor runs opens in a new window as well, unless it is open already, when its window is shown
+(`patches/gnome-text-editor/launch-opens-new-window.patch`).
+
 ### Text Editor keeps unsaved documents also after a crash
 
 Text Editor saves its unsaved documents a few seconds after every change, so that a crash or a reset of the machine
@@ -398,6 +404,10 @@ it would bring back the tabs of the last time that happened
 few seconds after every change, including the screens, which are kept in a file readable only by you, and to name its
 windows to GNOME through GTK's API, as Text Editor does (`patches/ptyxis/`). Closing the last window keeps its tabs
 for the next start, but not their screens.
+
+Starting the terminal, from the dock or with a directory from the file manager, behaves as it does while the terminal
+runs: the restored windows return to their places without being activated, and a new window opens on the current
+workspace, which has the focus (`patches/ptyxis/launch-opens-new-window.patch`).
 
 ### Windows return to their places also after a crash
 

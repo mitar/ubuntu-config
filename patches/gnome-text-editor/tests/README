@@ -3,14 +3,18 @@ patches/mutter/save-toplevels-on-session-destroy.patch with them, run by hand an
 
 Text Editor session restore: run-text-editor-session.sh, text_editor_session.py and fake_session_manager.py
     Checks that Text Editor, with GTK's save/restore API, names its windows to mutter and has them restored under
-    the same names at the next start. Starts a headless mutter with one virtual monitor in a D-Bus session of its
-    own and runs Text Editor three times in it, with GSettings in memory, so that its defaults apply. The first run
-    opens two files, each in a window of its own, and quits through the app.quit action. The second run starts
-    without files, which restores the session. The third run starts with --ignore-session, which opens one new
-    window instead, so Text Editor has to destroy the two windows it created for GTK's restored window state without
-    showing them, and must keep running. It covers the protocol between GTK and mutter and the link between GTK's
-    window state and Text Editor's session state, but not whether windows return to their workspaces, which needs a
-    desktop. The test also runs next to your own Text Editor without touching it.
+    the same names at the next start, and that a launch opens a new window beside them. Starts a headless mutter
+    with one virtual monitor in a D-Bus session of its own and runs Text Editor three times in it, with GSettings
+    in memory, so that its defaults apply. The first run opens two files, each in a window of its own, and quits
+    through the app.quit action. The second run starts without files and with an activation token in
+    XDG_ACTIVATION_TOKEN and DESKTOP_STARTUP_ID, as a launcher passes it, which restores the session and opens a
+    new window with a draft beside the restored ones. The new window has to receive the token and the keyboard
+    focus, for which the test adds a keyboard through mutter's remote desktop API, and no restored window may be
+    activated. The third run starts with --ignore-session, which opens one new window instead, so Text Editor has
+    to destroy the three windows it created for GTK's restored window state without showing them, and must keep
+    running. It covers the protocol between GTK and mutter and the link between GTK's window state and Text
+    Editor's session state, but not whether windows return to their workspaces, which needs a desktop. The test
+    also runs next to your own Text Editor without touching it.
 
     Mutter's binary is only in the mutter package, and Text Editor and GTK are tested without installing them, so
     all three are extracted, mutter from the local repository and the other two from the build to test:
@@ -25,14 +29,16 @@ Text Editor session restore: run-text-editor-session.sh, text_editor_session.py 
     does, and GTK must not register with it. With supported it reports true, and GTK must register at every start
     and keep its state under the instance ID the session manager returns. With none there is no session manager.
 
-    In each run GTK sends get_session, the first time for a new session and then with the session ID mutter
-    created the first time, and names each window with restore_toplevel, which in the second run uses the names of
-    the first and is answered with restored(). The third run names only its new window, under a new name. The
-    script prints what each run sent and received, the window IDs and names GTK saved, the windows Text Editor
-    saved, one line for each check, and finally "RESULT: OK", and exits with 0. With Ubuntu's GTK, Text Editor
-    sends nothing over the protocol and the checks fail from the first one. Without
-    patches/mutter/save-toplevels-on-session-destroy.patch, only the first window is restored in the second run,
-    since mutter forgets where the other one was when Text Editor quits with it open.
+    In each run GTK sends get_session, the first time for a new session and then with the session ID mutter created
+    the first time, and names each window with restore_toplevel, which in the second run uses the names of the
+    first for the restored windows, answered with restored(), and a new name for the new window. The third run
+    names only its new window, under a new name. The script prints what each run sent and received, the window IDs
+    and names GTK saved, the windows Text Editor saved, one line for each check, and finally "RESULT: OK", and
+    exits with 0. With Ubuntu's GTK, Text Editor sends nothing over the protocol and the checks fail from the first
+    one. Without patches/mutter/save-toplevels-on-session-destroy.patch, only the first window is restored in the
+    second run, since mutter forgets where the other one was when Text Editor quits with it open. Without
+    launch-opens-new-window.patch, the second run opens no new window, and the first restored window receives the
+    token and the focus.
 
     The full WAYLAND_DEBUG output of each run is in the output directory as run1.log, run2.log and run3.log, and the
     calls the session manager received are in session-manager.log. The D-Bus and portal messages printed on the way
@@ -76,13 +82,14 @@ Text Editor auto-save: run-text-editor-autosave.sh and text_editor_autosave.py
     save requested before the keys were pressed does not count. Where the cursor ends up is not checked, since the
     first key is sometimes lost.
 
-    tab-selected, tab-moved, window-maximized and window-resized open two files in one window, the second one once the
-    first one is saved, because a file opened while the only page of a window still loads replaces that page. They wait
-    for the session saved with the second page selected, and then press keys the same way: Ctrl+Page Up selects the
-    first page, Ctrl+Shift+Page Up moves the selected page in front of the other one, Alt+F10 (mutter's
-    toggle-maximized) maximizes the window and Alt+F8 (mutter's begin-resize) followed by Right five times and Return
-    widens it. Each waits for a session saved with that change, and also checks that the state saved when Text Editor
-    quits has it, which shows that the keys had an effect. Super+Up does not maximize in the headless mutter.
+    tab-selected, tab-moved, window-maximized and window-resized open two files in one window, both given on the
+    command line, since a file opened later from the command line opens in a window of its own, and Alt+2 selects
+    the second one. They wait for the session saved with the second page selected, and then press keys the same
+    way: Ctrl+Page Up selects the first page, Ctrl+Shift+Page Up moves the selected page in front of the other one,
+    Alt+F10 (mutter's toggle-maximized) maximizes the window and Alt+F8 (mutter's begin-resize) followed by Right
+    five times and Return widens it. Each waits for a session saved with that change, and also checks that the
+    state saved when Text Editor quits has it, which shows that the keys had an effect. Super+Up does not maximize
+    in the headless mutter.
 
     windows-restored-by-gtk runs Text Editor twice with the same XDG homes. The first run opens a file and quits, and
     with restore-window-placement.patch and the GTK of patches/gtk4/ in ROOT, GTK saves its window state. The second

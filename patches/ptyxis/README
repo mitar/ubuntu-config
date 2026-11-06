@@ -34,13 +34,13 @@ register-app-id-before-gtk-init.patch
     the portal, and GNOME Shell leaves out inhibitors whose ID names no application.
 
 restore-session-on-new-window-action.patch
-    Upstream's commit b4777fd, on main but in no release yet. GNOME Shell starts Ptyxis from the
-    dock and the overview with its new-window action rather than by activating it, and Ptyxis
-    restored its session only when activated, so a terminal started that way always opened a
-    blank window (Ptyxis issue 560). The action now restores the session first when no window
-    is open. restore-window-placement.patch adds that the hidden windows GTK creates for its
-    restored window state do not count as open windows. Drop the patch once Ubuntu ships a
-    Ptyxis with the commit.
+    Upstream's commit b4777fd, on main but in no release yet. GNOME Shell starts Ptyxis with its
+    new-window action in some cases, such as the New Window item of the dock's menu, a middle
+    click, or a click in the dock while no Ptyxis window is on the current workspace, and Ptyxis
+    restored its session only when activated, so a terminal started that way opened a blank window
+    (Ptyxis issue 560). The action now restores the session first. launch-opens-new-window.patch
+    makes it open a new window after the restore as well. Drop the patch once Ubuntu ships a Ptyxis
+    with the commit.
 
 save-session-on-change.patch
     Saves the session, the windows with their tabs and the directory of each tab, 3 seconds after
@@ -81,6 +81,25 @@ restore-screens.patch
     which scales the foreground to 2/3: on tango-black it turns the text grey, while on a
     light palette it would darken the text instead.
 
+launch-opens-new-window.patch
+    Makes a launch of Ptyxis behave the same whether it runs or restores its session: the
+    restored windows return to their places without being activated, and the launch opens a new
+    window on the current workspace, which has the focus. Ptyxis restored its session by
+    presenting every restored window, and GTK gives the activation token of the launch to the
+    first window it shows, so with a valid token, as from the dock, GNOME switched to that
+    window's workspace, and the launch opened no new window. While Ptyxis ran, activating it
+    presented an existing window.
+
+    Restored windows are now shown with GTK's automatic startup notification off. Activation,
+    the new-window action, --new-window and opening files always open a new window, presented
+    after the restored ones, so it receives the token. A tab asked for with --tab or
+    --tab-with-profile goes into a new window when the session was restored just now, and into
+    the current window while Ptyxis runs. Mutter focuses a window which maps without a token and
+    shows several newly mapped windows in an order of its own, so the new window waits until
+    mutter showed each restored window on a monitor, or 250 ms after the last of them drew its
+    first frame, since one on another workspace is not shown, and at most a second. Each launch
+    adds a window to the session, which the next start restores.
+
 None of this is reachable through settings, which is why the patches exist. A shortcut in Ptyxis
 is spread across four places, and only the first is visible from outside:
 
@@ -93,7 +112,7 @@ Some bindings skip the schema entirely and are registered in code with
 gtk_widget_class_add_binding_action, which is the case for Ctrl+G. Those are invisible to
 gsettings, to the preferences window, and to the conflict check in configure-ptyxis.sh.
 
-Ptyxis ships no test suite, so there is nothing to add tests to. The three session patches are
+Ptyxis ships no test suite, so there is nothing to add tests to. The session patches are
 tested together with patches/gtk4/ and patches/mutter/ by tests/run-ptyxis-session.sh, see
 tests/README. For the others a build failure is the only automated check, and for changes like
 these it is a weak one: every patch here could apply, compile, and still behave wrongly. Check by
@@ -110,7 +129,11 @@ hand after a rebuild.
   two windows on different workspaces, ls in each, wait 15 seconds, run pkill -KILL -x ptyxis
   in one of them, and start Terminal
                                should bring back both windows on their workspaces, each tab in
-                               its directory with the ls output dimmed above a new prompt
+                               its directory with the ls output dimmed above a new prompt, and
+                               open a new window on the current workspace, with the focus,
+                               without switching workspaces
+  ptyxis in a shell while Terminal runs
+                               should open a new window, not raise an existing one
   close the last window with its close button, start Terminal
                                should bring back its tabs without the dimmed screens
 

@@ -1,0 +1,558 @@
+Description: Show restored windows without activating them and open a new window for every launch.
+ Ptyxis restores its session by presenting every restored window. GTK spends the activation token of the launch on
+ the first window it shows, so with a valid token, as from GNOME Shell's dock, mutter focuses that restored window
+ and switches to its workspace. The launch itself opens no new window: activation and the new-window action only
+ restore the session at a cold start, and activation presents an existing window while Ptyxis runs.
+ .
+ Restored windows are now shown with GTK's automatic startup notification turned off, so they return to their places
+ without being activated. Activation, the new-window action, --new-window and opening files then always open a new
+ window, presented after the restored ones, which receives the activation token. A tab requested with --tab or
+ --tab-with-profile goes into a new window when the session was restored just now at a cold start, since the current
+ window may be on another workspace, and into the current window while Ptyxis runs. get_current_window() no longer
+ returns a hidden window GTK created for restored window state when it is the active window.
+ .
+ Mutter focuses a window it shows when the window maps without an activation token, and it shows a restored window
+ only after the window drew its first frame, several of them at once in an order of its own, so a restored window
+ with a restored screen could be shown after the new window and receive the focus. The new window is therefore presented
+ once mutter showed each restored window on a monitor, or 250 ms after the last of them drew its first frame, as one
+ on another workspace is not shown, and after a second at the latest.
+Author: Mitar
+Forwarded: no
+Last-Update: 2026-11-06
+diff --git a/src/ptyxis-application.c b/src/ptyxis-application.c
+index 9ccc203..d368eec 100644
+--- a/src/ptyxis-application.c
++++ b/src/ptyxis-application.c
+@@ -75,6 +75,16 @@ struct _PtyxisApplication
+   GBytes              *written_screens;
+   GBytes              *pending_screens;
+ 
++  /* The restored windows which have not drawn their first frame yet and which
++   * mutter has not shown on a monitor yet, and the windows to present once it
++   * showed the restored ones, see ptyxis_application_present().
++   */
++  GPtrArray           *unpainted_windows;
++  GPtrArray           *unshown_windows;
++  GPtrArray           *windows_to_present;
++  guint                present_source;
++  guint                present_grace : 1;
++
+   guint                writing_screens : 1;
+   guint                has_pending_screens : 1;
+   guint                screens_removed : 1;
+@@ -205,6 +215,178 @@ is_standalone (PtyxisApplication *self)
+   return !!(g_application_get_flags (G_APPLICATION (self)) & G_APPLICATION_NON_UNIQUE);
+ }
+ 
++static void on_restored_window_after_paint_cb (GdkFrameClock *frame_clock,
++                                               PtyxisWindow  *window);
++static void on_restored_window_enter_monitor_cb (GdkSurface   *surface,
++                                                 GdkMonitor   *monitor,
++                                                 PtyxisWindow *window);
++
++static void
++ptyxis_application_stop_waiting (PtyxisApplication *self)
++{
++  if (self->unpainted_windows != NULL)
++    {
++      for (guint i = 0; i < self->unpainted_windows->len; i++)
++        {
++          GtkWidget *window = g_ptr_array_index (self->unpainted_windows, i);
++          GdkFrameClock *frame_clock = gtk_widget_get_frame_clock (window);
++
++          if (frame_clock != NULL)
++            g_signal_handlers_disconnect_by_func (frame_clock, G_CALLBACK (on_restored_window_after_paint_cb), window);
++        }
++    }
++
++  if (self->unshown_windows != NULL)
++    {
++      for (guint i = 0; i < self->unshown_windows->len; i++)
++        {
++          GtkWidget *window = g_ptr_array_index (self->unshown_windows, i);
++          GdkSurface *surface = gtk_native_get_surface (GTK_NATIVE (window));
++
++          if (surface != NULL)
++            g_signal_handlers_disconnect_by_func (surface, G_CALLBACK (on_restored_window_enter_monitor_cb), window);
++        }
++    }
++
++  g_clear_handle_id (&self->present_source, g_source_remove);
++  g_clear_pointer (&self->unpainted_windows, g_ptr_array_unref);
++  g_clear_pointer (&self->unshown_windows, g_ptr_array_unref);
++  self->present_grace = FALSE;
++}
++
++static void
++ptyxis_application_present_pending (PtyxisApplication *self)
++{
++  g_autoptr(GPtrArray) windows = g_steal_pointer (&self->windows_to_present);
++
++  ptyxis_application_stop_waiting (self);
++
++  if (windows == NULL)
++    return;
++
++  for (guint i = 0; i < windows->len; i++)
++    gtk_window_present (g_ptr_array_index (windows, i));
++}
++
++static gboolean
++present_timeout_cb (gpointer data)
++{
++  PtyxisApplication *self = data;
++
++  self->present_source = 0;
++  ptyxis_application_present_pending (self);
++
++  return G_SOURCE_REMOVE;
++}
++
++static void
++ptyxis_application_maybe_present_pending (PtyxisApplication *self)
++{
++  if (self->unpainted_windows->len > 0)
++    return;
++
++  if (self->unshown_windows->len == 0)
++    {
++      ptyxis_application_present_pending (self);
++      return;
++    }
++
++  /* Every restored window drew its first frame. Mutter shows one which is on
++   * the current workspace shortly after, while one on another workspace is
++   * not shown and does not receive the focus, so the windows waiting are
++   * presented after a moment even if not every restored window was shown.
++   */
++  if (!self->present_grace)
++    {
++      self->present_grace = TRUE;
++      g_clear_handle_id (&self->present_source, g_source_remove);
++      self->present_source = g_timeout_add (250, present_timeout_cb, self);
++    }
++}
++
++static void
++on_restored_window_after_paint_cb (GdkFrameClock *frame_clock,
++                                   PtyxisWindow  *window)
++{
++  PtyxisApplication *self = PTYXIS_APPLICATION_DEFAULT;
++
++  g_signal_handlers_disconnect_by_func (frame_clock, G_CALLBACK (on_restored_window_after_paint_cb), window);
++
++  if (self->unpainted_windows != NULL &&
++      g_ptr_array_remove (self->unpainted_windows, window))
++    ptyxis_application_maybe_present_pending (self);
++}
++
++static void
++on_restored_window_enter_monitor_cb (GdkSurface   *surface,
++                                     GdkMonitor   *monitor,
++                                     PtyxisWindow *window)
++{
++  PtyxisApplication *self = PTYXIS_APPLICATION_DEFAULT;
++
++  g_signal_handlers_disconnect_by_func (surface, G_CALLBACK (on_restored_window_enter_monitor_cb), window);
++
++  if (self->unshown_windows != NULL &&
++      g_ptr_array_remove (self->unshown_windows, window))
++    ptyxis_application_maybe_present_pending (self);
++}
++
++/* Presents window, which was opened for a request such as a launch. While the
++ * windows of a session restored just now are not shown yet, it is presented
++ * once they are, or after a second at the latest.
++ */
++static void
++ptyxis_application_present (PtyxisApplication *self,
++                            GtkWindow         *window)
++{
++  /* Mutter focuses a window it shows when it maps without an activation token,
++   * and it shows a restored window only after it drew its first frame, which
++   * can be after a window shown later. Presented after them, this window has
++   * the focus.
++   */
++  if (self->unpainted_windows == NULL)
++    {
++      gtk_window_present (window);
++      return;
++    }
++
++  if (self->windows_to_present == NULL)
++    self->windows_to_present = g_ptr_array_new_with_free_func (g_object_unref);
++  g_ptr_array_add (self->windows_to_present, g_object_ref (window));
++}
++
++static void
++ptyxis_application_track_restored_windows (PtyxisApplication *self)
++{
++  for (const GList *windows = gtk_application_get_windows (GTK_APPLICATION (self));
++       windows != NULL;
++       windows = windows->next)
++    {
++      GdkFrameClock *frame_clock;
++      GdkSurface *surface;
++
++      if (!PTYXIS_IS_WINDOW (windows->data) ||
++          ptyxis_window_get_restore_pending (windows->data) ||
++          !gtk_widget_get_visible (windows->data) ||
++          !(frame_clock = gtk_widget_get_frame_clock (windows->data)) ||
++          !(surface = gtk_native_get_surface (GTK_NATIVE (windows->data))))
++        continue;
++
++      if (self->unpainted_windows == NULL)
++        {
++          self->unpainted_windows = g_ptr_array_new_with_free_func (g_object_unref);
++          self->unshown_windows = g_ptr_array_new_with_free_func (g_object_unref);
++        }
++      g_ptr_array_add (self->unpainted_windows, g_object_ref (windows->data));
++      g_ptr_array_add (self->unshown_windows, g_object_ref (windows->data));
++      g_signal_connect (frame_clock, "after-paint", G_CALLBACK (on_restored_window_after_paint_cb), windows->data);
++      g_signal_connect (surface, "enter-monitor", G_CALLBACK (on_restored_window_enter_monitor_cb), windows->data);
++    }
++
++  if (self->unpainted_windows != NULL)
++    self->present_source = g_timeout_add (1000, present_timeout_cb, self);
++}
++
+ static gboolean
+ ptyxis_application_restore (PtyxisApplication *self)
+ {
+@@ -224,6 +406,9 @@ ptyxis_application_restore (PtyxisApplication *self)
+ 
+   g_clear_pointer (&self->screens, g_variant_unref);
+ 
++  if (ret)
++    ptyxis_application_track_restored_windows (self);
++
+   return ret;
+ }
+ 
+@@ -244,27 +429,13 @@ ptyxis_application_open (GApplication  *app,
+   if (n_files == 0)
+     return;
+ 
+-  /* We want to restore the session so the user doesn't lose it. Only in that
+-   * case do we want to add a tab to an existing window because otherwise we
+-   * might added it to a window on another workspace we cannot bring-to-front.
++  /* We want to restore the session so the user does not lose it. The files
++   * open in a new window, presented after the restored ones, because those
++   * may be on another workspace.
+    */
+-  if (ptyxis_application_restore (self))
+-    {
+-      for (const GList *windows = gtk_application_get_windows (GTK_APPLICATION (app));
+-           windows != NULL;
+-           windows = windows->next)
+-        {
+-          if (PTYXIS_IS_WINDOW (windows->data) &&
+-              !ptyxis_window_get_restore_pending (windows->data))
+-            {
+-              window = windows->data;
+-              break;
+-            }
+-        }
+-    }
++  ptyxis_application_restore (self);
+ 
+-  if (window == NULL)
+-    window = ptyxis_window_new_empty ();
++  window = ptyxis_window_new_empty ();
+ 
+   profile = ptyxis_application_dup_default_profile (self);
+ 
+@@ -357,42 +528,34 @@ ptyxis_application_open (GApplication  *app,
+         ptyxis_window_set_active_tab (window, tab);
+     }
+ 
+-  gtk_window_present (GTK_WINDOW (window));
++  ptyxis_application_present (self, GTK_WINDOW (window));
+ }
+ 
+ static void
+ ptyxis_application_activate (GApplication *app)
+ {
+   PtyxisApplication *self = (PtyxisApplication *)app;
++  PtyxisWindow *window;
++  PtyxisTab *tab;
+ 
+   g_assert (PTYXIS_IS_APPLICATION (self));
+   g_assert (PTYXIS_IS_CLIENT (self->client));
+ 
+-  for (const GList *windows = gtk_application_get_windows (GTK_APPLICATION (app));
+-       windows != NULL;
+-       windows = windows->next)
+-    {
+-      if (PTYXIS_IS_WINDOW (windows->data) &&
+-          !ptyxis_window_get_restore_pending (windows->data))
+-        {
+-          gtk_window_present (windows->data);
+-          return;
+-        }
+-    }
++  /* An activation opens a new window, whether Ptyxis runs already or restores
++   * its previous session first, whose windows return to their places.
++   */
++  ptyxis_application_restore (self);
+ 
+-  if (!ptyxis_application_restore (self))
+-    {
+-      PtyxisWindow *window = ptyxis_window_new ();
+-      PtyxisTab *tab = ptyxis_window_get_active_tab (window);
++  window = ptyxis_window_new ();
++  tab = ptyxis_window_get_active_tab (window);
+ 
+-      ptyxis_tab_set_title_prefix (tab, self->next_title_prefix);
+-      ptyxis_tab_set_ignore_osc_title (tab, should_ignore_osc_title (self, self->next_title_prefix));
+-      g_clear_pointer (&self->next_title_prefix, g_free);
++  ptyxis_tab_set_title_prefix (tab, self->next_title_prefix);
++  ptyxis_tab_set_ignore_osc_title (tab, should_ignore_osc_title (self, self->next_title_prefix));
++  g_clear_pointer (&self->next_title_prefix, g_free);
+ 
+-      maybe_maximize_or_fullscreen (self, window);
++  maybe_maximize_or_fullscreen (self, window);
+ 
+-      gtk_window_present (GTK_WINDOW (window));
+-    }
++  ptyxis_application_present (self, GTK_WINDOW (window));
+ }
+ 
+ static PtyxisWindow *
+@@ -403,7 +566,8 @@ get_current_window (PtyxisApplication *self)
+   g_assert (PTYXIS_IS_APPLICATION (self));
+ 
+   if ((active_window = gtk_application_get_active_window (GTK_APPLICATION (self))) &&
+-      PTYXIS_IS_WINDOW (active_window))
++      PTYXIS_IS_WINDOW (active_window) &&
++      !ptyxis_window_get_restore_pending (PTYXIS_WINDOW (active_window)))
+     return PTYXIS_WINDOW (active_window);
+ 
+   for (const GList *iter = gtk_application_get_windows (GTK_APPLICATION (self));
+@@ -559,7 +723,7 @@ ptyxis_application_command_line (GApplication            *app,
+           PtyxisWindow *window = get_current_window (self);
+           PtyxisTab *tab;
+ 
+-          if (window == NULL)
++          if (window == NULL || did_restore)
+             window = ptyxis_window_new_empty ();
+ 
+           tab = ptyxis_window_add_tab_for_command (window, NULL, (const char * const *)argv, cwd_uri);
+@@ -568,7 +732,7 @@ ptyxis_application_command_line (GApplication            *app,
+           ptyxis_tab_set_ignore_osc_title (tab, should_ignore_osc_title (self, title));
+           ptyxis_tab_set_initial_working_directory_uri (tab, cwd_uri);
+           ptyxis_window_set_active_tab (window, tab);
+-          gtk_window_present (GTK_WINDOW (window));
++          ptyxis_application_present (self, GTK_WINDOW (window));
+         }
+       else if (new_tab_with_profile)
+         {
+@@ -576,7 +740,7 @@ ptyxis_application_command_line (GApplication            *app,
+           PtyxisWindow *window = get_current_window (self);
+           PtyxisTab *tab;
+ 
+-          if (window == NULL || new_window)
++          if (window == NULL || new_window || did_restore)
+             window = ptyxis_window_new_empty ();
+ 
+           tab = ptyxis_window_add_tab_for_command (window, profile, (const char * const *)argv, cwd_uri);
+@@ -585,7 +749,7 @@ ptyxis_application_command_line (GApplication            *app,
+           ptyxis_tab_set_ignore_osc_title (tab, should_ignore_osc_title (self, title));
+           ptyxis_tab_set_initial_working_directory_uri (tab, cwd_uri);
+           ptyxis_window_set_active_tab (window, tab);
+-          gtk_window_present (GTK_WINDOW (window));
++          ptyxis_application_present (self, GTK_WINDOW (window));
+         }
+       else if (new_window)
+         {
+@@ -602,7 +766,7 @@ ptyxis_application_command_line (GApplication            *app,
+ 
+           maybe_maximize_or_fullscreen (self, window);
+ 
+-          gtk_window_present (GTK_WINDOW (window));
++          ptyxis_application_present (self, GTK_WINDOW (window));
+         }
+       else
+         {
+@@ -618,7 +782,7 @@ ptyxis_application_command_line (GApplication            *app,
+           maybe_maximize_or_fullscreen (self, window);
+ 
+           gtk_application_add_window (GTK_APPLICATION (self), GTK_WINDOW (window));
+-          gtk_window_present (GTK_WINDOW (window));
++          ptyxis_application_present (self, GTK_WINDOW (window));
+         }
+     }
+   else if (g_variant_dict_contains (dict, "tab"))
+@@ -628,7 +792,10 @@ ptyxis_application_command_line (GApplication            *app,
+       PtyxisTab *tab = ptyxis_tab_new (profile);
+       PtyxisTerminal *terminal = ptyxis_tab_get_terminal (tab);
+ 
+-      if (window == NULL || new_window)
++      /* At a cold start, which just restored the session, the current window
++       * may be on another workspace, so the tab opens in a new window.
++       */
++      if (window == NULL || new_window || did_restore)
+         {
+           window = ptyxis_window_new_empty ();
+           ptyxis_application_apply_default_size (self, terminal);
+@@ -640,7 +807,7 @@ ptyxis_application_command_line (GApplication            *app,
+       ptyxis_window_add_tab (window, tab);
+       ptyxis_window_set_active_tab (window, tab);
+ 
+-      gtk_window_present (GTK_WINDOW (window));
++      ptyxis_application_present (self, GTK_WINDOW (window));
+     }
+   else if (new_tab_with_profile)
+     {
+@@ -649,7 +816,10 @@ ptyxis_application_command_line (GApplication            *app,
+       PtyxisTab *tab = ptyxis_tab_new (profile);
+       PtyxisTerminal *terminal = ptyxis_tab_get_terminal (tab);
+ 
+-      if (window == NULL || new_window)
++      /* At a cold start, which just restored the session, the current window
++       * may be on another workspace, so the tab opens in a new window.
++       */
++      if (window == NULL || new_window || did_restore)
+         {
+           window = ptyxis_window_new_empty ();
+           ptyxis_application_apply_default_size (self, terminal);
+@@ -661,38 +831,23 @@ ptyxis_application_command_line (GApplication            *app,
+       ptyxis_window_add_tab (window, tab);
+       ptyxis_window_set_active_tab (window, tab);
+ 
+-      gtk_window_present (GTK_WINDOW (window));
++      ptyxis_application_present (self, GTK_WINDOW (window));
+     }
+   else if (g_variant_dict_contains (dict, "new-window"))
+     {
+       g_autoptr(PtyxisProfile) profile = ptyxis_application_dup_default_profile (self);
+-      PtyxisWindow *window = get_current_window (self);
++      PtyxisWindow *window;
+       PtyxisTerminal *terminal;
+       PtyxisTab *tab;
+ 
+-      /* If the request to create a new-window was not combined with other
+-       * actions above, and we restored a session, then we will consider the
+-       * request satistfied and not try to add another tab.
+-       *
+-       * This can happen when `--new-window` is used as a keybinding to ensure
+-       * a new window is added whether or not there is an existing instance.
++      /* A new window, also beside a session restored just now, whose windows
++       * return to their places.
+        */
+-      if (window != NULL &&
+-          did_restore &&
+-          !g_variant_dict_contains (dict, "working-directory"))
+-        {
+-          gtk_window_present (GTK_WINDOW (window));
+-          return EXIT_SUCCESS;
+-        }
+-
+       tab = ptyxis_tab_new (profile);
+       terminal = ptyxis_tab_get_terminal (tab);
+ 
+-      if (window == NULL || !did_restore)
+-        {
+-          window = ptyxis_window_new_empty ();
+-          ptyxis_application_apply_default_size (self, terminal);
+-        }
++      window = ptyxis_window_new_empty ();
++      ptyxis_application_apply_default_size (self, terminal);
+ 
+       ptyxis_tab_set_initial_working_directory_uri (tab, cwd_uri);
+       ptyxis_tab_set_title_prefix (tab, title);
+@@ -702,7 +857,7 @@ ptyxis_application_command_line (GApplication            *app,
+ 
+       maybe_maximize_or_fullscreen (self, window);
+ 
+-      gtk_window_present (GTK_WINDOW (window));
++      ptyxis_application_present (self, GTK_WINDOW (window));
+     }
+   else
+     {
+@@ -1185,6 +1340,10 @@ ptyxis_application_finalize (GObject *object)
+   g_clear_object (&self->client);
+ 
+   g_clear_handle_id (&self->save_session_source, g_source_remove);
++  g_clear_handle_id (&self->present_source, g_source_remove);
++  g_clear_pointer (&self->unpainted_windows, g_ptr_array_unref);
++  g_clear_pointer (&self->unshown_windows, g_ptr_array_unref);
++  g_clear_pointer (&self->windows_to_present, g_ptr_array_unref);
+   g_clear_pointer (&self->written_session, g_bytes_unref);
+   g_clear_pointer (&self->pending_session, g_bytes_unref);
+   g_clear_pointer (&self->screens, g_variant_unref);
+@@ -1614,33 +1773,19 @@ ptyxis_application_new_window_action (GSimpleAction *action,
+ {
+   PtyxisApplication *self = user_data;
+   PtyxisWindow *window;
+-  gboolean has_windows = FALSE;
+ 
+   g_assert (!action || G_IS_SIMPLE_ACTION (action));
+   g_assert (PTYXIS_IS_APPLICATION (self));
+ 
+-  for (const GList *windows = gtk_application_get_windows (GTK_APPLICATION (self));
+-       windows != NULL;
+-       windows = windows->next)
+-    {
+-      if (PTYXIS_IS_WINDOW (windows->data) &&
+-          !ptyxis_window_get_restore_pending (windows->data))
+-        {
+-          has_windows = TRUE;
+-          break;
+-        }
+-    }
+-
+-  /* If no windows exist yet, attempt to restore the previous session before
+-   * opening a blank window. GNOME Shell sends ActivateAction("new-window")
+-   * rather than Activate() when launching Ptyxis from the dock, which
+-   * bypasses the activate() vfunc where session restore normally occurs. */
+-  if (!has_windows && ptyxis_application_restore (self))
+-    return;
++  /* Restore the previous session first if Ptyxis starts with this action, as
++   * GNOME Shell may start it, so that it is not lost. Its windows return to
++   * their places, and the action still opens a new window.
++   */
++  ptyxis_application_restore (self);
+ 
+   window = ptyxis_window_new ();
+   gtk_application_add_window (GTK_APPLICATION (self), GTK_WINDOW (window));
+-  gtk_window_present (GTK_WINDOW (window));
++  ptyxis_application_present (self, GTK_WINDOW (window));
+ }
+ 
+ static void
+diff --git a/src/ptyxis-session.c b/src/ptyxis-session.c
+index 2252dcd..2801f0b 100644
+--- a/src/ptyxis-session.c
++++ b/src/ptyxis-session.c
+@@ -260,6 +260,13 @@ ptyxis_session_restore (PtyxisApplication *app,
+   restore_session = ptyxis_settings_get_restore_session (settings);
+   restore_window_size = ptyxis_settings_get_restore_window_size (settings);
+ 
++  /* The restored windows return to their places without being activated. The
++   * activation token of the launch belongs to the window opened for it, which
++   * is presented after them, while GTK would spend it on the first window it
++   * maps, focusing it and switching to its workspace.
++   */
++  gtk_window_set_auto_startup_notification (FALSE);
++
+   g_variant_iter_init (&iter, windows);
+   while (g_variant_iter_loop (&iter, "@a{sv}", &window))
+     {
+@@ -409,7 +416,7 @@ ptyxis_session_restore (PtyxisApplication *app,
+           if (maximized)
+             gtk_window_maximize (GTK_WINDOW (the_window));
+ 
+-          gtk_window_present (GTK_WINDOW (the_window));
++          gtk_widget_set_visible (GTK_WIDGET (the_window), TRUE);
+ 
+           if (active_tab)
+             {
+@@ -421,5 +428,7 @@ ptyxis_session_restore (PtyxisApplication *app,
+       added_window |= the_window != NULL;
+     }
+ 
++  gtk_window_set_auto_startup_notification (TRUE);
++
+   return added_window;
+ }

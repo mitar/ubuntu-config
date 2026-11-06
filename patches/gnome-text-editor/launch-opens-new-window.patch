@@ -1,0 +1,442 @@
+Description: Show restored windows without activating them and open a new window for every launch and file.
+ Text Editor restores its session by presenting each restored window, and GTK gives the activation token of the
+ launch to the first window it shows, so with a valid token, as from the dock, GNOME switches to that window's
+ workspace. A launch opens no new window, files opened from outside become tabs of the most recently used window,
+ wherever it is, and while Text Editor runs, activating it presents an existing window.
+ .
+ Restored windows are now shown with GTK's automatic startup notification off, and a restored window whose files and
+ drafts were all removed is discarded instead of showing a new draft. The request which restored the session then
+ opens a window of its own, which receives the token: a new window with a draft for a launch, or one with the files.
+ While Text Editor runs, activation and files opened from outside open a new window as well. A file which is open
+ already is shown in its window, as before, and receives no new window.
+ .
+ Mutter focuses a window it shows when the window maps without an activation token, and it shows a restored window
+ only after the window drew its first frame, several of them at once in an order of its own. The new window is
+ therefore presented once mutter showed each restored window on a monitor, or 250 ms after the last of them drew its
+ first frame, as one on another workspace is not shown, and after a second at the latest.
+Author: Mitar
+Forwarded: no
+Last-Update: 2026-11-06
+diff --git a/src/editor-application.c b/src/editor-application.c
+index 6201c6a..f2b1fed 100644
+--- a/src/editor-application.c
++++ b/src/editor-application.c
+@@ -107,18 +107,22 @@ editor_application_restore_cb (GObject      *object,
+     {
+       if (!g_error_matches (error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND))
+         g_warning ("Failed to restore session: %s", error->message);
+-
+-      if (restore->files->len == 0)
+-        editor_session_create_window (session);
+     }
+ 
++  /* The restored windows return to their places, and the request opens a
++   * window of its own, as it does while Text Editor runs.
++   */
+   if (restore->files->len > 0)
+     editor_session_open_files (session,
+                                (GFile **)(gpointer)restore->files->pdata,
+                                restore->files->len,
+-                               restore->hint);
++                               "new-window");
++  else
++    editor_session_create_window (session);
+ 
+-  /* A failed restore leaves the windows GTK restored next to the one above */
++  /* The windows GTK restored which received no pages are discarded once the
++   * session has another window.
++   */
+   _editor_session_discard_restored_windows (session);
+ 
+   g_application_release (g_application_get_default ());
+@@ -135,13 +139,16 @@ editor_application_activate (GApplication *application)
+ 
+   windows = gtk_application_get_windows (GTK_APPLICATION (application));
+ 
++  /* While Text Editor runs, an activation opens a new window, as a launch
++   * does after restoring the session below.
++   */
+   for (const GList *iter = windows; iter; iter = iter->next)
+     {
+       GtkWindow *window = iter->data;
+ 
+       if (EDITOR_IS_WINDOW (window) && !EDITOR_WINDOW (window)->restore_pending)
+         {
+-          gtk_window_present (window);
++          editor_session_create_window (self->session);
+           return;
+         }
+     }
+@@ -176,7 +183,8 @@ editor_application_open (GApplication  *application,
+   if (_editor_session_did_restore (self->session) &&
+       !_editor_session_has_restored_windows (self->session))
+     {
+-      editor_session_open_files (self->session, files, n_files, hint);
++      /* Files opened from outside open in a window of their own */
++      editor_session_open_files (self->session, files, n_files, "new-window");
+     }
+   else
+     {
+diff --git a/src/editor-session-private.h b/src/editor-session-private.h
+index de459d6..ece59cf 100644
+--- a/src/editor-session-private.h
++++ b/src/editor-session-private.h
+@@ -50,12 +50,22 @@ struct _EditorSession
+ 
+   GQueue              pending_saves;
+ 
++  /* The restored windows which have not drawn their first frame yet and which
++   * mutter has not shown on a monitor yet, and the windows to present once it
++   * showed the restored ones, see present_window() in editor-session.c.
++   */
++  GPtrArray          *unpainted_windows;
++  GPtrArray          *unshown_windows;
++  GPtrArray          *windows_to_present;
++  guint               present_source;
+ 
+   guint               auto_save : 1;
+   guint               did_restore : 1;
+   guint               restore_pages : 1;
+   guint               can_clear_history : 1;
+   guint               saving : 1;
++  guint               restoring : 1;
++  guint               present_grace : 1;
+ };
+ 
+ EditorSession *_editor_session_new                    (void);
+diff --git a/src/editor-session.c b/src/editor-session.c
+index 601402b..f5fd004 100644
+--- a/src/editor-session.c
++++ b/src/editor-session.c
+@@ -399,6 +399,10 @@ editor_session_finalize (GObject *object)
+ {
+   EditorSession *self = (EditorSession *)object;
+ 
++  g_clear_handle_id (&self->present_source, g_source_remove);
++  g_clear_pointer (&self->unpainted_windows, g_ptr_array_unref);
++  g_clear_pointer (&self->unshown_windows, g_ptr_array_unref);
++  g_clear_pointer (&self->windows_to_present, g_ptr_array_unref);
+   g_clear_pointer (&self->pages, g_ptr_array_unref);
+   g_clear_pointer (&self->windows, g_ptr_array_unref);
+   g_clear_pointer (&self->seen, g_hash_table_unref);
+@@ -896,6 +900,178 @@ _editor_session_discard_restored_windows (EditorSession *self)
+     }
+ }
+ 
++static void on_restored_window_after_paint_cb (GdkFrameClock *frame_clock,
++                                               EditorWindow  *window);
++static void on_restored_window_enter_monitor_cb (GdkSurface   *surface,
++                                                 GdkMonitor   *monitor,
++                                                 EditorWindow *window);
++
++static void
++stop_waiting_for_restored_windows (EditorSession *self)
++{
++  if (self->unpainted_windows != NULL)
++    {
++      for (guint i = 0; i < self->unpainted_windows->len; i++)
++        {
++          GtkWidget *window = g_ptr_array_index (self->unpainted_windows, i);
++          GdkFrameClock *frame_clock = gtk_widget_get_frame_clock (window);
++
++          if (frame_clock != NULL)
++            g_signal_handlers_disconnect_by_func (frame_clock, G_CALLBACK (on_restored_window_after_paint_cb), window);
++        }
++    }
++
++  if (self->unshown_windows != NULL)
++    {
++      for (guint i = 0; i < self->unshown_windows->len; i++)
++        {
++          GtkWidget *window = g_ptr_array_index (self->unshown_windows, i);
++          GdkSurface *surface = gtk_native_get_surface (GTK_NATIVE (window));
++
++          if (surface != NULL)
++            g_signal_handlers_disconnect_by_func (surface, G_CALLBACK (on_restored_window_enter_monitor_cb), window);
++        }
++    }
++
++  g_clear_handle_id (&self->present_source, g_source_remove);
++  g_clear_pointer (&self->unpainted_windows, g_ptr_array_unref);
++  g_clear_pointer (&self->unshown_windows, g_ptr_array_unref);
++  self->present_grace = FALSE;
++}
++
++static void
++present_pending_windows (EditorSession *self)
++{
++  g_autoptr(GPtrArray) windows = g_steal_pointer (&self->windows_to_present);
++
++  stop_waiting_for_restored_windows (self);
++
++  if (windows == NULL)
++    return;
++
++  for (guint i = 0; i < windows->len; i++)
++    gtk_window_present (g_ptr_array_index (windows, i));
++}
++
++static gboolean
++present_timeout_cb (gpointer data)
++{
++  EditorSession *self = data;
++
++  self->present_source = 0;
++  present_pending_windows (self);
++
++  return G_SOURCE_REMOVE;
++}
++
++static void
++maybe_present_pending_windows (EditorSession *self)
++{
++  if (self->unpainted_windows->len > 0)
++    return;
++
++  if (self->unshown_windows->len == 0)
++    {
++      present_pending_windows (self);
++      return;
++    }
++
++  /* Every restored window drew its first frame. Mutter shows one which is on
++   * the current workspace shortly after, while one on another workspace is
++   * not shown and does not receive the focus, so the windows waiting are
++   * presented after a moment even if not every restored window was shown.
++   */
++  if (!self->present_grace)
++    {
++      self->present_grace = TRUE;
++      g_clear_handle_id (&self->present_source, g_source_remove);
++      self->present_source = g_timeout_add (250, present_timeout_cb, self);
++    }
++}
++
++static void
++on_restored_window_after_paint_cb (GdkFrameClock *frame_clock,
++                                   EditorWindow  *window)
++{
++  EditorSession *self = EDITOR_SESSION_DEFAULT;
++
++  g_signal_handlers_disconnect_by_func (frame_clock, G_CALLBACK (on_restored_window_after_paint_cb), window);
++
++  if (self->unpainted_windows != NULL &&
++      g_ptr_array_remove (self->unpainted_windows, window))
++    maybe_present_pending_windows (self);
++}
++
++static void
++on_restored_window_enter_monitor_cb (GdkSurface   *surface,
++                                     GdkMonitor   *monitor,
++                                     EditorWindow *window)
++{
++  EditorSession *self = EDITOR_SESSION_DEFAULT;
++
++  g_signal_handlers_disconnect_by_func (surface, G_CALLBACK (on_restored_window_enter_monitor_cb), window);
++
++  if (self->unshown_windows != NULL &&
++      g_ptr_array_remove (self->unshown_windows, window))
++    maybe_present_pending_windows (self);
++}
++
++/* Presents @window. While the windows of a session restored just now are not
++ * shown yet, it is presented once they are, or after a second at the latest.
++ */
++static void
++present_window (EditorSession *self,
++                GtkWindow     *window)
++{
++  /* Mutter focuses a window it shows when it maps without an activation token,
++   * and it shows a restored window only after it drew its first frame, which
++   * can be after a window shown later. Presented after them, this window has
++   * the focus.
++   */
++  if (self->unpainted_windows == NULL)
++    {
++      gtk_window_present (window);
++      return;
++    }
++
++  if (self->windows_to_present == NULL)
++    self->windows_to_present = g_ptr_array_new_with_free_func (g_object_unref);
++  g_ptr_array_add (self->windows_to_present, g_object_ref (window));
++}
++
++/* Shows @window, restored from the session, without activating it, and waits
++ * with presenting other windows until mutter showed it, see present_window().
++ */
++static void
++show_restored_window (EditorSession *self,
++                      EditorWindow  *window)
++{
++  GdkFrameClock *frame_clock;
++  GdkSurface *surface;
++
++  /* GTK activates the first window it maps with the activation token of the
++   * launch, which belongs to the window opened for the launch.
++   */
++  gtk_window_set_auto_startup_notification (FALSE);
++  gtk_widget_set_visible (GTK_WIDGET (window), TRUE);
++  gtk_window_set_auto_startup_notification (TRUE);
++
++  if (!(frame_clock = gtk_widget_get_frame_clock (GTK_WIDGET (window))) ||
++      !(surface = gtk_native_get_surface (GTK_NATIVE (window))))
++    return;
++
++  if (self->unpainted_windows == NULL)
++    {
++      self->unpainted_windows = g_ptr_array_new_with_free_func (g_object_unref);
++      self->unshown_windows = g_ptr_array_new_with_free_func (g_object_unref);
++      self->present_source = g_timeout_add (1000, present_timeout_cb, self);
++    }
++  g_ptr_array_add (self->unpainted_windows, g_object_ref (window));
++  g_ptr_array_add (self->unshown_windows, g_object_ref (window));
++  g_signal_connect (frame_clock, "after-paint", G_CALLBACK (on_restored_window_after_paint_cb), window);
++  g_signal_connect (surface, "enter-monitor", G_CALLBACK (on_restored_window_enter_monitor_cb), window);
++}
++
+ /**
+  * editor_session_create_window:
+  * @self: an #EditorSession
+@@ -927,7 +1103,7 @@ editor_session_create_window (EditorSession *self)
+   document = editor_document_new_draft ();
+   editor_session_add_document (self, window, document);
+ 
+-  gtk_window_present (GTK_WINDOW (window));
++  present_window (self, GTK_WINDOW (window));
+ 
+   return window;
+ }
+@@ -1005,7 +1181,9 @@ editor_session_add_page (EditorSession *self,
+   _editor_window_add_page (window, page);
+   _editor_page_raise (page);
+ 
+-  gtk_window_present (GTK_WINDOW (window));
++  /* The session restore shows a restored window once it has its pages */
++  if (!self->restoring)
++    present_window (self, GTK_WINDOW (window));
+ 
+   editor_page_grab_focus (page);
+ 
+@@ -1730,7 +1908,7 @@ editor_session_open (EditorSession           *self,
+       _editor_page_raise (page);
+ 
+       if ((window = _editor_page_get_window (page)))
+-        gtk_window_present (GTK_WINDOW (window));
++        present_window (self, GTK_WINDOW (window));
+ 
+       return page;
+     }
+@@ -1774,8 +1952,20 @@ editor_session_open_files (EditorSession  *self,
+ 
+   g_return_if_fail (EDITOR_IS_SESSION (self));
+ 
++  /* A file which is open already is shown in its window, so a new window is
++   * created only for files which are not.
++   */
+   if (g_strcmp0 (hint, "new-window") == 0)
+-    window = editor_session_create_window (self);
++    {
++      for (guint i = 0; i < n_files; i++)
++        {
++          if (find_page_for_file (self, files[i]) == NULL)
++            {
++              window = editor_session_create_window (self);
++              break;
++            }
++        }
++    }
+ 
+   for (guint i = 0; i < n_files; i++)
+     editor_session_open (self, window, files[i], NULL);
+@@ -2136,12 +2326,15 @@ editor_session_restore_v1 (EditorSession *self,
+       g_variant_n_children (windows) == 0)
+     goto failure;
+ 
++  self->restoring = TRUE;
++
+   g_variant_iter_init (&iter, windows);
+   while (g_variant_iter_loop (&iter, "@a{sv}", &window))
+     {
+       g_autoptr(GVariant) pages = NULL;
+       gboolean maximized = FALSE;
+       const char *window_id = NULL;
++      guint n_pages = self->pages->len;
+ 
+       g_variant_lookup (window, "window-id", "&s", &window_id);
+ 
+@@ -2189,19 +2382,19 @@ editor_session_restore_v1 (EditorSession *self,
+               continue;
+             }
+ 
+-          /* We might have restored session where all files and drafts were removed.
+-           * In this case, we want to create a new draft page.
++          /* A window whose files and drafts were all removed is discarded,
++           * since the request which restores the session opens a window.
+            */
+-          if (self->pages->len == 0)
++          if (self->pages->len == n_pages)
+             {
+-              g_autoptr(EditorDocument) document = editor_document_new_draft ();
+-              editor_session_add_document (self, ewin, document);
++              ewin->restore_pending = TRUE;
++              continue;
+             }
+ 
+           if (maximized)
+             gtk_window_maximize (GTK_WINDOW (ewin));
+ 
+-          gtk_window_present (GTK_WINDOW (ewin));
++          show_restored_window (self, ewin);
+         }
+       else
+         {
+@@ -2210,17 +2403,13 @@ editor_session_restore_v1 (EditorSession *self,
+         }
+     }
+ 
+-  if (!has_window_not_pending (self) || self->pages->len == 0)
+-    {
+-      if (had_failure)
+-        goto failure;
++  self->restoring = FALSE;
+ 
+-      /* We might have restored a session that had nothing persisted because
+-       * all the open tabs were "unmodified drafts". We don't want to warn
+-       * in that case, just create the window and move on.
+-       */
+-      editor_session_create_window (self);
+-    }
++  /* The request which restores the session opens a window afterwards, also
++   * when nothing was restored.
++   */
++  if (had_failure && (!has_window_not_pending (self) || self->pages->len == 0))
++    goto failure;
+ 
+   /* XXX: this probably needs to change once we track all the recent
+    * documents for quick re-use.
+@@ -2232,8 +2421,6 @@ editor_session_restore_v1 (EditorSession *self,
+ failure:
+   if (!restore_pages)
+     g_debug ("Failed to restore session or nothing to restore");
+-
+-  editor_session_create_window (self);
+ }
+ 
+ static void
+@@ -2286,12 +2473,11 @@ editor_session_restore (EditorSession *self,
+                            self,
+                            G_CONNECT_SWAPPED);
+ 
++  /* The caller opens a window afterwards and then discards the windows GTK
++   * restored which received no pages.
++   */
+   if (g_variant_lookup (state, "version", "u", &version) && version == 1)
+     editor_session_restore_v1 (self, state);
+-  else
+-    editor_session_create_window (self);
+-
+-  _editor_session_discard_restored_windows (self);
+ 
+   g_object_notify_by_pspec (G_OBJECT (self), properties [PROP_RECENTS]);
+ }
