@@ -69,6 +69,24 @@ disconnect-app-signals-on-destroy.patch
     connectObject() now, so they are disconnected with their actors. Drop the patch once Ubuntu ships
     a GNOME Shell with the merge request.
 
+disconnect-app-signals-on-destroy-tests.patch
+    Adds the shell test installedChangedAfterShutdown, which emits installed-changed from a shutdown
+    handler connected after the shell's own, once the actors are destroyed, as a late emission in the
+    nested main loop does. Without disconnect-app-signals-on-destroy.patch the events section's handler
+    runs on the destroyed section, and the critical fails the test. The test opens no window, so no
+    client writes to the shader cache, see disable-shader-cache-in-close-test.patch. Drop it together
+    with disconnect-app-signals-on-destroy.patch, or keep it if upstream does not add a test of its own.
+
+disconnect-weather-client-on-destroy.patch
+disconnect-weather-client-on-destroy-tests.patch
+    The date menu's weather section connects to the changed signal of its weather client with
+    connect() as well, which merge request 4491 does not change. The client outlives the section and
+    emits changed after a weather update, a change of location, and when the Weather app is installed
+    or removed, so an emission in the nested main loop at shutdown runs the section's handler on the
+    destroyed section. The first patch connects the handler with connectObject(), and the second adds
+    the shell test weatherChangedAfterShutdown, which emits the client's changed at that point and
+    fails without the first. Drop both once Ubuntu ships a GNOME Shell which disconnects the handler.
+
 disable-shader-cache-in-close-test.patch
     Backport of GNOME Shell commit f9435beb, which disables the Mesa shader cache for the
     closeWithActiveWindows test (https://gitlab.gnome.org/GNOME/gnome-shell/-/issues/9423). The

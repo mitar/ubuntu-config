@@ -1,0 +1,22 @@
+Description: Disconnect the date menu's weather section from its weather client when the section is destroyed.
+ WeatherSection connects to the changed signal of its WeatherClient with connect() and never disconnects. The client
+ outlives the section and emits changed after a weather update, a change of location, and when the Weather app is
+ installed or removed, so an emission after the shell destroyed its actors at shutdown, in the nested main loop of
+ the time limits manager, runs WeatherSection._sync() on the destroyed section, and GJS logs "has been already
+ disposed" criticals. The handler is connected with connectObject() now, as disconnect-app-signals-on-destroy.patch
+ does for the handlers of installed-changed.
+Author: Mitar
+Forwarded: no
+Last-Update: 2026-11-06
+
+--- a/js/ui/dateMenu.js
++++ b/js/ui/dateMenu.js
+@@ -584,7 +584,7 @@
+         layout.hookup_style(this._forecastGrid);
+         box.add_child(this._forecastGrid);
+ 
+-        this._weatherClient.connect('changed', this._sync.bind(this));
++        this._weatherClient.connectObject('changed', () => this._sync(), this);
+         this._sync();
+     }
+ 
