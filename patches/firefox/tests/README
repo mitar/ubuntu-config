@@ -41,23 +41,27 @@ Session restore: run-session.sh and driver.py
     windows, the second 4, or 3 in menu-restore and startup-url-tab, which open no new window, and the third run
     restores the windows the second one saved and opens a new window beside them. The new window of startup-restore
     and startup-no-ids shows about:blank, the start page of the test, which the session store does not save, so
-    their third run has 3 restored windows and 4 in all, and that of startup-url 4 and 5. The compositor restores
-    every window the second run saved. The second run of every startup scenario reports the pages of the tabs of
-    each window and which windows the activation token is passed with: the new window, which the compositor adds
-    under a new ID ("add"), never a restored one ("restore"), and none in startup-url-tab. startup-restore and
-    startup-url also report the window with the focus, the new one. In menu-restore the token is passed with the
-    window Firefox starts with. Each run exits with status 0. The script then prints "RESULT: OK" and exits with 0.
-    A value which differs is marked with FAIL, and the script exits with 1. With ubuntu:GNOME, an unpatched Firefox
-    restores its windows without session management, so the checks of windows restored by the compositor fail, and
-    without session-restore-launch-window.patch and wayland-launch-activation-token.patch also those of the new
-    window and the token. The session requests are in the WAYLAND_DEBUG output of each run in the output directory:
+    their third run has 3 restored windows and 4 in all, and that of startup-url 4 and 5. Before the third run, the
+    test gives the last window of the saved session the ID {12345678-1234-4123-8123-123456789abc}, whose first group
+    consists of decimal digits, as about one in 43 random IDs does, and Firefox has to restore that window under it
+    ("restore"), which without wayland-session-restore-uuid-ids.patch it adds under a new ID instead. The compositor
+    does not know that ID, so it restores every other window the second run saved. The second run of every startup
+    scenario reports the pages of the tabs of each window and which windows the activation token is passed with: the
+    new window, which the compositor adds under a new ID ("add"), never a restored one ("restore"), and none in
+    startup-url-tab. startup-restore and startup-url also report the window with the focus, the new one. In
+    menu-restore the token is passed with the window Firefox starts with. Each run exits with status 0. The script
+    then prints "RESULT: OK" and exits with 0. A value which differs is marked with FAIL, and the script exits with 1.
+    With ubuntu:GNOME, an unpatched Firefox restores its windows without session management, so the checks of
+    windows restored by the compositor and of the window given the ID above fail, and without
+    session-restore-launch-window.patch and wayland-launch-activation-token.patch also those of the new window and
+    the token. The session requests are in the WAYLAND_DEBUG output of each run in the output directory:
 
       grep -h -o -E '(add|restore)_toplevel\([^)]*"[^"]*"|toplevel_session_v1#[0-9]+\.restored\(\)|activate\("[^"]*", wl_surface#[0-9]+\)' /tmp/session-test/run*.log
 
     The second run of menu-restore and startup-no-ids adds its windows under new IDs, the second run of the other
     startup scenarios restores the windows of the first and adds the new one, and the third run restores exactly
-    the windows the second one saved, each answered with restored(). The D-Bus and portal messages printed on the
-    way are expected in the private session.
+    the windows the second one saved, each answered with restored() except the one given the ID above. The D-Bus
+    and portal messages printed on the way are expected in the private session.
 
 Wasm sandboxed libraries: test_wasm.py
     Runs Firefox headless and makes each of the six libraries do some work: expat parses XML, hunspell checks

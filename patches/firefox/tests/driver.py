@@ -19,11 +19,12 @@ SCENARIO is one of:
   startup-url-tab  like startup-url, with external links opening in a tab as by default; the URL has to open as
                    a tab of the first restored window, and no window may receive the token
 
-Each window of the first run shows a page of its own. A third run then restores the session the second one saved.
-Each Firefox run writes its output to LOG_DIR/runN.log, and a summary of each run is printed. The first run has to
-have 3 windows, the second 3 or, when it opens a new window beside the restored ones, 4, and the third one more
-than the second saved, all of them shown. Every run has to exit with status 0, and the compositor has to restore in the
-third run all windows the second one saved, which it does only when Firefox uses session management. The script
+Each window of the first run shows a page of its own. A third run then restores the session the second one saved,
+in which the last window is given the ID DIGITS_ID. Each Firefox run writes its output to LOG_DIR/runN.log, and a
+summary of each run is printed. The first run has to have 3 windows, the second 3 or, when it opens a new window
+beside the restored ones, 4, and the third one more than the second saved, all of them shown. Every run has to exit
+with status 0. In the third run, Firefox has to restore the window given DIGITS_ID under it, and the compositor has to
+restore every other window the second run saved, which it does only when Firefox uses session management. The script
 then prints "RESULT: OK" and exits with 0. It exits with 1 when a check fails, or when Firefox exited on its own.
 """
 
@@ -100,6 +101,11 @@ class Marionette:
 # links in a new window, and -1, the default, opens them as browser.link.open_newwindow says, in a new tab by
 # default.
 EXTERNAL_LINKS = {"window": 2, "default": -1}
+
+# The ID the first run gives one of its windows, instead of the random one Firefox generates. Firefox replaces an ID
+# saved on X11, the workspace number, by a new one, and must not take an ID whose first group consists of decimal
+# digits, like this one, for such a number, which about one in 43 random IDs is.
+DIGITS_ID = "{12345678-1234-4123-8123-123456789abc}"
 
 # The activation token every second run is launched with, in both variables launchers set.
 # The compositor does not know it and ignores it, but the WAYLAND_DEBUG output shows the window Firefox passes it
@@ -227,6 +233,78 @@ def restored_toplevels(log_path):
         return sum(1 for line in f if "toplevel_session_v1#" in line and ".restored()" in line)
 
 
+MOZLZ4_MAGIC = b"mozLz40\0"
+
+
+def read_mozlz4(path):
+    """Returns the JSON value of a file Firefox compressed with LZ4, like its saved session."""
+    with open(path, "rb") as f:
+        data = f.read()
+    if not data.startswith(MOZLZ4_MAGIC):
+        raise ValueError("%s is not a mozLz4 file" % path)
+    size = int.from_bytes(data[8:12], "little")
+    src = data[12:]
+    out = bytearray()
+    i = 0
+
+    def length(value):
+        nonlocal i
+        if value == 15:
+            while True:
+                byte = src[i]
+                i += 1
+                value += byte
+                if byte != 255:
+                    break
+        return value
+
+    # An LZ4 block is a sequence of literals, each followed by a match copied from the output so far, except the last.
+    while i < len(src):
+        token = src[i]
+        i += 1
+        count = length(token >> 4)
+        out += src[i:i + count]
+        i += count
+        if i >= len(src):
+            break
+        offset = src[i] | src[i + 1] << 8
+        i += 2
+        # A match can overlap the bytes it produces, so it is copied byte by byte.
+        for _ in range(length(token & 15) + 4):
+            out.append(out[-offset])
+    return json.loads(bytes(out[:size]))
+
+
+def write_mozlz4(path, value):
+    """Writes value as JSON to a file in the format of read_mozlz4, as a single LZ4 literal run, which needs no
+    compression to be valid."""
+    data = json.dumps(value).encode()
+    block = bytearray([min(len(data), 15) << 4])
+    if len(data) >= 15:
+        rest = len(data) - 15
+        while rest >= 255:
+            block.append(255)
+            rest -= 255
+        block.append(rest)
+    with open(path, "wb") as f:
+        f.write(MOZLZ4_MAGIC + len(data).to_bytes(4, "little") + block + data)
+
+
+def give_saved_window_id(profile, workspace_id):
+    """Gives the last window of the session saved in profile the ID workspace_id."""
+    path = os.path.join(profile, "sessionstore.jsonlz4")
+    state = read_mozlz4(path)
+    state["windows"][-1]["workspaceID"] = workspace_id
+    write_mozlz4(path, state)
+
+
+def named_toplevels(log_path, name):
+    """Returns for each window added to the session under name or restored under it "add" or "restore", in order."""
+    with open(log_path, errors="replace") as f:
+        return re.findall(r'-> xdg_session_v1#\d+\.(add|restore)_toplevel\(new id xdg_toplevel_session_v1#\d+, '
+                          r'xdg_toplevel#\d+, "%s"\)' % re.escape(name), f.read())
+
+
 def activated_toplevels(log_path, token):
     """Returns for each activation request with token whether the window it names was added to the session under a
     new ID ("add") or restored under its saved one ("restore"), or None when the window was not added to it."""
@@ -341,8 +419,10 @@ def main():
             report("run 2: pages of the focused window %s", focused_window_pages(m), [new_page])
     report("run 2: exit status %s", quit(m, proc), 0)
 
-    # A third run restores the session saved by the second one, which shows that the IDs it saved are
-    # the ones the compositor knows.
+    # A third run restores the session saved by the second one, which shows that the IDs it saved are the ones the
+    # compositor knows. One saved window is given DIGITS_ID instead, under which Firefox has to restore it, though the
+    # compositor does not know it and so does not restore it.
+    give_saved_window_id(profile, DIGITS_ID)
     write_prefs(profile, 3, external_links=external_links)
     proc, m = start(firefox, profile, os.path.join(log_dir, "run3.log"))
     time.sleep(3)
@@ -353,7 +433,10 @@ def main():
     run2_saved = 3 if scenario in ("startup-restore", "startup-no-ids") else run2_windows
     report("run 3: %s windows", window_count(m), run2_saved + 1)
     report("run 3: %s windows shown", mapped_toplevels(os.path.join(log_dir, "run3.log")), run2_saved + 1)
-    report("run 3: %s windows restored by the compositor", restored_toplevels(os.path.join(log_dir, "run3.log")), run2_saved)
+    report("run 3: %s windows restored by the compositor", restored_toplevels(os.path.join(log_dir, "run3.log")),
+           run2_saved - 1)
+    report("run 3: windows named " + DIGITS_ID + " %s", named_toplevels(os.path.join(log_dir, "run3.log"), DIGITS_ID),
+           ["restore"])
     report("run 3: exit status %s", quit(m, proc), 0)
 
     print("RESULT: %s" % ("OK" if not failures else "%d check(s) failed" % len(failures)), flush=True)
