@@ -66,7 +66,8 @@ wayland-session-restore-uuid-ids.patch
     workspace number, by a new one (Mozilla bug 2059617), and recognized such an ID by ToInteger() succeeding.
     ToInteger() also succeeds on a UUID whose first group consists of decimal digits, as about one in 43 do, so
     such a window was added to the session anew at every start and opened on the current workspace. The patch keeps
-    an ID which parses as a UUID. The same code is in Firefox's main branch. Not reported to Mozilla yet.
+    an ID which parses as a UUID. The same code is in Firefox's main branch. Reported as Mozilla bug 2090009, under
+    review as D340286 on phabricator.services.mozilla.com. Drop the patch once the PPA's Firefox contains the fix.
 
 wayland-launch-activation-token.patch
 session-restore-launch-window.patch

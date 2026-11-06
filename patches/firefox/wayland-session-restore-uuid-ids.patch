@@ -6,7 +6,8 @@ Description: Restore a Wayland window whose saved ID begins with eight decimal d
  that window was added to the session under a new ID instead of being restored, and opened on the current
  workspace. An ID is now kept when it parses as a UUID as a whole and replaced otherwise.
 Author: Mitar
-Forwarded: no
+Bug: https://bugzilla.mozilla.org/show_bug.cgi?id=2090009
+Forwarded: https://phabricator.services.mozilla.com/D340286
 Last-Update: 2026-11-06
 diff --git a/widget/gtk/nsWindowWayland.cpp b/widget/gtk/nsWindowWayland.cpp
 index db3e183..9d5b722 100644
