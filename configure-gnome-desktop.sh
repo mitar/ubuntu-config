@@ -12,7 +12,7 @@
 # Extensions
 # ----------
 # Extensions packaged by Ubuntu are installed with apt when missing, as is gnome-shell-extension-prefs, whose presence
-# is also what lets the shell check extensions.gnome.org for updates daily and apply them at the next login. The shell
+# also lets the shell check extensions.gnome.org for updates daily and apply them at the next login. The shell
 # looks for extensions only when it starts, so a packaged extension installed during the session is enabled from the
 # next login on. Extensions from extensions.gnome.org are installed through the shell, which asks for confirmation in
 # a dialog and loads them immediately. Extensions from this repository, in gnome-extensions/, are copied into your
@@ -137,7 +137,7 @@ install_local() {
 }
 
 # Enables an extension the running shell does not know by adding it to the list of enabled extensions, which the
-# shell reads at the next login. It is also taken off the list of disabled extensions, which would take precedence.
+# shell reads at the next login. It is also removed from the list of disabled extensions, which would override it.
 enable_at_login() {
   local msg
   msg=$(python3 - "$1" "$MODE" <<'PY'
@@ -305,7 +305,7 @@ bookmark_first() {
 }
 
 # Installs a systemd unit from systemd/ in this repository into the root-owned /etc/systemd/system through sudo,
-# enables it, and runs it, so that it takes effect without a reboot.
+# enables it, and runs it, so that it applies without a reboot.
 install_unit() {
   local name=$1 src=$REPO_DIR/systemd/$1 dst=/etc/systemd/system/$1 touched=no
   if ! cmp -s "$src" "$dst"; then
@@ -343,7 +343,7 @@ install_udev_rule() {
 }
 
 # Installs a module option file from modprobe.d/ in this repository into the root-owned /etc/modprobe.d through
-# sudo. A module that is already loaded is loaded again, so that the options take effect without a reboot.
+# sudo. A module that is already loaded is loaded again, so that the options apply without a reboot.
 install_modprobe_conf() {
   local name=$1 module=$2 src=$REPO_DIR/modprobe.d/$1 dst=/etc/modprobe.d/$1
   cmp -s "$src" "$dst" && return 0
@@ -622,7 +622,7 @@ greeter_set() {
 echo "=== keyboard ==="
 set_key org.gnome.desktop.peripherals.keyboard repeat                            "true"
 # Longer than the default 500 ms, so that a key held slightly too long is not typed more than once. GNOME repeats
-# keys itself and ignores the kernel's repeat, which the console uses, so the console gets the same delay from a
+# keys itself and ignores the kernel's repeat, which the console uses, so the console is given the same delay by a
 # unit run at boot.
 set_key org.gnome.desktop.peripherals.keyboard delay                             "uint32 1000"
 install_unit console-keyboard-repeat.service
@@ -634,7 +634,7 @@ set_key org.gnome.desktop.peripherals.touchpad click-method                     
 
 echo "=== touchscreen ==="
 # The rule makes libinput ignore every touchscreen. GNOME Shell checks for that only when a device appears, so it
-# takes effect at the next login.
+# applies from the next login.
 install_udev_rule 90-ignore-touchscreens.rules input
 
 echo "=== power button light ==="
@@ -710,7 +710,7 @@ set_key org.gnome.desktop.background picture-uri-dark                 "'file:///
 set_key org.gnome.desktop.screensaver picture-uri                      "'file:///usr/share/backgrounds/Little_numbat_boy_by_azskalt.png'"
 
 echo "=== colour scheme ==="
-# The shell is dark and applications are light. Ubuntu's shell takes its scheme from org.gnome.shell.ubuntu when that
+# The shell is dark and applications are light. Ubuntu's shell reads its scheme from org.gnome.shell.ubuntu when that
 # is set, independently of the one applications follow, which they read from org.gnome.desktop.interface directly or
 # through the settings portal. GTK 3 applications follow the theme instead, and the Yaru-dark variants would make
 # them dark. GIMP and Inkscape keep their own dark themes, so that the drawing stands out.

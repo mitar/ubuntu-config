@@ -20,9 +20,9 @@ Session restore: run-session.sh and driver.py
       ./run-session.sh /tmp/mutter-root - /usr/lib/firefox/firefox ubuntu:GNOME /tmp/session-test menu-restore
 
     The second argument is "-" for the installed GTK, or a directory libgtk-3-0t64 was extracted into. The
-    fourth is XDG_CURRENT_DESKTOP: ubuntu:GNOME is what Firefox sees on this desktop, and an unpatched Firefox
-    disables session restore for it, while any value without GNOME, like test, gets past that check. The last
-    argument is the scenario, described at the top of driver.py:
+    fourth is XDG_CURRENT_DESKTOP: Firefox sees ubuntu:GNOME on this desktop, and an unpatched Firefox disables
+    session restore for it, while any value without GNOME, like test, passes that check. The last argument is
+    the scenario, described at the top of driver.py:
 
       menu-restore     the second run starts without restoring and restores from the History menu; Firefox
                        159 crashes with "Name of toplevel is already in use" when the check is passed
@@ -85,5 +85,5 @@ Wasm sandboxed libraries: test_wasm.py
     The script exits with 0 then, and with 1 when a library reported an error or Firefox did not keep running or
     did not exit with status 0.
 
-    The test shows that the libraries work, not that they run sandboxed. That they are built sandboxed is
-    shown by the check in ../README, which lists the rlbox_wasm2c_ symbols in libxul.so and liblgpllibs.so.
+    The test shows that the libraries work, not that they run sandboxed. The check in ../README, which lists the
+    rlbox_wasm2c_ symbols in libxul.so and liblgpllibs.so, shows that they are built sandboxed.

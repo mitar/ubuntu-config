@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Install fetch-vendor-debs.py, the keys it verifies downloads with and its daily cron job from this repository as the
-# root-owned copies that root runs. Only what differs from the installed copy is replaced.
+# root-owned copies that root runs. Only a file which differs from its installed copy is replaced.
 #
 #   fetch-vendor-debs.py           ->  /usr/local/bin/fetch-vendor-debs
 #   vendor-debs/                   ->  /usr/local/share/vendor-debs

@@ -20,7 +20,7 @@ import sys
 
 from gi.repository import Gio, GLib
 
-# How long a slow request takes, longer than the 5 seconds gio-launch-desktop once waited at most.
+# The duration of a slow request, longer than the 5 seconds gio-launch-desktop once waited at most.
 SLOW_S = 7
 
 INTERFACE = Gio.DBusNodeInfo.new_for_xml(

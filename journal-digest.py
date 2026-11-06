@@ -5,8 +5,8 @@ Reads the systemd journal, of the system and of every user, and prints:
 
 - the units which failed, grouped by unit and result, with when and how often, and the last lines the latest failed
   run logged, which usually say why,
-- the messages logged at priority err or more urgent, grouped by what logged them and by their text with the numbers
-  in it left out, with when and how often,
+- the messages logged at priority err or more urgent, grouped by the program which logged them and by their text
+  with the numbers in it left out, with when and how often,
 - the crash reports apport wrote to /var/crash, since a crash is otherwise logged only at a lower priority.
 
 It prints nothing when there is nothing to report, so that cron mails only when there is. Each report starts right
@@ -51,7 +51,7 @@ CRASH_FIELDS = ('ProblemType', 'Date', 'ExecutablePath', 'Package', 'SignalName'
 UNIT_FAILED = 'd9b373ed55a64feb8242e02dbe79a49c'
 # Priority err and the more urgent ones.
 ERROR_PRIORITIES = ('0', '1', '2', '3')
-# What the first report covers, when there is no previous one.
+# The period the first report covers, when there is no previous one.
 FIRST_REPORT_S = 24 * 3600
 CONTEXT_LINES = 5
 MESSAGE_WIDTH = 300
@@ -85,7 +85,7 @@ def text(value):
 
 
 def identifier(entry):
-    """Returns what logged an entry."""
+    """Returns the name of the program which logged an entry."""
     return text(entry.get('SYSLOG_IDENTIFIER')) or text(entry.get('_COMM')) or 'unknown'
 
 
@@ -131,8 +131,8 @@ def failure_context(entry):
     if not invocation:
         return []
     until = int(entry['__REALTIME_TIMESTAMP']) / 1e6
-    # A unit's own output carries its invocation in _SYSTEMD_INVOCATION_ID, and what the manager logs about it in
-    # INVOCATION_ID, or USER_INVOCATION_ID for a user's manager. The terms joined by + match any of them.
+    # A unit's own output carries its invocation in _SYSTEMD_INVOCATION_ID, and the manager's messages about the unit
+    # carry it in INVOCATION_ID, or USER_INVOCATION_ID for a user's manager. The terms joined by + match any of them.
     entries = journal([
         f'--until=@{until:.6f}', f'--lines={CONTEXT_LINES + 1}',
         f'_SYSTEMD_INVOCATION_ID={invocation}', '+', f'INVOCATION_ID={invocation}', '+',
@@ -210,7 +210,7 @@ def crash_reports(since):
 def report(start, label, patterns, crashes_since):
     """Prints the failures and errors logged from where the journalctl arguments in start begin to the end of the
     journal, and the crash reports of crashes since crashes_since, in seconds since the epoch, under a heading naming
-    label as the start. Leaves out what the patterns match, and prints nothing when nothing is left.
+    label as the start. Leaves out the entries the patterns match, and prints nothing when nothing is left.
 
     Returns the cursor of the last entry read, or None when no entry matched.
     """
@@ -332,7 +332,7 @@ def main():
     state = read_state()
     now = time.time()
     # Read before the report, so that when nothing matched, the next report starts after the entry which was the newest
-    # then, and still reads what was logged while this one ran.
+    # then, and still reads the entries logged while this one ran.
     newest = newest_cursor()
     previous = state.get('time') if isinstance(state.get('time'), (int, float)) else now - FIRST_REPORT_S
     if state.get('cursor'):

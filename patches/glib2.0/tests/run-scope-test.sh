@@ -7,7 +7,7 @@
 # Runs as root in a privileged container, and refuses to run anywhere else, as it creates cgroups at the root of the
 # cgroup hierarchy it sees. GLIB_ROOT is a directory the libglib2.0-0t64 package to test was extracted into, whose
 # libraries and gio-launch-desktop are used in place of the installed ones. OUT_DIR is removed first, then receives the
-# logs and what each scenario reports. USER is the unprivileged user the user instance and the scenarios run as.
+# logs and the report of each scenario. USER is the unprivileged user the user instance and the scenarios run as.
 
 set -euo pipefail
 

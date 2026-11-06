@@ -26,8 +26,8 @@
 # registered here, and found by its label on later runs so that repeating the script does not add more.
 #
 #
-# What Ptyxis cannot do
-# ---------------------
+# Settings which need patches/ptyxis
+# ----------------------------------
 # Three things are settings only once patches/ptyxis is built in: the selection highlight colours, a shortcut for
 # Copy as HTML, and the search keys running the right way round. Until then the highlight keys in the palette are
 # ignored, copy-html is reported as skipped, and the unshifted search key moves backwards.
@@ -136,7 +136,7 @@ echo "=== application ==="
 set_key org.gnome.Ptyxis default-columns "uint32 96"
 set_key org.gnome.Ptyxis default-rows    "uint32 25"
 # With this off, default-columns and default-rows above decide the size of every new window. With it on, Ptyxis
-# reopens at whatever size the last window was left at and ignores them.
+# reopens at the last window's size and ignores them.
 set_key org.gnome.Ptyxis restore-window-size "false"
 # Audible bells are turned into visual feedback system wide, in org.gnome.desktop.wm.preferences, so the
 # terminal emits the bell and does not decide how it is signalled.
@@ -209,7 +209,7 @@ set_key $S move-tab-right     "''"
 set_key $S primary-menu       "''"
 set_key $S preferences        "''"
 
-# Anything not named above keeps whatever Ptyxis ships, which still has to be considered when looking for clashes.
+# Anything not named above keeps Ptyxis's default, which still has to be considered when looking for clashes.
 for key in $(gsettings list-keys org.gnome.Ptyxis.Shortcuts); do
   [ -n "${EFFECTIVE[$key]:-}" ] || EFFECTIVE[$key]=$(gsettings get org.gnome.Ptyxis.Shortcuts "$key")
 done

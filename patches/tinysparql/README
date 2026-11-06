@@ -4,8 +4,8 @@ resource-print-null-on-invalid-input.patch
     Makes tracker_resource_print_turtle, tracker_resource_print_sparql_update and
     tracker_resource_print_jsonld return NULL when given something which is not a
     TrackerResource. They returned a static empty string, which a caller frees like any result
-    of these functions, and freeing it aborted the program. That is how the localsearch
-    extractor crashed, see patches/localsearch/. The patch is the first commit of
+    of these functions, and freeing it aborted the program. The localsearch extractor crashed
+    this way, see patches/localsearch/. The patch is the first commit of
     https://gitlab.gnome.org/GNOME/tinysparql/-/merge_requests/819, including its test, which is
     added to tests/libtinysparql/tracker-resource-test.c and runs during the build.
 

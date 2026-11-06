@@ -3,7 +3,7 @@ Description: Offer no screenshots while the session is locked.
  with Print, and Shift+Print saves a screenshot of the whole screen there. Upstream keeps this on purpose:
  the lock screen shows nothing private, and screen recording, selecting a window and Alt+Print are already
  unavailable while locked. Anyone at the locked machine can still save screenshots into the user's Pictures
- folder and replace what the user has in the clipboard with them, so here no screenshot is offered at all.
+ folder and replace the user's clipboard contents with them, so here no screenshot is offered at all.
  .
  Print and Shift+Print are bound in the same restricted action modes as Alt+Print and screen recording, and
  the button is hidden while the session is locked. Quick settings stay the same across locking, so the

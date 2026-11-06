@@ -2,8 +2,8 @@ import Gio from 'gi://Gio';
 
 // The fields below come from struct gpu_metrics_v3_0 in drivers/gpu/drm/amd/include/kgd_pp_interface.h, at the
 // offsets the kernel compiles that struct to with its natural alignment. amdgpu publishes the struct as a whole and
-// describes it only by the revision and size in its header, so reading a field means taking it from a fixed offset
-// once the header says the layout is the one these offsets belong to.
+// describes it only by the revision and size in its header, so a field is read from a fixed offset once the
+// header says the layout is the one these offsets belong to.
 const STRUCTURE_SIZE = 264;
 const FORMAT_REVISION = 3;
 
@@ -38,8 +38,8 @@ export const CORE_GROUPS = [
 // ones well under a tenth of one, so anything in between separates them.
 const ACTIVE_CORE_POWER_W = 0.5;
 
-// A field which holds the largest value it can is how the table says it carries nothing, for entries the firmware
-// leaves out.
+// The table marks a field as carrying nothing, for entries the firmware leaves out, by setting it to the largest
+// value it can hold.
 const UNSET_UINT16 = 0xffff;
 
 // Counters wrap at the range of the unsigned 32 bit fields that hold them, after about 49.7 days of uptime.
@@ -50,7 +50,7 @@ const COUNTER_MODULUS = 2 ** 32;
  * their counters. SPL is the sustained power limit, and FPPT and SPPT the fast and slow package power tracking
  * limits, which together keep the package within its power budget over different time scales. The THM reasons are
  * the temperature limits of the individual domains. PROCHOT is asserted by the platform rather than by the
- * processor, and the platform does not report what made it assert it, so it is its own kind.
+ * processor, and the platform does not report its cause, so it is its own kind.
  *
  * Each entry carries the offset of its throttle_residency_ field, which counts the milliseconds the processor has
  * spent limited by that reason since boot.
@@ -139,7 +139,7 @@ export function decodeMetrics(bytes) {
  * @returns {Gio.File|null} the file, or null when no device on this system publishes such a table
  */
 export function findMetricsFile() {
-    // Which index a card gets depends on the order the devices came up, so it is not stable across boots and every
+    // The index of a card depends on the order the devices came up, so it is not stable across boots and every
     // card has to be tried. A card of a generation that publishes a different layout fails to decode and is skipped.
     for (const card of listCards()) {
         const file = Gio.File.new_for_path(`/sys/class/drm/${card}/device/gpu_metrics`);

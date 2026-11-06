@@ -3,8 +3,8 @@
 # Install rebuild-patched-packages.sh, its patches and its daily cron job from this repository as the root-owned
 # copies that root runs, and give the sbuild user its builds run as the subordinate ids building in unshare mode
 # needs. Also set up the local repository the rebuilds are published to, let unattended-upgrades install from it,
-# and let /tmp, where builds run, hold as many files as a Firefox build needs. Only what differs from the installed
-# copy is replaced.
+# and let /tmp, where builds run, hold as many files as a Firefox build needs. Only a file which differs from its
+# installed copy is replaced.
 #
 #   rebuild-patched-packages.sh                         ->  /usr/local/bin/rebuild-patched-packages
 #   patches/                                            ->  /usr/local/share/patched-packages
@@ -69,7 +69,7 @@ install_dir() {
 
 echo "=== rebuild-patched-packages ==="
 # The unshare mode of sbuild and mmdebstrap maps the users inside the build chroot onto subordinate ids of the
-# build user. A range is taken above every range already given out.
+# build user. A range is chosen above every range already given out.
 if ! getent passwd sbuild >/dev/null; then
   echo "install-rebuild-patched-packages: the sbuild user does not exist, install the sbuild package first" >&2
   exit 1
@@ -89,7 +89,7 @@ install_file "$REPO_DIR/rebuild-patched-packages.sh"         /usr/local/bin/rebu
 install_file "$REPO_DIR/cron.daily/rebuild-patched-packages" /etc/cron.daily/rebuild-patched-packages 755
 
 echo "=== local repository ==="
-# apt update fails on a source whose index is missing, so a repository without one gets an empty index.
+# apt update fails on a source whose index is missing, so a repository without one is given an empty index.
 if [ ! -e /usr/local/lib/debs/Packages.gz ]; then
   echo "  create an empty index in /usr/local/lib/debs"
   CHANGED=$((CHANGED+1))

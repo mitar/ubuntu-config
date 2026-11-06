@@ -80,7 +80,7 @@ class ShutdownDelay:
             # Only a service which was running is started again when the shutdown does not happen. It is not running
             # anymore also when the end of the graphical session is already stopping it.
             self.unit_stopped = systemctl("--quiet", "is-active", UNIT)
-            # Stopping the service, instead of running what it runs, has every browser process receive SIGTERM once:
+            # Stopping the service, instead of running its command, has every browser process receive SIGTERM once:
             # gnome-session exits right after the announcement, so the graphical session ends, which stops the service
             # too, and systemd merges the later stop into the one already running, for which systemctl waits as well.
             # Chromium handles only the first SIGTERM, and a second one kills the browser process at once.

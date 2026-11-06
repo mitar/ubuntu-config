@@ -15,7 +15,7 @@ power-sounds-follow-system-sounds.patch
     lid still suspends.
 
 The sounds are played in engine_charge_low, do_lid_open_action, do_lid_closed_action and
-up_client_on_battery_cb in plugins/power/gsd-power-manager.c, which take the context from
+up_client_on_battery_cb in plugins/power/gsd-power-manager.c, which receive the context from
 gsd_application_get_ca_context in plugins/common/gsd-application.c. After a version bump, check
 that all four still play them with no check of their own, and drop the patch once one is there.
 The critical battery sounds in the same file, battery-caution and the alert loop it starts,

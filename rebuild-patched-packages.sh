@@ -10,7 +10,7 @@
 #
 # This only works because the local repository outranks the archive (Pin-Priority 1001, see
 # lockdown-apt-sources.sh), for unattended-upgrades too, which install-rebuild-patched-packages.sh allows to install
-# from it. That is what stops an unpatched Ubuntu build from replacing a patched one. The
+# from it. The pin keeps an unpatched Ubuntu build from replacing a patched one. The
 # consequence is that a package stays on the old version until a rebuild succeeds, so a silent failure would
 # mean silently missing security updates. Every failure is therefore loud: it goes to stderr for cron to mail,
 # and to syslog as well so that a missing mail transport cannot swallow it.
@@ -81,9 +81,9 @@
 # Adding a package
 # ----------------
 # Create patches/<source-package>/ containing the patch files and a "series" file naming them in the order they
-# apply. The directory name has to be the source package name, which is what apt-get source takes. Optionally
+# apply. The directory name has to be the source package name, which apt-get source expects. Optionally
 # add a "build-options" file whose contents are used as DEB_BUILD_OPTIONS. Do not put nocheck there: the tests
-# are how a stale patch is caught. Parallelism does not belong there either, it is passed as -j from BUILD_JOBS.
+# catch a stale patch. Parallelism does not belong there either, it is passed as -j from BUILD_JOBS.
 # A README in that directory is a good place to record what the patch does and what to re-check after a version
 # bump. Then install the patches with install-rebuild-patched-packages.sh, and add the package to the matrix of the
 # build job in .gitlab-ci.yml, or of build_large for a package which needs a larger runner.
@@ -105,14 +105,14 @@
 #                        the same directory.
 #   sbuild-options       further sbuild options, one per line.
 #
-# A patch that applies is not a patch that works, and the build itself is what says so. Two things catch a patch
+# A patch that applies is not a patch that works, and the build itself shows whether it works. Two things catch a patch
 # that has gone stale, and neither needs any machinery here:
 #
 #   the build fails   dpkg-source refuses a patch needing fuzz, and a hunk that landed somewhere plausible but
 #                     wrong will not compile.
 #   the tests fail    a patch should add tests for its own behaviour to the package's test suite, which then run
-#                     during the build like any other. This is what catches a patch that still applies, still
-#                     compiles, and has been made inert by a change elsewhere.
+#                     during the build like any other. The tests catch a patch that still applies, still compiles,
+#                     and has been made inert by a change elsewhere.
 #
 #
 # Prerequisites, installed by hand rather than by this script
@@ -129,8 +129,8 @@
 # Versioning
 # ----------
 # The rebuild carries a local suffix, so 0.84.0-2 becomes 0.84.0-2+patched1. That sorts above the Ubuntu version
-# it was built from and below Ubuntu's next revision, which is what makes a new Ubuntu release register as
-# "newer upstream" here and trigger a rebuild rather than being masked forever by the pin. Rebuilding the same
+# it was built from and below Ubuntu's next revision, so a new Ubuntu release registers as "newer upstream" here
+# and triggers a rebuild rather than being masked forever by the pin. Rebuilding the same
 # Ubuntu version again, because its patches changed or with --force, counts the suffix up to +patched2 and so on,
 # so that apt sees the new build as an upgrade too.
 #
@@ -161,7 +161,7 @@ VERSION_SUFFIX=+patched
 BUILD_JOBS=$(nproc 2>/dev/null || echo 1)
 
 # Commands the rebuild needs, each with the package providing it. Everything missing is reported in one go, so a
-# failure mail names the whole install rather than whichever thing was noticed first.
+# failure mail names the whole install rather than the first thing noticed.
 REQUIRED_COMMANDS="apt-get:apt apt-cache:apt patch:patch gzip:gzip dpkg-deb:dpkg dpkg-scanpackages:dpkg-dev
                    dpkg-source:dpkg-dev dch:devscripts sbuild:sbuild mmdebstrap:mmdebstrap newuidmap:uidmap
                    zstd:zstd setpriv:util-linux"
@@ -218,7 +218,7 @@ check_prereqs() {
     case " $MISSING_PACKAGES " in *" $pkg "*) ;; *) MISSING_PACKAGES="$MISSING_PACKAGES $pkg" ;; esac
   done
 
-  # Source indexes are what apt-get source reads. Deliberately only reported, never fixed here: editing apt
+  # apt-get source reads the source indexes. Deliberately only reported, never fixed here: editing apt
   # sources is the business of whoever installs this, not of a job that runs unattended every night.
   local targets
   targets=$(apt-get indextargets --format '$(CREATED_BY)' 2>/dev/null || true)
@@ -256,7 +256,7 @@ report_install_drift() {
   return 0
 }
 
-# Every Ubuntu source has to offer deb-src, or a rebuild cannot fetch what it is rebuilding. Enabling it once by
+# Every Ubuntu source has to offer deb-src, or a rebuild cannot fetch the source it rebuilds. Enabling it once by
 # hand is not enough: ubuntu-pro-client rewrites its own sources whenever it runs, writing them without deb-src,
 # while the Ubuntu Pro pins place those sources above the archive. A security update could then be installed and
 # never rebuilt. The sources are therefore checked on every run, and corrected during a build.
@@ -314,8 +314,8 @@ warn() {
   return 0
 }
 
-# Reported like fail, but the run continues and exits with a failure only at its end. Used where what remains to be
-# done does not depend on what failed.
+# Reported like fail, but the run continues and exits with a failure only at its end. Used where the remaining work
+# does not depend on the failed step.
 FAILED=0
 error() {
   echo "rebuild-patched-packages: $*" >&2
@@ -332,7 +332,7 @@ error() {
 #
 # Prints the newer binary version when there is one, nothing otherwise. Local builds are excluded by matching the
 # origin rather than by version, since a local build carries the suffix anyway: ubuntu.com, or the repository
-# source-from names for a package taken from elsewhere.
+# source-from names for a package whose source comes from elsewhere.
 unfetchable_update() {
   local src=$1 srcver=$2 from bins bin ver origin best=""
   from=$(source_from "$src")
@@ -423,7 +423,7 @@ built_version() {
   cat "$STATE_DIR/$1.built" 2>/dev/null || true
 }
 
-# A fingerprint of what a build reads from patches/<source-package>/: both series files and the patches they list
+# A fingerprint of the files a build reads from patches/<source-package>/: both series files and the patches they list
 # in order, the optional settings, and the keys extra-repositories names.
 patches_digest() {
   local src=$1 dir=$PATCH_DIR/$1 p f line
@@ -457,7 +457,8 @@ built_digest() {
   cat "$STATE_DIR/$1.patches" 2>/dev/null || true
 }
 
-# Why a package has to be rebuilt, or nothing when it is current. --force is not considered here, callers add it.
+# Prints the reason a package has to be rebuilt, or nothing when it is current. --force is not considered here,
+# callers add it.
 rebuild_reason() {
   local src=$1 off=$2 blt=$3 was
   if [ -z "$blt" ]; then
@@ -515,8 +516,8 @@ patch_paths() {
   ' "$1" | sort -u
 }
 
-# Add our patches to the package's own series and let dpkg-source apply them, which is exactly what the build
-# does. Running it here, before the build dependencies are installed, means a broken patch is reported in seconds
+# Add our patches to the package's own series and let dpkg-source apply them, exactly as the build does.
+# Running it here, before the build dependencies are installed, means a broken patch is reported in seconds
 # instead of after a long dependency install, and the message is dpkg's own rather than a reinterpretation.
 #
 # dpkg-source applies with patch -t -F 0, so a patch needing any fuzz is refused outright. There is nothing to
@@ -592,7 +593,7 @@ prune_old_debs() {
 }
 
 # Runs a command as the unprivileged build user in a clean environment. Builds and test suites expect a writable
-# home, so it gets one inside the work directory. no_new_privs is not set, because unshare mode relies on the
+# home, so it is given one inside the work directory. no_new_privs is not set, because unshare mode relies on the
 # setuid newuidmap and newgidmap to map the chroot's users onto the build user's subordinate ids.
 as_builder() {
   local work=$1
@@ -680,8 +681,8 @@ rebuild() {
   pkill -KILL -u "$BUILD_USER" 2>/dev/null || true
 
   if [ "$status" -ne 0 ]; then
-    # sbuild writes the full build log to its own file in the work directory, and build.log only holds what it
-    # prints. That directory belongs to the build user, so only a regular file is read, never a symlink.
+    # sbuild writes the full build log to its own file in the work directory, and build.log only holds its output.
+    # That directory belongs to the build user, so only a regular file is read, never a symlink.
     local log kept=$LOG_DIR/$src.failed.build
     log=$(find "$work" -maxdepth 1 -name '*.build' -type f -printf '%T@ %p\n' | sort -n | tail -1 | cut -d' ' -f2-)
     # The work directory is removed on exit, so the log is copied out of it. nofollow keeps a symlink put there in
@@ -694,7 +695,7 @@ rebuild() {
     fail "$src: build failed for $version, the full build log is $kept"
   fi
 
-  # The work directory belongs to the build user from here on, so only regular files are taken from it. A symlink
+  # The work directory belongs to the build user from here on, so only regular files are copied from it. A symlink
   # named like a package would otherwise have root copy whatever it points to into the repository.
   local produced="$work/produced" debs=() f
   : > "$produced"; : > "$produced.files"
@@ -812,7 +813,7 @@ case "$MODE" in
       blt=$(built_version "$src")
       newer=$(unfetchable_update "$src" "$off")
       [ -n "$newer" ] && warn "$src: binary $newer is available but its source is not, so the rebuild is made" \
-                              "from $off and will not contain whatever that newer version fixes"
+                              "from $off and will not contain the fixes of that newer version"
       reason=$(rebuild_reason "$src" "$off" "$blt")
       [ -z "$reason" ] && [ "$FORCE" = yes ] && reason="forced"
       if [ -n "$reason" ]; then

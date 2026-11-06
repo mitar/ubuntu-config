@@ -18,8 +18,9 @@ const SAMPLE_INTERVAL_S = 2;
 // briefly whenever it boosts, and reporting that would leave the indicator showing almost all of the time.
 const THRESHOLD_PERCENT = 10;
 
-// How many samples in a row have to stay under the threshold before the indicator goes away again. Starting a
-// program drains the fast power budget for about one sample, so leaving at the first quiet sample would blink.
+// The number of samples in a row which have to stay under the threshold before the indicator goes away again.
+// Starting a program drains the fast power budget for about one sample, so leaving at the first quiet sample would
+// blink.
 const HIDE_AFTER_SAMPLES = 2;
 
 // The hottest core's temperature from which a fan is expected to spin. The embedded controller runs the fan from the
@@ -27,12 +28,12 @@ const HIDE_AFTER_SAMPLES = 2;
 // after the cores reach this.
 const FAN_NEEDED_ABOVE_C = 70;
 
-// How many samples in a row the hottest core has to be at FAN_NEEDED_ABOVE_C or more, with no fan spinning in that
-// time or no board reading changing for BOARD_STALE_AFTER_S, before that is shown as the fan not following the heat. It
-// has to outlast the board warming up to where the EC starts the fan. Starting from a cool board with the fan off, the
-// EC was measured to start the fan at most about 10 seconds after the hottest core reached FAN_NEEDED_ABOVE_C, for
-// loads from a few threads to all of them, while lighter loads warm the board enough before the cores get there, or
-// never get the cores there.
+// The number of samples in a row in which the hottest core has to be at FAN_NEEDED_ABOVE_C or more, with no fan
+// spinning in that time or no board reading changing for BOARD_STALE_AFTER_S, before that is shown as the fan not
+// following the heat. It has to outlast the board warming up to where the EC starts the fan. Starting from a cool board
+// with the fan off, the EC was measured to start the fan at most about 10 seconds after the hottest core reached
+// FAN_NEEDED_ABOVE_C, for loads from a few threads to all of them, while lighter loads warm the board enough before the
+// cores reach that temperature, or never bring the cores to it.
 const FAULT_AFTER_HOT_SAMPLES = 15;
 
 // How long none of the board's temperature readings may change, with the hottest core at FAN_NEEDED_ABOVE_C or more
@@ -251,7 +252,7 @@ class ThrottleIndicator extends PanelMenu.Button {
                 if (error.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED))
                     return;
                 // INVALID_DATA is the EC failing to read the sensor. Any other error is about reaching the file and
-                // says nothing about the sensor, so the menu keeps showing what it showed.
+                // says nothing about the sensor, so the menu keeps showing its last reading.
                 if (!error.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.INVALID_DATA)) {
                     console.warn(`CPU Throttle Indicator: cannot read ${file.get_path()}: ${error.message}`);
                     return;
@@ -263,7 +264,7 @@ class ThrottleIndicator extends PanelMenu.Button {
     }
 
     /**
-     * Takes a reading of the APU temperature the embedded controller reports, and shows it in the menu.
+     * Reads the APU temperature the embedded controller reports, and shows it in the menu.
      *
      * @param {number|null} temperature - the temperature in degrees Celsius, or null when the EC cannot read the sensor
      */
@@ -288,7 +289,7 @@ class ThrottleIndicator extends PanelMenu.Button {
                         return;
                     // INVALID_DATA for the speed is the EC reporting the fan as stalled. Any other error, and any error
                     // for the target, is about reaching the EC and says nothing about the fan, so the menu keeps
-                    // showing what it showed.
+                    // showing its last reading.
                     if (row.kind !== 'speed' || !error.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.INVALID_DATA)) {
                         console.warn(`CPU Throttle Indicator: cannot read ${file.get_path()}: ${error.message}`);
                         return;
@@ -301,7 +302,7 @@ class ThrottleIndicator extends PanelMenu.Button {
     }
 
     /**
-     * Takes a reading of the speed of a fan or of its target, and shows it in the menu.
+     * Reads the speed of a fan or of its target, and shows it in the menu.
      *
      * @param {object} row - the row the reading is for, as an entry of this._fanRows
      * @param {number|null} speed - the speed in RPM, or null when the EC reports the fan as stalled
@@ -343,14 +344,14 @@ class ThrottleIndicator extends PanelMenu.Button {
     }
 
     /**
-     * Takes a reading and updates the indicator and its menu from it and the reading before it.
+     * Updates the indicator and its menu from a reading and the reading before it.
      *
      * @param {object|null} metrics - the reading, or null when the table could not be decoded
-     * @param {number} timestamp - the monotonic time in microseconds at which the reading was taken
+     * @param {number} timestamp - the monotonic time in microseconds at which the reading was made
      */
     _update(metrics, timestamp) {
         // A table that cannot be decoded says nothing about whether anything is being held back, which is not the
-        // same as saying that nothing is, so the indicator keeps showing what it showed.
+        // same as saying that nothing is, so the indicator keeps showing its last state.
         if (!metrics)
             return;
 
@@ -430,8 +431,8 @@ class ThrottleIndicator extends PanelMenu.Button {
     _render() {
         const fanFault = this._boardStale || this._samplesFanOffWhileHot >= FAULT_AFTER_HOT_SAMPLES;
         this._warningItem.visible = fanFault;
-        // Without a fan which follows the heat the APU heats up until its temperature limit holds it back. That takes
-        // the place of whatever is holding it back right now.
+        // Without a fan which follows the heat the APU heats up until its temperature limit holds it back. The
+        // indicator therefore shows that limit instead of the reason which holds the APU back right now.
         if (fanFault) {
             this._icon.gicon = this._icons.thermal;
             this._reasonLabel.text = 'THM';

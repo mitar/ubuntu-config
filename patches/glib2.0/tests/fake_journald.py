@@ -5,10 +5,10 @@
 # Usage: fake_journald.py OUT_DIR
 #
 # Runs as root in the container of run-scope-test.sh, which has no journald. Creates /dev/log, where syslog() sends
-# its messages, and /run/systemd/journal/stdout, which GLib takes a process's standard error to be the journal for
-# when it is connected to it. Every datagram received on /dev/log is appended to OUT_DIR/syslog.log as a line of its
-# own, and what is written to a stream to OUT_DIR/stream.log. Both sockets can be used by every user. Runs until it is
-# killed.
+# its messages, and /run/systemd/journal/stdout. GLib treats a process's standard error as the journal when it is
+# connected to that socket. Every datagram received on /dev/log is appended to OUT_DIR/syslog.log as a line of its
+# own, and the output written to a stream to OUT_DIR/stream.log. Both sockets can be used by every user. Runs until it
+# is killed.
 
 import os
 import pathlib

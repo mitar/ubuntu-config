@@ -74,8 +74,8 @@ Last-Update: 2026-09-20
                  m_modifiers = event.modifiers();
  
 +                /* Treat SUPER as CTRL. Map the bare Super keys onto Control so that a Super press reaches
-+                 * the terminal as a Control press. This has to happen on the mutable local keyval, which is
-+                 * what _vte_keymap_map() later turns into the bytes written to the pty. */
++                 * the terminal as a Control press. This has to happen on the mutable local keyval, which
++                 * _vte_keymap_map() later turns into the bytes written to the pty. */
 +                keyval = vte::super_as_control::map_keyval(keyval);
 +
                  // FIXMEchpe?

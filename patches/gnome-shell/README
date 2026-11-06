@@ -7,7 +7,7 @@ no-screenshots-while-locked.patch
     https://gitlab.gnome.org/GNOME/gnome-shell/-/issues/9469: the lock screen shows nothing private,
     and screen recording, selecting a window and Alt+Print are already not offered while locked.
     Anyone at the locked machine could still save screenshots into ~/Pictures/Screenshots and replace
-    what is in the clipboard with them. Upstream keeps its behavior, so this patch stays.
+    the clipboard's contents with them. Upstream keeps its behavior, so this patch stays.
 
     The InteractiveScreenshot method of org.gnome.Shell.Screenshot, through which the screenshot
     portal lets an application ask the user for a screenshot, is left as it is and still opens the

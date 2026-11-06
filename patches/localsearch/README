@@ -9,12 +9,12 @@ extractor-check-resource-before-printing.patch
     The crash fix, the first commit of the merge request. When committing an extraction result
     fails, the decorator retries the items one by one and, for an item which fails again,
     prints its metadata as SPARQL for the error report. An item without metadata has no
-    resource, and printing the NULL resource is what crashed.
+    resource, and printing the NULL resource crashed.
 
 extractor-ps-fail-unreadable-file.patch
     The second commit of the merge request. The PS extractor reported a file it could not open
-    as a success without metadata, which is how a vanished file reached the code above. It now
-    fails with the error from opening the file, so the file is handled as a failed extraction.
+    as a success without metadata, so a vanished file reached the code above. It now fails
+    with the error from opening the file, so the file is handled as a failed extraction.
 
 extractor-ps-fail-unreadable-file-tests.patch
     A test for the PS extractor patch, not part of the merge request. It runs the extractor on

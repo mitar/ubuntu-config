@@ -25,7 +25,7 @@ Last-Update: 2026-09-21
 +      <description>
 +        When this key is pressed and released on its own, the key
 +        combination in tap-key-sends is sent in its place. Pressed together
-+        with other keys it stays an ordinary modifier. The overlay key takes
++        with other keys it stays an ordinary modifier. The overlay key has
 +        precedence when both name the same key. Empty disables it.
 +      </description>
 +    </key>
@@ -109,7 +109,7 @@ Last-Update: 2026-09-21
 +  /* The combination is played back as a hand would press it: modifiers down,
 +   * the key down and up, and the modifiers up again in reverse order. Going
 +   * through a virtual keyboard makes it pass through keybinding processing
-+   * like any other input, which is what lets it reach global shortcuts.
++   * like any other input, which lets it reach global shortcuts.
 +   */
 +  now = g_get_monotonic_time ();
 +
@@ -351,7 +351,7 @@ Last-Update: 2026-09-21
 +  virtual_keyboard = clutter_seat_create_virtual_device (seat,
 +                                                         CLUTTER_KEYBOARD_DEVICE);
 +
-+  /* The default overlay key covers both Super keys and would take the tap
++  /* The default overlay key covers both Super keys and would act on the tap
 +   * before the tap key does, so it is narrowed to the left one.
 +   */
 +  mutter_settings = g_settings_new ("org.gnome.mutter");

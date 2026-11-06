@@ -9,8 +9,8 @@ Description: Build the wasm sandboxed libraries, as Mozilla's own builds do.
   - the wasm32 libc++ and libc++abi are compiled with exceptions, as -fno-exceptions never reaches the compiler in
     their build, so they call __cxa_throw and three more functions of the exception runtime, and compiler-rt's
     gcc_personality_v0 calls five functions of the unwinder, none of which any wasm32 library defines (Launchpad
-    bug 2169046). debian/wasm-cxa-stubs.c defines them to abort, which is what a libc++ built without exceptions,
-    like Mozilla's, does in their place.
+    bug 2169046). debian/wasm-cxa-stubs.c defines them to abort, as a libc++ built without exceptions, like
+    Mozilla's, does in their place.
  .
  WASM_CC and WASM_CXX point clang at the resource directory, whose builtins archive carries the stubs, so every wasm
  link finds both.

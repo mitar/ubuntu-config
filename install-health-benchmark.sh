@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Install health-benchmark.py, the pinned 7-Zip build it benchmarks with, and the systemd timer which runs it once a
-# day, as root-owned copies that root runs. Only what differs from the installed copy is replaced.
+# day, as root-owned copies that root runs. Only a file which differs from its installed copy is replaced.
 #
 #   health-benchmark.py                 ->  /usr/local/bin/health-benchmark
 #   7-Zip 26.05, static build (7zzs)    ->  /usr/local/lib/health-benchmark/7zzs

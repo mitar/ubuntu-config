@@ -1,11 +1,11 @@
 Source package: firefox, from the Mozilla Team PPA (https://launchpad.net/~mozillateam/+archive/ubuntu/ppa)
 
-Ubuntu's own firefox package only installs the snap, and Mozilla's APT repository publishes no source
-(requested in https://bugzilla.mozilla.org/show_bug.cgi?id=2087959), so Firefox comes from the Mozilla Team
-PPA, run by Ubuntu's Mozilla team, which builds Mozilla's release source with Ubuntu's packaging.
-lockdown-apt-sources.sh configures the PPA with its source enabled (sources.list.d/ of this repository) and pins
-firefox to it, below the local repository, so the rebuilt package is what is installed. source-from makes this
-script rebuild the PPA's source rather than Ubuntu's.
+Ubuntu's own firefox package only installs the snap, and Mozilla's APT repository publishes no source (requested in
+https://bugzilla.mozilla.org/show_bug.cgi?id=2087959), so Firefox comes from the Mozilla Team PPA, run by Ubuntu's
+Mozilla team, which builds Mozilla's release source with Ubuntu's packaging. lockdown-apt-sources.sh configures the
+PPA with its source enabled (sources.list.d/ of this repository) and pins firefox to it, below the local
+repository, so APT installs the rebuilt package. source-from makes this script rebuild the PPA's source rather than
+Ubuntu's.
 
 The PPA's packaging differs from Mozilla's own build mainly in that it disables the wasm sandboxed libraries,
 which wasm-sandboxed-libraries.patch turns back on, in shipping an AppArmor profile, which
@@ -42,9 +42,9 @@ wayland-session-restore-on-gnome.patch
     name_in_use protocol error, as the protocol requires, and Firefox crashes. The first patch keeps such windows
     under a new ID, the third enables the protocol on GNOME again.
 
-    The second fixes what enabling it exposed: a window restored at startup without a saved ID was never shown,
-    because only MoveToWorkspace() shows a window waiting for session restore and the session store calls it only
-    for a window with a saved ID. Every profile used while the protocol was disabled saves its windows without
+    The second fixes a bug which enabling it exposed: a window restored at startup without a saved ID was never
+    shown, because only MoveToWorkspace() shows a window waiting for session restore and the session store calls it
+    only for a window with a saved ID. Every profile used while the protocol was disabled saves its windows without
     IDs, so the first start after enabling it showed no window at all, apart from one which requested focus.
 
     They need mutter with the final protocol (xdg-session-management.patch in patches/mutter/) and GTK with the
@@ -71,19 +71,19 @@ wayland-session-restore-uuid-ids.patch
 
 wayland-launch-activation-token.patch
 session-restore-launch-window.patch
-    Make a start of Firefox behave like a launch while it runs: the saved windows return to their places, and what
-    the launch opens, a URL from another application or, without one, the start page, opens in a new window on the
-    current workspace, which has the focus.
+    Make a start of Firefox behave like a launch while it runs: the saved windows return to their places, and the
+    page the launch opens appears in a new window on the current workspace, which has the focus: a URL from another
+    application or, without one, the start page.
 
     The session store restores the first saved window into the window Firefox opens for the launch, so a URL
     becomes a tab of that window, on whichever workspace it returns to, and a launch from the dock opens nothing
     new. With session-restore-launch-window.patch, every saved window is restored into a window of its own and the
-    window opened for the launch keeps what it opened. With a URL this follows where external links open: in a new
-    window when browser.link.open_newwindow.override.external is 2, otherwise the URL still becomes a tab of the
-    first saved window (Mozilla bug 1565050). Without a URL it holds for a start whose settings restore the session
-    (browser.startup.page set to 3), not for a restart by Firefox itself, such as after an update, or a recovery
-    after a crash, which restore the windows as they were. The window opened for the launch is shown when session
-    restore finishes (the second patch above), after the restored ones, so GNOME places it on the current
+    window opened for the launch keeps the page it opened. With a URL this follows where external links open: in a
+    new window when browser.link.open_newwindow.override.external is 2, otherwise the URL still becomes a tab of
+    the first saved window (Mozilla bug 1565050). Without a URL it holds for a start whose settings restore the
+    session (browser.startup.page set to 3), not for a restart by Firefox itself, such as after an update, or a
+    recovery after a crash, which restore the windows as they were. The window opened for the launch is shown when
+    session restore finishes (the second patch above), after the restored ones, so GNOME places it on the current
     workspace.
 
     GTK 3 activates the first window it shows with the activation token of the launch, which during session restore

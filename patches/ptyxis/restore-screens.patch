@@ -7,8 +7,8 @@ Description: Show the screen each tab had when the session ended, dimmed, when i
  .
  The screens are kept in $XDG_STATE_HOME/org.gnome.Ptyxis/screens.gvariant, readable only by
  the user, apart from the session state in the config directory, and linked to its tabs by an
- ID. They are saved with the session, which saves 3 seconds after a change, now also of what a
- terminal shows. Closing the last window saves its tabs without the screens and removes the
+ ID. They are saved with the session, which saves 3 seconds after a change, now also of a
+ terminal's screen. Closing the last window saves its tabs without the screens and removes the
  screens file, so the screens are shown only after a session which ended with windows open. A
  terminal scrolled back shows earlier rows, so its screen is kept as it was the last time it
  was scrolled to the end.
@@ -216,7 +216,7 @@ index ca4fd0e..9ccc203 100644
 +/**
 + * ptyxis_application_save_session:
 + * @self: a #PtyxisApplication
-+ * @keep_screens: whether to save what the terminals show
++ * @keep_screens: whether to save the screens of the terminals
 + *
 + * Saves the session now. With @keep_screens, the screen of each tab is saved
 + * as well, and shown again when the session is restored. Without it, saved
@@ -477,7 +477,7 @@ index 48cd480..411c846 100644
                             self,
                             G_CONNECT_SWAPPED);
 +
-+  /* The session saves what the terminal shows */
++  /* The session saves the terminal's screen */
 +  g_signal_connect_object (self->terminal,
 +                           "contents-changed",
 +                           G_CALLBACK (ptyxis_tab_contents_changed_cb),
@@ -489,10 +489,10 @@ index 48cd480..411c846 100644
 + * ptyxis_tab_dup_screen_text:
 + * @self: a #PtyxisTab
 + *
-+ * Gets the text of the screen of the terminal, which is its last rows, as plain
-+ * text without colors and without trailing whitespace. A terminal scrolled back
-+ * shows earlier rows, so the screen is then the one it had the last time it was
-+ * scrolled to the end.
++ * Returns the text of the screen of the terminal, which is its last rows, as
++ * plain text without colors and without trailing whitespace. A terminal scrolled
++ * back shows earlier rows, so the screen is then the one it had the last time it
++ * was scrolled to the end.
 + *
 + * Returns: (transfer full) (nullable): the text of the screen, or %NULL when
 + *   it is empty

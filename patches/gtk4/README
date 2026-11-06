@@ -52,9 +52,9 @@ Ubuntu's own debian/patches already carry upstream's commit 221cd8e190, which ke
 application forgets a window it never showed, which Text Editor does with a restored window it has no documents
 for.
 
-None of the patches adds a test to GTK's test suite, which runs during the build and shows that they break
-nothing existing. That windows are named and restored is tested with Text Editor by
-patches/gnome-text-editor/tests/run-text-editor-session.sh, see the README there.
+None of the patches adds a test to GTK's test suite, which runs during the build and shows that they break nothing
+existing. patches/gnome-text-editor/tests/run-text-editor-session.sh tests with Text Editor that windows are named
+and restored, see the README there.
 
 Drop the patches once Ubuntu ships a GTK whose GtkApplication has a public save/restore API again, which will not
 be this one: Text Editor then has to be ported to that API, and the RestoreSupported check checked against it. A

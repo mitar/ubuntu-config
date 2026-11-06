@@ -3,8 +3,9 @@ Source package: mutter
 tap-key.patch
     Lets a modifier tapped on its own send a key combination, configured with tap-key and
     tap-key-sends in org.gnome.mutter. Mutter already gives a lone tap of a modifier a meaning for
-    two keys, the overlay key and the locate-pointer key, and this adds a third one that sends
-    whatever tap-key-sends names. Held together with other keys it stays an ordinary modifier.
+    two keys, the overlay key and the locate-pointer key, and this adds a third one, which sends the
+    key combination tap-key-sends names. Held together with other keys it stays an ordinary
+    modifier.
 
     The combination goes through a virtual keyboard, so it reaches keybindings and global shortcuts
     the same way a key pressed by hand does. configure-gnome-keys.sh has the right Super send
@@ -69,12 +70,11 @@ xdg-session-management.patch
 xx-session-management.patch
     Offers the draft protocol, xx_session_manager_v1, again next to the final one, for Chromium.
     Chromium speaks only the draft (up to at least 156, see crbug.com/409099413), so with
-    xdg-session-management.patch alone it found no session manager. Both protocols are served by
-    the same code and share the stored sessions, and each session records which one it was created
+    xdg-session-management.patch alone it found no session manager. Both protocols are served by the
+    same code and share the stored sessions, and each session records which one it was created
     through. For the draft, add_toplevel refuses only a name in use by a toplevel of the same
-    session object, as in mutter 50.1, which is what Chromium was written against. Mutter 50.1
-    offered the draft only with MUTTER_DEBUG_SESSION_MANAGEMENT_PROTOCOL=1, this offers it to every
-    client.
+    session object, as in mutter 50.1, which Chromium was written against. Mutter 50.1 offered the
+    draft only with MUTTER_DEBUG_SESSION_MANAGEMENT_PROTOCOL=1, this offers it to every client.
 
     Chromium uses it only with its WaylandSessionManagement feature, enabled in
     chrome://flags/#wayland-session-management or with --enable-features=WaylandSessionManagement,
@@ -93,12 +93,12 @@ xx-session-management.patch
     own code. Drop it once Chromium speaks xdg_session_manager_v1.
 
 xdg-toplevel-session-rename.patch
-    Implements the rename request of xdg_toplevel_session_v1, which mutter leaves unimplemented, also
-    in 51.1 and on main. libwayland-server aborts a compositor which receives a request without a
-    handler, so any client sending rename ended GNOME Shell and with it the session.
-    xdg-session-management.patch is what offers the protocol to every client, so the two go
-    together. A name already known to the session raises name_in_use, as add_toplevel does, and
-    otherwise the state stored under the old name moves to the new one.
+    Implements the rename request of xdg_toplevel_session_v1, which mutter leaves unimplemented,
+    also in 51.1 and on main. libwayland-server aborts a compositor which receives a request without
+    a handler, so any client sending rename ended GNOME Shell and with it the session.
+    xdg-session-management.patch offers the protocol to every client, so the two go together. A name
+    already known to the session raises name_in_use, as add_toplevel does, and otherwise the state
+    stored under the old name moves to the new one.
 
     Neither Firefox nor Chromium sends rename. tests/run-rename-check.sh checks it with a minimal
     client, see tests/README. The crash is reported as mutter issue 5177. Drop the patch once mutter

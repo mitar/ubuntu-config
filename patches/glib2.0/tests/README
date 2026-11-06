@@ -34,9 +34,9 @@ Scope before exec: run-scope-test.sh, scope_test.py, fake_systemd.py and fake_jo
       outside           launched outside of the user instance: no scope is asked for, and the application starts at
                         once
 
-    In every scenario the application also has to start in time and see none of the variables through which GLib
-    talks to gio-launch-desktop, and gio-launch-desktop has to log nothing but what is described above. The
-    container has no journald, so run-scope-test.sh starts fake_journald.py, which listens on /dev/log and
+    In every scenario the application also has to start in time and see none of the variables through which GLib talks
+    to gio-launch-desktop, and gio-launch-desktop has to log nothing but the messages described above. The container
+    has no journald, so run-scope-test.sh starts fake_journald.py, which listens on /dev/log and
     /run/systemd/journal/stdout, and the launching process connects its standard error, which gio-launch-desktop
     inherits, to the latter, as GNOME Shell does for the applications it launches. gio-launch-desktop then logs
     through syslog, so that its messages keep their priority, which the journal digest selects by.
@@ -57,6 +57,6 @@ Scope before exec: run-scope-test.sh, scope_test.py, fake_systemd.py and fake_jo
 
     Each check prints a line starting with PASS or FAIL, and the script exits with 0 only when all passed. Without the
     patch, every scenario but no-systemd, no-systemd-exit and outside fails: no scope is named, and every process
-    stays in the cgroup of the service which launched it. OUT_DIR receives the log of the user instance, what
-    fake_journald.py received in journal/, and for each scenario the test application's desktop file, what the
-    application and the launching process reported, and result.json.
+    stays in the cgroup of the service which launched it. OUT_DIR receives the log of the user instance, the messages
+    fake_journald.py received, in journal/, and for each scenario the test application's desktop file, the reports of
+    the application and the launching process, and result.json.

@@ -28,8 +28,8 @@ rm -rf "$OUT"
 mkdir -p "$OUT/home" "$OUT/xdg/data" "$OUT/xdg/config" "$OUT/xdg/state" "$OUT/xdg/cache"
 export HOME=$OUT/home
 export XDG_DATA_HOME=$OUT/xdg/data XDG_CONFIG_HOME=$OUT/xdg/config XDG_STATE_HOME=$OUT/xdg/state XDG_CACHE_HOME=$OUT/xdg/cache
-# A runtime directory of its own keeps a document portal which the private bus starts from taking the session's
-# /run/user/<uid>/doc for a stale mount and unmounting it. It is kept short, because the Wayland socket is created in
+# A runtime directory of its own keeps a document portal which the private bus starts from treating the session's
+# /run/user/<uid>/doc as a stale mount and unmounting it. It is kept short, because the Wayland socket is created in
 # it and socket paths are limited to 108 bytes.
 RUNTIME_DIR=$(mktemp -d /tmp/ptyxis-session-test.XXXXXX)
 export XDG_RUNTIME_DIR=$RUNTIME_DIR

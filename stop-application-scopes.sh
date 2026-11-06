@@ -5,7 +5,7 @@
 #
 # Sends SIGTERM to the browser process of each scope which a Chromium-based application created for itself, and
 # returns once these processes exited, or after WAIT_S seconds. Every application scope is ordered before the service,
-# so systemd stops the scopes, and with them whatever is left in them, only after this returns.
+# so systemd stops the scopes, and with them every process left in them, only after this returns.
 #
 # Chromium, and every Electron application built on it, moves its browser process into a scope of its own, which it
 # names after the process, app-<name>-<pid>.scope, and starts its renderers there too, while its zygotes and GPU

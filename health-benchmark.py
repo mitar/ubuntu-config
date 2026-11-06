@@ -2,7 +2,7 @@
 """Track how well this laptop cools itself and how fast its processor is, over months and years.
 
 A measurement holds the fan at a full duty cycle and the power profile at performance for about 25 minutes, and
-appends a row to /var/lib/health-benchmark/results.csv with what it found in each of its phases:
+appends a row to /var/lib/health-benchmark/results.csv with its findings in each of its phases:
 
 - idle: once the load has been low for a while, the temperatures and the power at rest, and the fan's speed at a
   full duty cycle, which falls as the fan wears and rises as dust clogs the fins it blows through,
@@ -13,8 +13,8 @@ appends a row to /var/lib/health-benchmark/results.csv with what it found in eac
 - cooldown: how fast the temperature falls after the load stops, given as the time constant of its decay.
 
 The row also records the firmware, microcode, kernel and its mitigations, so that a change in the scores can be
-traced to what changed with it. The samples read every second during the measurement are kept next to the results,
-in traces/, so that they can be analyzed again later.
+traced to the system change which came with it. The samples read every second during the measurement are kept next
+to the results, in traces/, so that they can be analyzed again later.
 
 Without arguments it reports the latest measurement as a share of the best one recorded, which needs no root.
 
@@ -80,7 +80,7 @@ PROFILE = 'performance'
 # A phase is disturbed when other processes used more than this share of all CPU time during it. That costs the score
 # on all threads about as much, and the changes the measurements are meant to show are a few percent.
 FOREIGN_CPU_PERCENT = 1
-# How long the load has to stay that low before a manual measurement starts, and how long it is waited for.
+# The time the load has to stay that low before a manual measurement starts, and the longest wait for it.
 IDLE_REQUIRED_S = 180
 IDLE_TIMEOUT_S = 1800
 CLOCK_TICKS = os.sysconf('SC_CLK_TCK')
@@ -492,8 +492,8 @@ class Measurement:
     def check_foreign(self):
         """Raises Skip when the NPU was powered, or other processes used more than FOREIGN_CPU_PERCENT of the CPU time,
         in any phase so far."""
-        # Nothing in a measurement uses the NPU, so whatever powered it was another process, whose heat and share of
-        # the package's power budget the CPU time does not show.
+        # Nothing in a measurement uses the NPU, so another process powered it, and the CPU time shows neither the
+        # heat of that process nor its share of the package's power budget.
         if self.npu_phases:
             raise Skip(f'the NPU was powered during {", ".join(self.npu_phases)}')
         phase = max(self.foreign, key=self.foreign.get)
@@ -633,7 +633,7 @@ def averages(prefix, samples):
 
 
 def system_description():
-    """Returns what describes the system a measurement ran on: firmware, microcode, kernel, mitigations and tools."""
+    """Returns a description of the system a measurement ran on: firmware, microcode, kernel, mitigations and tools."""
     cpuinfo = read_text('/proc/cpuinfo') or ''
     meminfo = read_text('/proc/meminfo') or ''
 
@@ -964,7 +964,7 @@ def thermal_resistance(row):
     steady load, both with the fan at full speed, or None when the row lacks a value."""
     # At either load the temperature is the room's plus the thermal resistance times the power, so the difference
     # between the two leaves the room's temperature out. No sensor measures the room, and an idle temperature which
-    # stands in for it moves with what the package draws at idle.
+    # stands in for it moves with the package's power at idle.
     idle_tctl, steady_tctl = number(row, 'idle_tctl'), number(row, 'steady_tctl')
     idle_power, steady_power = number(row, 'idle_power_w'), number(row, 'steady_power_w')
     if None in (idle_tctl, steady_tctl, idle_power, steady_power) or steady_power <= idle_power:

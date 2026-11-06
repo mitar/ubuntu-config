@@ -6,7 +6,7 @@ Description: Keep the window opened for a launch as it was opened and restore th
  opens external links in a new window, as they do while Firefox runs. A launch without a URL opens no new window
  either, unlike a launch while Firefox runs.
  .
- The window opened for the launch now keeps what it opened, the URL or the start page, every saved window is
+ The window opened for the launch now keeps its page, the URL or the start page, every saved window is
  restored into a new window, and the window opened for the launch is the one focused afterwards. With a URL this
  follows where external links open. Without one it holds when the user's settings restore the session
  (browser.startup.page set to 3), but not for a restart by Firefox itself (browser.sessionstore.resume_session_once)
@@ -41,7 +41,7 @@ index 9fa4c8e..437a28c 100644
              firstWindow: true,
              overwriteTabs: overwrite,
              restoreSource: "automatic_startup",
-+            // The window opened for the launch keeps what it opened, as a window
++            // The window opened for the launch keeps its page, as a window
 +            // opened while Firefox runs does, and every saved window is restored
 +            // into a new one. With a page from the command line, like a link
 +            // opened from another application, this follows where external

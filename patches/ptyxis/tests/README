@@ -41,12 +41,12 @@ Ptyxis session restore: run-ptyxis-session.sh and ptyxis_session.py
       ./run-ptyxis-session.sh /tmp/mutter-root /tmp/ptyxis-root /tmp/ptyxis-session-test
 
     The shells read a .bashrc the test writes, which moves each shell of the first run into a directory of its own and
-    prints "first run, tab N", and in later runs prints "second run in" and the directory it started in. The first
-    tab prints nothing for its first 5 seconds, so that Ptyxis saves its session once while no tab has a screen, which
+    prints "first run, tab N", and in later runs prints "second run in" and the directory it started in. The first tab
+    prints nothing for its first 5 seconds, so that Ptyxis saves its session once while no tab has a screen, which
     once kept all later screens from being saved. ptyxis-agent starts the shells through systemd-run --user when it
     finds systemd-run, which needs the user's systemd manager in the runtime directory the test replaces, so a
-    systemd-run which fails comes first on PATH, and the agent starts the shells directly. The checks
-    read Ptyxis's session state and screens, GTK's window state, and what Ptyxis sent and received over the session
+    systemd-run which fails comes first on PATH, and the agent starts the shells directly. The checks read Ptyxis's
+    session state and screens, GTK's window state, and the messages Ptyxis sent and received over the session
     management protocol, which the script prints, followed by one line for each check, and finally "RESULT: OK", and
     exits with 0. A tab which is not the selected one of its window starts its shell only once it is shown, so in the
     second run it shows just its screen of the first run.

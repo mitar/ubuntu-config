@@ -206,7 +206,7 @@ def start(ptyxis, log_path, launch="command-line"):
 
 
 def end_group(proc):
-    """Ends what is left of the process group of Ptyxis, such as its agent and the shells."""
+    """Ends the processes left in the process group of Ptyxis, such as its agent and the shells."""
     try:
         os.killpg(proc.pid, signal.SIGKILL)
     except ProcessLookupError:
@@ -304,8 +304,8 @@ def main():
     # Run 1: a window with two tabs and a second window with one, each tab in a directory of its own. Ptyxis saves
     # the session a few seconds after each change, GTK its window state every 15 seconds while a window has the
     # focus, and mutter the places of the windows a few seconds after they change, so the test waits for GTK before
-    # ending mutter and Ptyxis as a crash of the machine would. The windows can then be placed again only from what
-    # mutter wrote while they were open.
+    # ending mutter and Ptyxis as a crash of the machine would. The windows can then be placed again only from the
+    # places mutter wrote while they were open.
     log1 = os.path.join(out, "run1.log")
     proc = start(ptyxis, log1)
     check(wait_until(lambda: "first run, tab 1" in all_screens()), "run 1: the session saved the screen of the first tab")

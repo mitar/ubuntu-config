@@ -97,14 +97,14 @@ class Marionette:
         return self.call("WebDriver:ExecuteAsyncScript", {"script": source, "args": [], "scriptTimeout": 60000})["value"]
 
 
-# What external_links passed to write_prefs sets browser.link.open_newwindow.override.external to: 2 opens external
-# links in a new window, and -1, the default, opens them as browser.link.open_newwindow says, in a new tab by
-# default.
+# write_prefs sets browser.link.open_newwindow.override.external to the value given here for its external_links: 2
+# opens external links in a new window, and -1, the default, opens them as browser.link.open_newwindow says, in a new
+# tab by default.
 EXTERNAL_LINKS = {"window": 2, "default": -1}
 
 # The ID the first run gives one of its windows, instead of the random one Firefox generates. Firefox replaces an ID
-# saved on X11, the workspace number, by a new one, and must not take an ID whose first group consists of decimal
-# digits, like this one, for such a number, which about one in 43 random IDs is.
+# saved on X11, the workspace number, by a new one, and must not treat an ID whose first group consists of decimal
+# digits, like this one, as such a number, which about one in 43 random IDs is.
 DIGITS_ID = "{12345678-1234-4123-8123-123456789abc}"
 
 # The activation token every second run is launched with, in both variables launchers set.

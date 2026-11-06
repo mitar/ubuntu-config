@@ -32,13 +32,13 @@ Text Editor session restore: run-text-editor-session.sh, text_editor_session.py 
     In each run GTK sends get_session, the first time for a new session and then with the session ID mutter created
     the first time, and names each window with restore_toplevel, which in the second run uses the names of the
     first for the restored windows, answered with restored(), and a new name for the new window. The third run
-    names only its new window, under a new name. The script prints what each run sent and received, the window IDs
-    and names GTK saved, the windows Text Editor saved, one line for each check, and finally "RESULT: OK", and
-    exits with 0. With Ubuntu's GTK, Text Editor sends nothing over the protocol and the checks fail from the first
-    one. Without patches/mutter/save-toplevels-on-session-destroy.patch, only the first window is restored in the
-    second run, since mutter forgets where the other one was when Text Editor quits with it open. Without
-    launch-opens-new-window.patch, the second run opens no new window, and the first restored window receives the
-    token and the focus.
+    names only its new window, under a new name. The script prints the messages each run sent and received, the
+    window IDs and names GTK saved, the windows Text Editor saved, one line for each check, and finally "RESULT:
+    OK", and exits with 0. With Ubuntu's GTK, Text Editor sends nothing over the protocol and the checks fail from
+    the first one. Without patches/mutter/save-toplevels-on-session-destroy.patch, only the first window is
+    restored in the second run, since mutter forgets where the other one was when Text Editor quits with it open.
+    Without launch-opens-new-window.patch, the second run opens no new window, and the first restored window
+    receives the token and the focus.
 
     The full WAYLAND_DEBUG output of each run is in the output directory as run1.log, run2.log and run3.log, and the
     calls the session manager received are in session-manager.log. The D-Bus and portal messages printed on the way
@@ -79,8 +79,8 @@ Text Editor auto-save: run-text-editor-autosave.sh and text_editor_autosave.py
     cursor-moved opens a file of three lines, waits for the session saved with the cursor at its start, and presses
     Down twice through mutter's remote desktop API (org.gnome.Mutter.RemoteDesktop on the private bus), which sends
     the keys to the focused Text Editor window. It then waits for a session saved with the cursor elsewhere, so that a
-    save requested before the keys were pressed does not count. Where the cursor ends up is not checked, since the
-    first key is sometimes lost.
+    save requested before the keys were pressed does not count. The test does not check where the cursor ends up,
+    since the first key is sometimes lost.
 
     tab-selected, tab-moved, window-maximized and window-resized open two files in one window, both given on the
     command line, since a file opened later from the command line opens in a window of its own, and Alt+2 selects

@@ -4,6 +4,6 @@
 # only root-owned files. run-parts ignores any name containing a dot, so the name must stay extensionless.
 #
 # The fetch is silent while everything is current, so mail arrives only when a new version was downloaded or when
-# something failed. Where that mail goes is described in cron.daily/rebuild-patched-packages.
+# something failed. cron.daily/rebuild-patched-packages describes where that mail goes.
 
 exec /usr/local/bin/fetch-vendor-debs --fetch

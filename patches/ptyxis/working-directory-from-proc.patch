@@ -1,5 +1,5 @@
 Description: Read the working directory from /proc when OSC 7 has not reported one.
- A new tab or window opens in the directory of the active tab, which Ptyxis takes only from the
+ A new tab or window opens in the directory of the active tab, which Ptyxis learns only from the
  OSC 7 sequence the shell sends at each prompt. That directory is missing when the shell never
  sends it, and after a terminal reset cleared it until the shell shows its next prompt. The new
  terminal then opens in the home directory.

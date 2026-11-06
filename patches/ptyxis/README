@@ -71,15 +71,15 @@ restore-window-placement.patch
     patches/mutter/save-toplevels-on-change.patch.
 
 restore-screens.patch
-    Saves what each tab shows, the text of its last screen without colors, with the session,
-    and shows it dimmed above the prompt of the tab's new shell when the session is restored,
-    as Terminal on macOS does, so that it is clear what each terminal was doing. The screens
-    are kept in ~/.local/state/org.gnome.Ptyxis/screens.gvariant, readable only by you, and
-    they are shown only after a session which ended with windows open: closing the last window
-    removes them, and the next start restores its tabs without them. A terminal scrolled back
-    keeps the screen it had the last time it was scrolled to the end. The dim style is VTE's,
-    which scales the foreground to 2/3: on tango-black it turns the text grey, while on a
-    light palette it would darken the text instead.
+    Saves the last screen of each tab, as text without colors, with the session, and shows it
+    dimmed above the prompt of the tab's new shell when the session is restored, as Terminal on
+    macOS does, so that it is clear what each terminal was doing. The screens are kept in
+    ~/.local/state/org.gnome.Ptyxis/screens.gvariant, readable only by you, and they are shown
+    only after a session which ended with windows open: closing the last window removes them,
+    and the next start restores its tabs without them. A terminal scrolled back keeps the screen
+    it had the last time it was scrolled to the end. The dim style is VTE's, which scales the
+    foreground to 2/3: on tango-black it turns the text grey, while on a light palette it would
+    darken the text instead.
 
 launch-opens-new-window.patch
     Makes a launch of Ptyxis behave the same whether it runs or restores its session: the
@@ -100,13 +100,13 @@ launch-opens-new-window.patch
     first frame, since one on another workspace is not shown, and at most a second. Each launch
     adds a window to the session, which the next start restores.
 
-None of this is reachable through settings, which is why the patches exist. A shortcut in Ptyxis
-is spread across four places, and only the first is visible from outside:
+The patches exist because none of this is reachable through settings. A shortcut in Ptyxis is
+spread across four places, and only the first is visible from outside:
 
   the Shortcuts schema        the key, and its default
   ptyxis-shortcuts.defs       a macro turning that key into a GObject property
   a GtkShortcut in a .ui      the binding, with its trigger looked up from that property
-  an id on the menu item      what ptyxis_shortcuts_update_menu matches to show the accelerator
+  an id on the menu item      matched by ptyxis_shortcuts_update_menu to show the accelerator
 
 Some bindings skip the schema entirely and are registered in code with
 gtk_widget_class_add_binding_action, which is the case for Ctrl+G. Those are invisible to

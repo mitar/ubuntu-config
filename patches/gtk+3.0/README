@@ -10,8 +10,8 @@ wayland-export-xdg-toplevel.patch
     in patches/firefox/ and patches/mutter/.
 
     The commit adds no test, and none is added here. GTK's test suite runs during the build, which
-    shows the patch breaks nothing existing; that the signal works is shown by Firefox registering its
-    windows, see patches/firefox/README.
+    shows the patch breaks nothing existing, and Firefox registering its windows shows that the signal
+    works, see patches/firefox/README.
 
 wayland-export-xdg-toplevel-symbols.patch (debian-series)
     Lists the new function in debian/libgtk-3-0t64.symbols. dh_makeshlibs runs with -c4, which fails
@@ -21,7 +21,7 @@ wayland-export-xdg-toplevel-symbols.patch (debian-series)
 run-clipboard-tests-alone.patch
     Makes the build's test suite run the clipboard and textbuffer tests with no other test at the same
     time. All tests share the one X display xvfb-run starts for them, and both tests copy and paste
-    through its CLIPBOARD selection. When one takes the selection while the other is between a copy and
+    through its CLIPBOARD selection. When one claims the selection while the other is between a copy and
     a paste, the paste goes through the X server and has not arrived when textbuffer checks the text,
     so textbuffer fails now and then, which fails the build. Next to clipboard running in a loop,
     textbuffer failed 5 of 300 runs, and alone none. The patch is local only and changes only how the

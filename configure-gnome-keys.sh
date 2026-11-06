@@ -3,19 +3,19 @@
 # Configure the system wide Super and Control swap, and the GNOME shortcuts that go with it.
 #
 # The keyboard is rotated three ways with an xkb option: the physical Ctrl key emits Super, the physical Win key
-# emits Alt, and the physical Alt key emits Ctrl. The thumb key therefore acts as Control, which is where Command
-# sits on a Mac, and the pinky key acts as Super.
+# emits Alt, and the physical Alt key emits Ctrl. The thumb key, where Command sits on a Mac, therefore acts as
+# Control, and the pinky key acts as Super.
 #
 # Two consequences run through everything below.
 #
-# A shortcut written with <Primary> is pressed with the thumb. That is where the common actions go, which is why
-# most of the common actions sit on <Primary> rather than on Alt or Super.
+# A shortcut written with <Primary> is pressed with the thumb. The common actions belong on the thumb, so most of
+# them sit on <Primary> rather than on Alt or Super.
 #
-# A shortcut written with bare <Super> is physically Ctrl plus that key, so binding one takes that Control
-# shortcut away from every application. Those are kept to a minimum, and the ones that remain are listed under
+# A shortcut written with bare <Super> is physically Ctrl plus that key, so binding one removes that Control
+# shortcut from every application. Those are kept to a minimum, and the ones that remain are listed under
 # "Bindings on the physical Control key" below.
 #
-# In the terminal the physical Ctrl key has to send control characters, which is what patches/vte2.91 does by
+# In the terminal the physical Ctrl key has to send control characters, and patches/vte2.91 makes it do so by
 # reading Super as Control. Ptyxis then keeps its own shortcuts on <Primary>, set by configure-ptyxis.sh.
 #
 #
@@ -45,10 +45,10 @@
 # Bindings on bare <Super>
 # ------------------------
 # A <Super> binding is pressed with the pinky key. Applications are unaffected, since they see Control from the
-# thumb key, but the terminal is not: the patched vte reads Super as Control there, and GNOME takes the
+# thumb key, but the terminal is not: the patched vte reads Super as Control there, and GNOME handles the
 # combination first, so a <Super>X binding costs ^X at the shell prompt.
 #
-# What remains on bare <Super>, and what it costs:
+# The bindings left on bare <Super>, and their cost:
 #
 #   <Super>1 to <Super>9        switch-to-application-1 to 9, costs nothing, ^1 to ^9 are not control characters
 #   <Super>Page_Up/Page_Down    switch-to-workspace-up and down, likewise not control characters
@@ -73,8 +73,8 @@ esac
 CHANGED=0
 
 fail() { echo "configure-gnome-keys: $*" >&2; exit 1; }
-# What each binding ends up as, whether this script set it or it kept its default. Collected so that two actions
-# landing on the same key can be reported, which gsettings itself allows without complaint.
+# The effective value of each binding, whether this script set it or it kept its default. Collected so that two
+# actions landing on the same key can be reported, which gsettings itself allows without complaint.
 EFFECTIVE=$(mktemp); trap 'rm -f "$EFFECTIVE"' EXIT
 
 KEYBINDING_SCHEMAS="org.gnome.desktop.wm.keybindings org.gnome.shell.keybindings
@@ -128,7 +128,7 @@ echo "=== workspaces ==="
 # for five upwards with nothing to select.
 #
 # These are window management settings rather than keyboard ones, so anything else configuring the desktop is
-# likely to set them too. Whichever runs last wins, so the values have to agree wherever they appear.
+# likely to set them too. The last one to run wins, so the values have to agree wherever they appear.
 set_key org.gnome.mutter dynamic-workspaces "false"
 set_key org.gnome.desktop.wm.preferences num-workspaces "12"
 
@@ -209,7 +209,7 @@ set_key org.gnome.shell.keybindings toggle-message-tray            "['<Primary><
 #
 # The key with a monitor sends the Windows projector chord, Super and P, which the rotation turns into Alt and P.
 # It is left unbound: both events come from the ordinary keyboard on the ordinary scancodes, so binding it would
-# reserve Alt and P system wide and take that combination away from applications.
+# reserve Alt and P system wide and remove that combination from applications.
 set_key org.gnome.settings-daemon.plugins.media-keys control-center "['XF86AudioMedia']"
 set_key org.gnome.settings-daemon.plugins.media-keys media          "['']"
 set_key org.gnome.settings-daemon.plugins.media-keys media-static   "['']"
@@ -238,7 +238,7 @@ set_key org.gnome.mutter.keybindings toggle-tiled-right             "['<Primary>
 echo "=== org.gnome.mutter.wayland.keybindings ==="
 set_key org.gnome.mutter.wayland.keybindings restore-shortcuts              "@as []"
 
-# Anything not set above keeps whatever GNOME ships, which still counts when looking for clashes.
+# Anything not set above keeps GNOME's default, which still counts when looking for clashes.
 for schema in $KEYBINDING_SCHEMAS; do
   for key in $(gsettings list-keys "$schema"); do
     grep -qP "^\Q$schema\E\t\Q$key\E\t" "$EFFECTIVE" && continue
@@ -255,7 +255,7 @@ from gi.repository import Gtk
 
 # Accelerators are compared as GTK parses them, not as text. <Primary>, <Control> and <Ctrl> are three spellings
 # of one modifier, and GNOME's defaults and these settings do not agree on which to use, so comparing strings
-# would call a chord free while it is already taken under another name.
+# would call a chord free while it is already bound under another name.
 def canonical(accel):
     ok, keyval, mods = Gtk.accelerator_parse(accel)
     return (keyval, int(mods)) if ok and keyval else None
@@ -330,7 +330,7 @@ echo
 if [ "$CHANGED" -eq 0 ]; then
   echo "already configured, nothing to change"
 elif [ "$MODE" = apply ]; then
-  echo "applied $CHANGED change(s). The keyboard rotation takes effect on the next login."
+  echo "applied $CHANGED change(s). The keyboard rotation applies from the next login."
 else
   echo "$CHANGED change(s) would be made. Nothing was written, re-run with --apply."
 fi

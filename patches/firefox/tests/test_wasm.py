@@ -3,7 +3,7 @@
 Usage: test_wasm.py FIREFOX OUT_DIR
 
 OUT_DIR is removed first, then receives the profile, Firefox's output in firefox.log and the Ogg file the test
-plays. Prints one line for each library, with what it produced or the error it raised. When every library produced
+plays. Prints one line for each library, with its result or the error it raised. When every library produced
 a result and Firefox kept running and then exited with status 0, prints "RESULT: OK" and exits with 0, and
 otherwise exits with 1.
 """

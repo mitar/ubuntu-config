@@ -42,7 +42,7 @@ Last-Update: 2026-09-20
 +static void
 +test_super_as_control_add_control(void)
 +{
-+        /* Super alone has to read as Control, which is what makes Super+C send an interrupt. */
++        /* Super alone has to read as Control, which makes Super+C send an interrupt. */
 +        g_assert_cmpuint(add_control(unsigned(GDK_SUPER_MASK)) & unsigned(GDK_CONTROL_MASK), !=, 0);
 +        g_assert_cmpuint(add_control(unsigned(GDK_HYPER_MASK)) & unsigned(GDK_CONTROL_MASK), !=, 0);
 +

@@ -9,8 +9,8 @@ const APU_SENSOR_LABEL = 'cpu@4c';
 /**
  * The top of the embedded controller's fan table, in RPM.
  *
- * The EC does not report it, so it is taken from the EC's source code, the rpm_max of the fan which Framework sets in
- * zephyr/program/framework/azalea/fan.dtsi of https://github.com/FrameworkComputer/EmbeddedController (branch
+ * The EC does not report it, so the value comes from the EC's source code, the rpm_max of the fan which Framework sets
+ * in zephyr/program/framework/azalea/fan.dtsi of https://github.com/FrameworkComputer/EmbeddedController (branch
  * fwk-lilac-27116). The EC of this laptop is built as the lilac variant of azalea, without any board code which would
  * change the limit at runtime, so this is the fastest the EC's automatic control runs the fan. Under manual control of
  * its duty cycle the fan can spin faster, up to about 7600 RPM at a full duty cycle. The _FPS table of the firmware's
@@ -106,7 +106,7 @@ export function findFanFiles() {
  * @returns {string[]} the sysfs directories of the devices
  */
 function findHwmonDirectories(name) {
-    // Which index a hwmon device gets depends on the order the drivers came up, so it is not stable across boots, and
+    // The index of a hwmon device depends on the order the drivers came up, so it is not stable across boots, and
     // a device is found by its name instead.
     return listChildren('/sys/class/hwmon')
         .map(device => `/sys/class/hwmon/${device}`)

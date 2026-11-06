@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 #
-# Configure the third-party APT repositories from this repository, and lock them down so they cannot take over
+# Configure the third-party APT repositories from this repository, and lock them down so they cannot claim
 # Ubuntu package names.
 #
-# Each third-party origin gets an allowlist of the packages actually in use, followed by a default-deny for
-# everything else from that origin. A denied version is never installable whatever its version number, which is
-# what stops a vendor repository from replacing a core Ubuntu package by publishing a higher version under the
-# same name. unattended-upgrades is likewise restricted to Ubuntu's own hosts, see Unattended upgrades below.
+# Each third-party origin has an allowlist of the packages actually in use, followed by a default-deny for
+# everything else from that origin. A denied version is never installable whatever its version number, so a vendor
+# repository cannot replace a core Ubuntu package by publishing a higher version under the same name.
+# unattended-upgrades is likewise restricted to Ubuntu's own hosts, see Unattended upgrades below.
 #
 #
 # Usage
@@ -47,9 +47,9 @@
 #
 # APT sorts records into specific form (naming packages) and general form (Package: *), and consults every
 # specific-form record before any general-form one, whatever order the files are in. A "Package: *" deny here
-# therefore cannot override a vendor file that names a package explicitly, which is what SUPERSEDED exists to
-# handle. Among records of the same form the first match wins, and preferences.d is read in lexicographic order,
-# which is why this config is written as 00-third-party-lockdown.
+# therefore cannot override a vendor file that names a package explicitly, and SUPERSEDED exists to handle such a
+# file. Among records of the same form the first match wins, and preferences.d is read in lexicographic order,
+# so this config is written as 00-third-party-lockdown.
 #
 #
 # Unattended upgrades
@@ -113,7 +113,7 @@ PREF_DEST=/etc/apt/preferences.d/$PREF_NAME
 # Vendor-supplied pin files this config replaces. Disabling them is not cosmetic for the ones naming a package
 # explicitly (nsolid): APT consults every such specific-form record before any "Package: *" rule here, so they win
 # on precedence no matter how this file is named. They are renamed rather than deleted, because APT reads a file in
-# preferences.d only when it has no extension or a .pref extension, so a .disabled suffix takes it out of play
+# preferences.d only when it has no extension or a .pref extension, so a .disabled suffix disables it
 # while leaving it next to its siblings and one mv away from coming back.
 SUPERSEDED="mozilla nodejs nsolid"
 DISABLED_SUFFIX=.disabled
@@ -135,7 +135,7 @@ REPO_DIR=$(dirname "$(readlink -f "$0")")
 # to Ubuntu, local.list to install-rebuild-patched-packages.sh, and protonvpn-stable.sources to Proton's package.
 SOURCES_SRC=$REPO_DIR/sources.list.d
 SOURCES_DEST=/etc/apt/sources.list.d
-# What those sources replace: the files the repositories were configured with before, and the keys these named.
+# Those sources replace the files the repositories were configured with before, and the keys these named.
 # Two of the keys sat in /etc/apt/trusted.gpg.d, where APT trusts a key for every repository. Each is moved into
 # the backup directory. claude-desktop writes its key under /usr/share/keyrings again at every upgrade, so that one is
 # left alone. code writes microsoft.gpg only while its debconf answer allows it, see VSCODE_REPO_QUESTION.
@@ -162,7 +162,7 @@ VSCODE_REPO_QUESTION=code/add-microsoft-repo
 # ProtonVPN's repository is configured by Proton's protonvpn-stable-release package, whose protonvpn-stable.sources
 # is a conffile, so a file from this repository in its place would make dpkg ask at every upgrade of that package.
 # Once installed, the package updates itself from that repository, so only a missing one is installed, from this
-# exact file. When Proton removes it, take the newer one's path and SHA256 from that repository's Packages index.
+# exact file. When Proton removes it, copy the newer one's path and SHA256 from that repository's Packages index.
 PROTON_RELEASE_URL=https://repo.protonvpn.com/debian/dists/stable/main/binary-all/protonvpn-stable-release_1.0.10_all.deb
 PROTON_RELEASE_SHA256=c8a9fffb4ebdd63db08ce7f11c9b0ac394064ae6a210feb9ab63a0f7d8d060a7
 
@@ -177,7 +177,7 @@ esac
 
 # Emit the preferences file on stdout.
 #
-# Every rule pins on "origin <hostname>", which is the host taken from the URI in sources.list.d and not anything
+# Every rule pins on "origin <hostname>", which is the host of the URI in sources.list.d and not anything
 # the repository declares about itself. The release fields (o=, l=, a=) are read out of the repository's own
 # Release file, so a repository chooses them freely and can pick a value that matches a rule meant for a different
 # repository. The hostname comes from our own configuration instead, so a repository cannot influence it. It is
@@ -191,15 +191,15 @@ cat <<'PREF_EOF'
 #
 # APT sorts records into specific form (naming packages) and general form (Package: *), and consults every
 # specific-form record before any general-form one, whatever order the files are in. A "Package: *" deny here
-# therefore cannot override a vendor file that names a package explicitly, which is why the script disables the
+# therefore cannot override a vendor file that names a package explicitly, so the script disables the
 # superseded vendor files rather than relying on this file sorting first. Among records of the same form the
-# first match wins, and this file sorts first so its own ordering is what decides.
+# first match wins, and this file sorts first, so its own ordering decides.
 #
 # Shape per repository: allow what is in use, then deny the rest of that origin.
 
 # The local repository is ours and outranks everything else. It is deliberately not locked down: anything placed
 # in /usr/local/lib/debs may install. Note that outranking is per package name, so a package present both here and
-# in a vendor repository stays on the local copy and stops taking vendor upgrades.
+# in a vendor repository stays on the local copy and stops receiving vendor upgrades.
 Package: *
 Pin: origin ""
 Pin-Priority: 1001
@@ -338,7 +338,7 @@ Pin-Priority: -1
 
 # Firefox from ppa:mozillateam/ppa, because Mozilla's own repository publishes no source to rebuild with the local
 # patches in patches/firefox/ (requested in https://bugzilla.mozilla.org/show_bug.cgi?id=2087959). The local rebuild
-# outranks the PPA (1001 above), so the PPA's build is what installs only until the first rebuild, and a newer PPA
+# outranks the PPA (1001 above), so apt installs the PPA's build only until the first rebuild, and a newer PPA
 # release waits for its rebuild. Hostname pins cannot tell the PPAs on this host apart, but ppa:xtradeb/apps also
 # carries a firefox, and Ubuntu's firefox is a snap wrapper. Both carry epoch 1:, which the Mozilla Team's builds do
 # not, so the version deny refuses both without naming either. 1000 is needed because replacing an installed snap
@@ -364,7 +364,7 @@ Pin-Priority: -1
 PREF_EOF
 }
 
-# Check the resulting policy against what each rule is supposed to achieve. Takes a preferences.d directory so the
+# Check the resulting policy against the purpose of each rule. Accepts a preferences.d directory, so the
 # same checks run against a candidate configuration in dry-run and against the installed one after apply.
 verify() {
   python3 - "$1" <<'PY_EOF'
@@ -668,7 +668,7 @@ sources_changes() {
   [ "$none" = false ]
 }
 
-# Make the changes sources_changes lists. What is replaced or overwritten is copied into $BACKUP first.
+# Make the changes sources_changes lists. Every file replaced or overwritten is copied into $BACKUP first.
 sources_apply() {
   local src dst f tmpdir answer
   mkdir -p "$BACKUP"

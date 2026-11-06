@@ -379,7 +379,7 @@ index 58d74b2..66b3fd5 100644
  
    adw_tab_view_set_shortcuts (self->tab_view, 0);
  
-+  /* The rest of what the session saves changes with the tabs themselves */
++  /* The rest of the session state changes with the tabs themselves */
 +  g_signal_connect_object (self->tab_view,
 +                           "page-reordered",
 +                           G_CALLBACK (ptyxis_window_page_reordered_cb),

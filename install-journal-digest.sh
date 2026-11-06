@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Install journal-digest.py, its ignore patterns and its daily cron job from this repository as the root-owned copies
-# that root runs. Only what differs from the installed copy is replaced.
+# that root runs. Only a file which differs from its installed copy is replaced.
 #
 #   journal-digest.py           ->  /usr/local/bin/journal-digest
 #   journal-digest.ignore       ->  /etc/journal-digest/ignore

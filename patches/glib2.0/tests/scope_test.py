@@ -23,8 +23,8 @@
 #
 # The scenarios in which the launching process exits are checked by a second run, with SCENARIO prefixed by check-.
 #
-# OUT_DIR/SCENARIO receives the application's desktop file, what the application and the launching process report, and
-# result.json. The exit status is 0 when every check of the scenario passed. The launching process's standard error is
+# OUT_DIR/SCENARIO receives the application's desktop file, the reports of the application and the launching process,
+# and result.json. The exit status is 0 when every check of the scenario passed. The launching process's standard error is
 # connected to the journal of fake_journald.py, whose records in OUT_DIR/journal show what gio-launch-desktop logged.
 
 import json
@@ -44,7 +44,7 @@ ESCAPED_APP_ID = "glib\\x2dscope\\x2dtest"
 # How long gio-launch-desktop waits for a scope at most. The application has to start well before that whenever
 # gio-launch-desktop is not supposed to wait for it.
 SCOPE_TIMEOUT_S = 60
-# How long fake_systemd.py takes for a slow request.
+# The time fake_systemd.py needs for a slow request.
 SLOW_S = 7
 WAIT_S = 20
 JOURNAL_STREAM = "/run/systemd/journal/stdout"
@@ -230,7 +230,7 @@ def main():
     def launched_cb(_context, _info, platform_data):
         data = platform_data.unpack()
         if scenario == "late-request":
-            # What gnome-desktop's gnome_start_systemd_scope() asks for, after GLib, on the same connection.
+            # gnome-desktop's gnome_start_systemd_scope() asks for this scope after GLib, on the same connection.
             unit = f"app-gnome-{ESCAPED_APP_ID}-{data['pid']}.scope"
             bus = Gio.bus_get_sync(Gio.BusType.SESSION)
 

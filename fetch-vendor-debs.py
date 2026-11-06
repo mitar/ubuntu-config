@@ -11,7 +11,7 @@ The local repository is pinned at 1001 by lockdown-apt-sources.sh, which makes a
 the version there. A version lower than the one already in the repository is therefore never published, it is only
 reported.
 
-How a download is verified depends on the kind of its source:
+The kind of a download's source decides how it is verified:
 
   SignedRedirect   a fixed URL which redirects to the newest .deb, signed by the vendor in the format of dpkg-sig: a
                    member named _gpgbuilder holds the checksums of the other members, signed with the vendor's key.
@@ -45,8 +45,8 @@ It prints a summary when it publishes, so that a new version is still mailed as 
 
 Installing
 ----------
-Root runs this from cron, and apt installs what it publishes as root, so it and the keys it verifies with have to be
-as trusted as root itself. Root therefore runs only root-owned copies installed from the repository with
+Root runs this from cron, and apt installs the packages it publishes as root, so it and the keys it verifies with
+have to be as trusted as root itself. Root therefore runs only root-owned copies installed from the repository with
 install-fetch-vendor-debs.sh, never the repository itself, which your user can change. Run from the repository, it
 reports each installed copy that differs from the repository.
 
@@ -176,7 +176,7 @@ class GitHubRelease:
         """
         releases = read_json(f'https://api.github.com/repos/{self.repository}/releases?per_page=10')
         # GitHub orders releases by the date of the commit they tag, so a fix released from an older commit can be
-        # listed below a release made before it. The publication date is what says which is newest.
+        # listed below a release made before it. The publication date says which is newest.
         release = max((r for r in releases if not r['draft'] and (self.prereleases or not r['prerelease'])),
                       key=lambda r: r['published_at'] or '', default=None)
         if release is None:
@@ -305,7 +305,7 @@ def read_ar(path):
 
 
 def dearmor(path):
-    """Returns the binary form of the ASCII-armored OpenPGP public key in path, which is what gpgv reads.
+    """Returns the ASCII-armored OpenPGP public key in path in the binary form gpgv reads.
 
     Raises FetchError when path cannot be read or holds no armored key.
     """
@@ -325,7 +325,7 @@ def dearmor(path):
 def verify_signature(signature, key, url):
     """Verifies the clear-signed signature, as bytes, against the key file key and returns the text it signs.
 
-    Only the text gpgv extracts is returned, never what surrounds it, which a clear-signed message does not cover.
+    Only the text gpgv extracts is returned, never the text around it, which a clear-signed message does not cover.
     Raises FetchError naming the key it was made with when it is not a valid signature by that key.
     """
     with tempfile.TemporaryDirectory(prefix='fetch-vendor-debs-') as directory:
@@ -443,7 +443,7 @@ def is_current(package, offer, state):
 
 
 def publish(package, source, offer, state):
-    """Downloads and verifies offer and publishes it in the local repository when it is newer than what is there.
+    """Downloads and verifies offer and publishes it in the local repository when it is newer than the version there.
 
     Records the offer in state either way, so that it is not downloaded again. Returns a line describing what was
     published, or None when nothing was. Raises FetchError when the download fails, does not verify or is not package.
@@ -571,7 +571,7 @@ def fetch(packages):
             write_state(state)
             if line:
                 published.append(line)
-        # OSError is what writing to the local repository or the state file fails with.
+        # Writing to the local repository or the state file fails with OSError.
         except (FetchError, OSError) as error:
             log(syslog.LOG_ERR, f'{package}: {error}')
             failed = True

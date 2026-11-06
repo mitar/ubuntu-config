@@ -13,8 +13,8 @@
 ^systemd: Failed to start app-gnome-(ubuntu\\x2dreport\\x2don\\x2dupgrade|snap\\x2duserd\\x2dautostart)-[0-9]+\.scope
 
 # Garbled replies from the Framework laptop's embedded controller, a few to a few dozen a day since late October, for
-# which the kernel fails the command. What would matter, the fan not following the heat, is watched by the CPU
-# Throttle Indicator extension. The embedded controller's trouble is reported upstream as
+# which the kernel fails the command. The CPU Throttle Indicator extension watches for the failure which would
+# matter, the fan not following the heat. The embedded controller's trouble is reported upstream as
 # FrameworkComputer/EmbeddedController issue 69.
 ^kernel: cros_ec_lpcs \S+: (bad packet checksum|packet too long)
 

@@ -5,8 +5,8 @@ profiler-mark-without-location.patch
     g_file_peek_path on the loader's location. A load from a stream, which gtk_source_file_loader_new_from_stream
     creates, has no location, and since Ubuntu builds GtkSourceView with Sysprof support, which evaluates the mark's
     arguments also when no profiler runs, every such load logs two GLib criticals, "g_object_get_qdata: assertion
-    'G_IS_OBJECT (object)' failed" and "g_file_get_path: assertion 'G_IS_FILE (file)' failed". Text Editor loads
-    from a stream what it reads from standard input (gnome-text-editor -). The patch is upstream commit 0efed2a9,
+    'G_IS_OBJECT (object)' failed" and "g_file_get_path: assertion 'G_IS_FILE (file)' failed". Text Editor loads the
+    text it reads from standard input (gnome-text-editor -) from a stream. The patch is upstream commit 0efed2a9,
     which passes no file name for a load without a location. Drop it once Ubuntu ships GtkSourceView 5.21.0 or
     later, which have it.
 

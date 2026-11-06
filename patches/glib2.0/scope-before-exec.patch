@@ -11,9 +11,9 @@ Description: Put applications into their systemd scope before they start.
  process of its own in the scope. The launching process sends the request before the launch call returns, and follows
  it to its end: when systemd refused it, or the job starting the scope ended with another result than done, it writes
  the reason to a pipe to gio-launch-desktop, which then runs the application at once. Otherwise gio-launch-desktop
- waits as long as systemd needs, so that a busy systemd delays the application instead of splitting it. Only when
- nothing can tell, as the launching process exited before systemd was done, or never runs its main loop again, does
- gio-launch-desktop give up, after 60 seconds.
+ waits as long as systemd needs, so that a busy systemd delays the application instead of splitting it.
+ gio-launch-desktop gives up, after 60 seconds, only when nothing can tell it the outcome: when the launching process
+ exited before systemd was done, or never runs its main loop again.
  .
  The scope is requested only by processes managed by the systemd user instance, outside of sandboxes, and only when
  systemd is on the session bus, which the bus answers itself, and the name is short enough for systemd, as those
@@ -913,8 +913,8 @@ index e0f2fd2..0503d66 100644
 +#if defined(__linux__) && !defined(__ANDROID__)
 +
 +/* Spawns gio-launch-desktop for a scope which is never created, running a
-+ * shell which prints the variables gio-launch-desktop removes. What
-+ * gio-launch-desktop logs goes to @error_fd, as standard error is not the
++ * shell which prints the variables gio-launch-desktop removes.
++ * gio-launch-desktop logs to @error_fd, as standard error is not the
 + * journal. */
 +static gboolean
 +spawn_launch_desktop_waiting (int  *release_fd,

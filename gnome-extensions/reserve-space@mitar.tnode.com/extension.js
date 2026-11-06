@@ -35,8 +35,8 @@ function compareRects(a, b) {
     return a.x - b.x || a.y - b.y || a.width - b.width || a.height - b.height;
 }
 
-// An actor which only reserves space. Without content it draws nothing, and it is never picked, so it takes no clicks
-// and does not hide the dock from drag and drop, which picks actors whether they are reactive or not.
+// An actor which only reserves space. Without content it draws nothing, and it is never picked, so it receives no
+// clicks and does not hide the dock from drag and drop, which picks actors whether they are reactive or not.
 const Placeholder = GObject.registerClass(
 class Placeholder extends Clutter.Actor {
     vfunc_pick(_pickContext) {
@@ -45,10 +45,10 @@ class Placeholder extends Clutter.Actor {
 
 /**
  * Keeps the screen space reserved by chrome, such as the dock and the top bar, while the screen is locked. Every part
- * of the screen which chrome reserves gets an invisible placeholder which reserves the same space. The shell disables
- * extensions such as the dock while the screen is locked, but the placeholders stay, so the work area does not change
- * and snapped and maximized windows keep their size. While the screen is unlocked the placeholders follow the
- * reserved space once it has stayed unchanged for a few seconds.
+ * of the screen which chrome reserves is given an invisible placeholder which reserves the same space. The shell
+ * disables extensions such as the dock while the screen is locked, but the placeholders stay, so the work area does
+ * not change and snapped and maximized windows keep their size. While the screen is unlocked the placeholders follow
+ * the reserved space once it has stayed unchanged for a few seconds.
  */
 export default class ReserveSpaceExtension extends Extension {
     enable() {
@@ -85,8 +85,8 @@ export default class ReserveSpaceExtension extends Extension {
 
     _queueUpdate() {
         this._cancelUpdate();
-        // While the screen is locked the placeholders stay as they are, which is what keeps the space of the dock
-        // after the shell disables it for the lock screen.
+        // While the screen is locked the placeholders stay as they are, and so keep the space of the dock after the
+        // shell disables it for the lock screen.
         if (Main.sessionMode.isLocked)
             return;
         this._settleId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, SETTLE_TIMEOUT_MS, () => {
@@ -106,7 +106,7 @@ export default class ReserveSpaceExtension extends Extension {
             .map(({actor}) => actor);
 
         // The shell updates struts when the allocation of tracked chrome changes, so the same signal tells when the
-        // reserved space changes. The work area does not always change with it, for example when the dock gets
+        // reserved space changes. The work area does not always change with it, for example when the dock becomes
         // narrower while its placeholder still reserves the earlier width.
         for (const actor of sources) {
             if (this._sources.has(actor))
