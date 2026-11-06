@@ -55,8 +55,8 @@ wayland-session-restore-on-gnome.patch
     Firefox's tests do not run in the package build. tests/run-session.sh checks the patches by hand, with a
     headless mutter and Firefox driven through Marionette (see tests/README): with them, restoring from the menu
     no longer crashes, a profile without IDs shows all its windows, and the next start restores each window under
-    the ID it was added under. The first two are under review for bug 2064100 as D339348 and D339349 on
-    phabricator.services.mozilla.com. The third undoes bug 2070815, which disabled the protocol on GNOME until bug
+    the ID it was added under. All three are under review for bug 2064100 on phabricator.services.mozilla.com, as
+    D339348, D339349 and D340272. The third undoes bug 2070815, which disabled the protocol on GNOME until bug
     2064100 is fixed. Drop them once the PPA's Firefox contains the fix for bug 2064100 and no longer disables the
     protocol on GNOME, in widget/gtk/nsWindowWayland.cpp (MoveToWorkspace), widget/gtk/nsWindow.cpp
     (SessionRestoreFinished) and widget/gtk/nsAppShell.cpp (IsSessionRestoreSupported).

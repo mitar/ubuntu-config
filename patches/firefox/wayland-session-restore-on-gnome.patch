@@ -4,8 +4,8 @@ Description: Enable Wayland session restore on GNOME again.
  xdg-toplevel-realized signal, by the check right after the removed one.
 Author: Mitar
 Bug: https://bugzilla.mozilla.org/show_bug.cgi?id=2064100
-Forwarded: not-needed
-Last-Update: 2026-11-02
+Forwarded: https://phabricator.services.mozilla.com/D340272
+Last-Update: 2026-11-06
 diff --git a/widget/gtk/nsAppShell.cpp b/widget/gtk/nsAppShell.cpp
 index 84f3b84..5c4cfc2 100644
 --- a/widget/gtk/nsAppShell.cpp
