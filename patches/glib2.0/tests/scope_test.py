@@ -6,27 +6,32 @@
 #
 # SCENARIO is one of:
 #
-#   loop           the launching process runs its main loop after launching, as GNOME Shell does
-#   exit           the launching process exits right after launching, as gio open does
-#   late-request   the launching process asks for the scope after GLib, as gnome_start_systemd_scope() does
-#   refused        run on a session bus without systemd, which refuses to create the scope
-#   refused-exit   run on a session bus without systemd, and the launching process exits right after launching, so
-#                  that nothing tells gio-launch-desktop about the refusal and it waits until its time limit
-#   outside        run outside of the systemd user instance, where no scope is asked for
+#   loop              the launching process runs its main loop after launching, as GNOME Shell does
+#   pid-namespace     the same, from a PID namespace of its own
+#   exit              the launching process exits right after launching, as gio open does
+#   late-request      the launching process asks for the scope after GLib, as gnome_start_systemd_scope() does
+#   no-systemd        run on a session bus without systemd, where no scope is asked for
+#   no-systemd-exit   the same, and the launching process exits right after launching
+#   refused           run on a session bus where fake_systemd.py refuses to create the scope
+#   refused-exit      the same, and the launching process exits right after launching, so that nothing tells
+#                     gio-launch-desktop about the refusal and it waits until its time limit
+#   outside           run outside of the systemd user instance, where no scope is asked for
 #
 # The scenarios in which the launching process exits are checked by a second run, with SCENARIO prefixed by check-.
 #
 # OUT_DIR/SCENARIO receives the application's desktop file, what the application and the launching process report, and
-# result.json. The exit status is 0 when every check of the scenario passed.
+# result.json. The exit status is 0 when every check of the scenario passed. The launching process's standard error is
+# connected to the journal of fake_journald.py, whose records in OUT_DIR/journal show what gio-launch-desktop logged.
 
 import json
 import os
 import pathlib
+import socket
 import sys
 import time
 
-SCENARIOS = ("loop", "exit", "late-request", "refused", "refused-exit", "outside")
-EXITING = ("exit", "refused-exit")
+SCENARIOS = ("loop", "pid-namespace", "exit", "late-request", "no-systemd", "no-systemd-exit", "refused", "refused-exit", "outside")
+EXITING = ("exit", "no-systemd-exit", "refused-exit")
 APP_ID = "glib-scope-test"
 # The application ID escaped as systemd and gnome-desktop escape it for a unit name.
 ESCAPED_APP_ID = "glib\\x2dscope\\x2dtest"
@@ -34,6 +39,9 @@ ESCAPED_APP_ID = "glib\\x2dscope\\x2dtest"
 # gio-launch-desktop is not supposed to wait for it.
 SCOPE_TIMEOUT_S = 5
 WAIT_S = 20
+JOURNAL_STREAM = "/run/systemd/journal/stdout"
+# syslog's priority of a message at error level, LOG_ERR, from a user process, LOG_USER.
+SYSLOG_ERR = "<11>"
 
 scenario = sys.argv[1]
 checking = scenario.startswith("check-")
@@ -94,7 +102,36 @@ class Checks:
         return 0 if all(r["passed"] for r in self.results) else 1
 
 
-def check_app(checks, launched, own_cgroup, expect_scope, waited=False):
+def connect_stderr_to_journal():
+    # gio-launch-desktop inherits standard error from here, and logs at error priority through syslog only when it is
+    # the journal.
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.connect(JOURNAL_STREAM)
+    os.dup2(sock.fileno(), 2)
+    sock.close()
+
+
+def check_logged(checks, pid, expected):
+    """Checks that gio-launch-desktop, with pid, logged one message at error priority which contains expected, or
+    nothing when expected is None."""
+    path = pathlib.Path(sys.argv[2]) / "journal" / "syslog.log"
+    tag = f"gio-launch-desktop[{pid}]: "
+    # The message is sent before the application runs, so it has arrived by now, but fake_journald.py might not have
+    # written it yet.
+    deadline = time.monotonic() + (5 if expected else 0.5)
+    while True:
+        lines = [line for line in (path.read_text(errors="replace").splitlines() if path.exists() else []) if tag in line]
+        if (expected and lines) or time.monotonic() > deadline:
+            break
+        time.sleep(0.05)
+    if expected is None:
+        checks.check("nothing logged", not lines, json.dumps(lines))
+    else:
+        logged = len(lines) == 1 and lines[0].startswith(SYSLOG_ERR) and expected in lines[0]
+        checks.check("logged at error priority", logged, f"{json.dumps(lines)}, expected {expected!r} at {SYSLOG_ERR}")
+
+
+def check_app(checks, launched, own_cgroup, expect_scope, waited=False, logged=None):
     app = wait_for_app()
     checks.check("application started", app is not None, f"within {WAIT_S} s")
     if app is None:
@@ -122,6 +159,7 @@ def check_app(checks, launched, own_cgroup, expect_scope, waited=False):
     env = (out_dir / "app-env").read_text()
     hidden = "GIO_LAUNCH_DESKTOP_SCOPE" not in env
     checks.check("variables of gio-launch-desktop hidden from the application", hidden, "GIO_LAUNCH_DESKTOP_SCOPE* not in its environment")
+    check_logged(checks, launched["platform_data"]["pid"], logged)
 
     for pid in pids:
         try:
@@ -138,9 +176,14 @@ def main():
         launched = json.loads((out_dir / "launched.json").read_text())
         if scenario == "check-exit":
             extra = check_app(checks, launched, None, True)
+        elif scenario == "check-no-systemd-exit":
+            checks.check("no scope asked for", "systemd-unit" not in launched["platform_data"], json.dumps(launched["platform_data"]))
+            extra = check_app(checks, launched, launched["cgroup"], False)
         else:
-            checks.check("scope asked for", "systemd-unit" in launched["platform_data"], json.dumps(launched["platform_data"]))
-            extra = check_app(checks, launched, launched["cgroup"], False, waited=True)
+            unit = launched["platform_data"].get("systemd-unit")
+            checks.check("scope asked for", unit is not None, json.dumps(launched["platform_data"]))
+            extra = check_app(checks, launched, launched["cgroup"], False, waited=True,
+                              logged=f"Scope {unit} did not exist after {SCOPE_TIMEOUT_S} seconds")
         return checks.finish(extra)
 
     if scenario not in SCENARIOS:
@@ -149,6 +192,7 @@ def main():
 
     out_dir.mkdir(parents=True, exist_ok=True)
     write_desktop_file()
+    connect_stderr_to_journal()
     # GLib reads the variable once it first looks for applications, which is below.
     os.environ["XDG_DATA_HOME"] = str(out_dir / "data")
 
@@ -214,12 +258,13 @@ def main():
     GLib.timeout_add(10, poll)
     loop.run()
 
-    if scenario == "outside":
+    if scenario in ("outside", "no-systemd"):
         checks.check("no scope asked for", "systemd-unit" not in launched["platform_data"], json.dumps(launched["platform_data"]))
         extra = check_app(checks, launched, own_cgroup, False)
     elif scenario == "refused":
-        checks.check("scope asked for", "systemd-unit" in launched["platform_data"], json.dumps(launched["platform_data"]))
-        extra = check_app(checks, launched, own_cgroup, False)
+        unit = launched["platform_data"].get("systemd-unit")
+        checks.check("scope asked for", unit is not None, json.dumps(launched["platform_data"]))
+        extra = check_app(checks, launched, own_cgroup, False, logged=f"systemd refused to create scope {unit}")
     else:
         extra = check_app(checks, launched, own_cgroup, True)
         if scenario == "late-request":

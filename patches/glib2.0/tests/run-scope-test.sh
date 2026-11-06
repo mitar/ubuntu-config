@@ -63,6 +63,16 @@ case "$state" in
   *) echo "the user instance did not start, it is $state, see $OUT/user-manager.log" >&2; exit 1 ;;
 esac
 
+# The container has no journald, which gio-launch-desktop logs to when standard error is the journal.
+python3 -I "$HERE/fake_journald.py" "$OUT/journal" > "$OUT/fake-journald.log" 2>&1 &
+JOURNALD_PID=$!
+trap 'kill "$MANAGER_PID" "$JOURNALD_PID" 2>/dev/null || true' EXIT
+for _ in $(seq 100); do
+  [ -S /dev/log ] && [ -S /run/systemd/journal/stdout ] && break
+  sleep 0.1
+done
+[ -S /dev/log ] && [ -S /run/systemd/journal/stdout ] || { echo "fake_journald.py did not start, see $OUT/fake-journald.log" >&2; exit 1; }
+
 status=0
 run() {
   echo "== $1"
@@ -75,9 +85,22 @@ run loop "${AS_USER[@]}" "${IN_SERVICE[@]}" "${TEST[@]}" loop "$OUT"
 run exit "${AS_USER[@]}" "${IN_SERVICE[@]}" "${TEST[@]}" exit "$OUT"
 run check-exit "${AS_USER[@]}" "${TEST[@]}" check-exit "$OUT"
 run late-request "${AS_USER[@]}" "${IN_SERVICE[@]}" "${TEST[@]}" late-request "$OUT"
-run refused "${AS_USER[@]}" "${IN_SERVICE[@]}" dbus-run-session -- "${TEST[@]}" refused "$OUT"
-run refused-exit "${AS_USER[@]}" "${IN_SERVICE[@]}" dbus-run-session -- "${TEST[@]}" refused-exit "$OUT"
+run no-systemd "${AS_USER[@]}" "${IN_SERVICE[@]}" dbus-run-session -- "${TEST[@]}" no-systemd "$OUT"
+run no-systemd-exit "${AS_USER[@]}" "${IN_SERVICE[@]}" dbus-run-session -- "${TEST[@]}" no-systemd-exit "$OUT"
+run check-no-systemd-exit "${AS_USER[@]}" "${TEST[@]}" check-no-systemd-exit "$OUT"
+FAKE=(python3 -I "$HERE/fake_systemd.py")
+run refused "${AS_USER[@]}" "${IN_SERVICE[@]}" dbus-run-session -- "${FAKE[@]}" "${TEST[@]}" refused "$OUT"
+run refused-exit "${AS_USER[@]}" "${IN_SERVICE[@]}" dbus-run-session -- "${FAKE[@]}" "${TEST[@]}" refused-exit "$OUT"
 run check-refused-exit "${AS_USER[@]}" "${TEST[@]}" check-refused-exit "$OUT"
+# A launching process with a PID namespace of its own, which still uses the session bus and the cgroups of the user
+# instance, as in a sandbox like Firejail's. It is put into a cgroup of the user instance first, as a process the user
+# instance started would be.
+PIDNS_CGROUP=$CGROUP/app.slice/pid-namespace-test
+mkdir -p "$PIDNS_CGROUP"
+chown -R "$TEST_USER:" "$PIDNS_CGROUP"
+# shellcheck disable=SC2016
+run pid-namespace bash -c 'echo "$$" > "$1/cgroup.procs" && shift && exec unshare --pid --fork --mount-proc "$@"' _ \
+  "$PIDNS_CGROUP" "${AS_USER[@]}" "${UNDER_TEST[@]}" "${TEST[@]}" pid-namespace "$OUT"
 # Outside of the user instance, in the cgroup this script runs in.
 run outside "${AS_USER[@]}" "${UNDER_TEST[@]}" "${TEST[@]}" outside "$OUT"
 

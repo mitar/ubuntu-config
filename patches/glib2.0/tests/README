@@ -1,26 +1,37 @@
 Tests for the patches in patches/glib2.0/, run by hand in a container and in GitLab CI, see .gitlab-ci.yml.
 
-Scope before exec: run-scope-test.sh and scope_test.py
+Scope before exec: run-scope-test.sh, scope_test.py, fake_systemd.py and fake_journald.py
     Checks scope-before-exec.patch against a systemd user instance, which the tests GLib's build runs cannot have.
     run-scope-test.sh starts one as a plain process, the way user@.service starts it, in a cgroup delegated to an
     unprivileged user, and runs scope_test.py in each scenario as that user. scope_test.py launches a test
     application through GDesktopAppInfo, with the GLib under test, which starts two processes the moment it runs,
     as Chromium starts its zygotes, and then checks which cgroup each of the three processes is in:
 
-      loop            launched from a service of the user instance, as GNOME Shell's, which keeps running: every
-                      process is in app-gnome-glib\x2dscope\x2dtest-<pid>.scope, which the "launched" signal names
-      exit            the same, but the launching process exits right after launching: the same
-      late-request    the launching process asks for the same scope after GLib, as gnome_start_systemd_scope() does:
-                      its request fails with UnitExists, and every process is in the scope
-      refused         launched on a session bus of its own, without systemd: the scope is asked for, refused, and the
-                      application starts at once, in the launching process's cgroup
-      refused-exit    the same, but the launching process exits right after launching, so that nothing tells
-                      gio-launch-desktop about the refusal: the application starts after the 5 seconds
-                      gio-launch-desktop waits at most
-      outside         launched outside of the user instance: no scope is asked for, and the application starts at once
+      loop              launched from a service of the user instance, as GNOME Shell's, which keeps running: every
+                        process is in app-gnome-glib\x2dscope\x2dtest-<pid>.scope, which the "launched" signal names
+      pid-namespace     the same, from a PID namespace of its own, which still uses the session bus and the cgroups
+                        of the user instance, as in a sandbox like Firejail's: the same, as GLib gives systemd a pidfd
+      exit              the same as loop, but the launching process exits right after launching: the same
+      late-request      the launching process asks for the same scope after GLib, as gnome_start_systemd_scope()
+                        does: its request fails with UnitExists, and every process is in the scope
+      no-systemd        launched on a session bus of its own, without systemd: no scope is asked for, and the
+                        application starts at once, in the launching process's cgroup
+      no-systemd-exit   the same, but the launching process exits right after launching: the same
+      refused           launched on a session bus of its own, on which fake_systemd.py owns systemd's name and refuses
+                        every scope: the scope is asked for, refused, and the application starts at once, in the
+                        launching process's cgroup, and gio-launch-desktop logs the refusal at error priority
+      refused-exit      the same, but the launching process exits right after launching, so that nothing tells
+                        gio-launch-desktop about the refusal: the application starts after the 5 seconds
+                        gio-launch-desktop waits at most, and it logs at error priority that the scope did not exist
+      outside           launched outside of the user instance: no scope is asked for, and the application starts at
+                        once
 
     In every scenario the application also has to start in time and see none of the variables through which GLib
-    talks to gio-launch-desktop.
+    talks to gio-launch-desktop, and gio-launch-desktop has to log nothing but what is described above. The
+    container has no journald, so run-scope-test.sh starts fake_journald.py, which listens on /dev/log and
+    /run/systemd/journal/stdout, and the launching process connects its standard error, which gio-launch-desktop
+    inherits, to the latter, as GNOME Shell does for the applications it launches. gio-launch-desktop then logs
+    through syslog, so that its messages keep their priority, which the journal digest selects by.
 
     run-scope-test.sh has to run as root in a privileged container with a cgroup namespace of its own, so that it
     can create cgroups for the user instance, and refuses to run elsewhere. The container needs systemd, dbus-daemon
@@ -36,7 +47,8 @@ Scope before exec: run-scope-test.sh and scope_test.py
             python3-gi gir1.2-glib-2.0 systemd util-linux && useradd --create-home tester &&
           /repo/patches/glib2.0/tests/run-scope-test.sh /glib-root /tmp/scope-test tester'
 
-    Each check prints a line starting with PASS or FAIL, and the script exits with 0 only when all passed. Without
-    the patch, every scenario but outside fails: no scope is named, and every process stays in the cgroup of the
-    service which launched it. OUT_DIR receives the log of the user instance, and for each scenario the test
-    application's desktop file, what the application and the launching process reported, and result.json.
+    Each check prints a line starting with PASS or FAIL, and the script exits with 0 only when all passed. Without the
+    patch, every scenario but no-systemd, no-systemd-exit and outside fails: no scope is named, and every process
+    stays in the cgroup of the service which launched it. OUT_DIR receives the log of the user instance, what
+    fake_journald.py received in journal/, and for each scenario the test application's desktop file, what the
+    application and the launching process reported, and result.json.
