@@ -1,0 +1,25 @@
+Description: Leave the scope of an application to GLib when it created one.
+ gnome-session asks systemd to move each application it launches with GDesktopAppInfo into a scope of its own once
+ GLib has started it. The GLib of patches/glib2.0 puts the application into that scope itself, before the
+ application starts any process, and names the scope in the platform data of the "launched" signal. A second request
+ for the scope then only fails, and gnome-desktop's gnome_start_systemd_scope() logs a warning about it.
+Author: Mitar
+Forwarded: no
+Last-Update: 2026-11-06
+
+diff --git a/gnome-session/gsm-util.c b/gnome-session/gsm-util.c
+index f2cb616..1741bee 100644
+--- a/gnome-session/gsm-util.c
++++ b/gnome-session/gsm-util.c
+@@ -501,6 +501,11 @@ app_launched (GAppLaunchContext *ctx,
+         if (pid == 0)
+                 return;
+ 
++        /* GLib put the application into its own scope already, before it
++         * started */
++        if (g_variant_lookup (platform_data, "systemd-unit", "&s", NULL))
++                return;
++
+         /* We are not interested in the result. */
+         gnome_start_systemd_scope (g_app_info_get_id (appinfo),
+                                    pid, NULL, NULL, NULL, NULL, NULL);

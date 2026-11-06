@@ -1,0 +1,64 @@
+Source package: glib2.0
+
+scope-before-exec.patch
+    Puts each application which GDesktopAppInfo launches into its own systemd scope before the
+    application starts, app-gnome-<application ID>-<pid>.scope, so that every process of the
+    application starts in that scope. GNOME Shell, gnome-session and gnome-settings-daemon asked
+    systemd for the scope only once GLib had started the application, and systemd moves only the
+    process it is given, so whatever the application started in the meantime stayed in the cgroup
+    of the service which launched it, and was stopped with that service. Signal's zygotes and GPU
+    process stayed in gnome-session-manager@ubuntu.service, and Thunderbird's crash helper in
+    org.gnome.Shell@ubuntu.service.
+
+    GLib sends the request right after it spawned gio-launch-desktop, before the launch call
+    returns, and gio-launch-desktop, which executes the application, first waits until
+    /proc/self/cgroup names the scope. The wait does not depend on the launching process once the
+    request is sent, so it works for a process which exits right after launching too, such as
+    gio open. A pipe from the launching process tells gio-launch-desktop when systemd refused to
+    create the scope, and gio-launch-desktop waits 5 seconds at most, for when the scope is never
+    created and nothing could tell. That limit is reached only by a process which launches an
+    application on a session bus without systemd, as a test's dbus-run-session, and exits before
+    the refusal arrives. Starting an application waits about 25 ms longer for the scope, and the
+    launch call itself returns about 3 ms later, as it waits until the request is sent. A launching
+    process which never runs its main loop again keeps the write end of each pipe open, as only
+    the reply to the request closes it.
+
+    Processes started without GDesktopAppInfo are not covered. GNOME Shell spawns a command run
+    with Alt+F2 itself, in trySpawn in js/misc/util.js, and asks for its scope afterwards, and
+    gnome-settings-daemon does the same for the fallback Orca.
+
+    The scope is requested only by a process managed by the systemd user instance, and not in a
+    Flatpak or a snap. The name is the one gnome-desktop's gnome_start_systemd_scope() gives the
+    scope, so gnome-session's /usr/lib/systemd/user/app-gnome-.scope.d/ applies, and a launching
+    process which still asks for the scope afterwards fails without moving anything, while
+    gnome_start_systemd_scope() logs a warning about it. The "launched" signal names the scope as
+    "systemd-unit" in its platform data, which the patches of the same name in patches/gnome-shell/,
+    patches/gnome-session/ and patches/gnome-settings-daemon/ look for to leave the scope to GLib.
+    A snap's command, snap run, moves itself into a scope of its own before it executes the snap,
+    which is after GLib's scope, so the snap still ends up in its own.
+
+    The approach follows https://gitlab.gnome.org/GNOME/glib/-/merge_requests/1596, without its
+    shell wrapper, as gio-launch-desktop is back in the launch since GLib 2.86. GLib's developers
+    prepared GDesktopAppInfo for scopes in https://gitlab.gnome.org/GNOME/glib/-/merge_requests/5350
+    (merged after 2.88.0), with the scopes themselves announced as a follow-up. Drop this patch,
+    and the three which depend on it, once GLib creates scopes itself, and check then which name and
+    which platform data key it uses.
+
+    The request is sent in g_desktop_app_info_launch_uris_with_spawn in gio/gdesktopappinfo.c, and
+    the wait is wait_for_scope in gio/gio-launch-desktop.c. After a version bump, check that
+    launching still spawns gio-launch-desktop and emits "launched" only after the spawn.
+
+    The patch adds two tests to gio/tests/desktop-app-info.c, launch-desktop/scope-refused and
+    launch-desktop/scope-pending, for the wait of gio-launch-desktop. The build runs outside of a
+    systemd user instance, so the scope itself is checked by tests/run-scope-test.sh, in a
+    container with a user instance of its own, see tests/README.
+
+    Check by hand after a rebuild and a new login:
+
+      systemd-cgls --user-unit gnome-session-manager@ubuntu.service
+                                  should list gnome-session-service alone
+      systemd-cgls --user-unit org.gnome.Shell@ubuntu.service
+                                  should list gnome-shell, Xwayland and mutter-x11-frames alone,
+                                  also after starting Thunderbird or Signal from the dock
+      journalctl --user -b | grep 'Could not create transient scope'
+                                  should find nothing

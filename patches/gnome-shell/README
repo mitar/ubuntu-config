@@ -26,3 +26,13 @@ no-screenshots-while-locked.patch
       quick settings     should show no screenshot button, and show it again after unlocking
       Print              should open no screenshot UI
       Shift+Print        should save no new file into ~/Pictures/Screenshots
+
+leave-scope-to-glib.patch
+    Lets GNOME Shell leave the scope of an application launched from the dash, the overview or a
+    search to GLib, when the platform data of GLib's "launched" signal names one as "systemd-unit".
+    The GLib of patches/glib2.0/ puts the application into that scope before it starts, and a
+    request for the scope afterwards would only fail, with a warning in the journal. Drop the patch
+    together with patches/glib2.0/scope-before-exec.patch.
+
+    The request is made in shell_global_app_launched_cb in src/shell-global.c. The patch adds no
+    test.

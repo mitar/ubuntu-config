@@ -26,3 +26,13 @@ Check by hand after a rebuild and a new login, with System Sounds off in Setting
   plug and unplug the charger or the monitor      should stay silent
   close the lid and open it again                 should stay silent, and still suspend
   switch System Sounds on and plug it again       should sound as it did before
+
+leave-scope-to-glib.patch
+    Lets the media keys plugin leave the scope of an application it launches for a key, such as the
+    calculator or the terminal, to GLib, when the platform data of GLib's "launched" signal names
+    one as "systemd-unit". The GLib of patches/glib2.0/ puts the application into that scope before
+    it starts, and a request for the scope afterwards would only fail, with a warning in the
+    journal. Drop the patch together with patches/glib2.0/scope-before-exec.patch.
+
+    The request is made in app_launched_cb in plugins/media-keys/gsd-media-keys-manager.c. The patch
+    adds no test.

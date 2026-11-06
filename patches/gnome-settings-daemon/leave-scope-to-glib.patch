@@ -1,0 +1,25 @@
+Description: Leave the scope of an application to GLib when it created one.
+ The media keys plugin of gnome-settings-daemon asks systemd to move each application it launches with GDesktopAppInfo into a scope of its own once
+ GLib has started it. The GLib of patches/glib2.0 puts the application into that scope itself, before the
+ application starts any process, and names the scope in the platform data of the "launched" signal. A second request
+ for the scope then only fails, and gnome-desktop's gnome_start_systemd_scope() logs a warning about it.
+Author: Mitar
+Forwarded: no
+Last-Update: 2026-11-06
+
+diff --git a/plugins/media-keys/gsd-media-keys-manager.c b/plugins/media-keys/gsd-media-keys-manager.c
+index 2fda08e..ca5a2ed 100644
+--- a/plugins/media-keys/gsd-media-keys-manager.c
++++ b/plugins/media-keys/gsd-media-keys-manager.c
+@@ -983,6 +983,11 @@ app_launched_cb (GAppLaunchContext *context,
+         if (!g_variant_lookup (platform_data, "pid", "i", &pid))
+                 return;
+ 
++        /* GLib put the application into its own scope already, before it
++         * started */
++        if (g_variant_lookup (platform_data, "systemd-unit", "&s", NULL))
++                return;
++
+         app_name = g_app_info_get_id (info);
+         if (app_name == NULL)
+                 app_name = g_app_info_get_executable (info);

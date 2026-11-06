@@ -1,0 +1,16 @@
+Source package: gnome-session
+
+leave-scope-to-glib.patch
+    Lets gnome-session leave the scope of an application it starts at login to GLib, when the
+    platform data of GLib's "launched" signal names one as "systemd-unit". The GLib of
+    patches/glib2.0/ puts the application into that scope before it starts, and a request of
+    gnome-session for the scope afterwards would only fail, with a warning in the journal. Drop the
+    patch together with patches/glib2.0/scope-before-exec.patch.
+
+    The request is made in app_launched in gnome-session/gsm-util.c. The patch adds no test, as
+    gnome-session's tests do not launch applications.
+
+    Check by hand after a rebuild and a new login:
+
+      journalctl --user -b | grep 'Could not create transient scope'
+                                  should find nothing

@@ -485,6 +485,25 @@ can go is to be tested once Chromium and the Electron applications in use are ba
 stopping all processes of an application at once, which is what stopping its single scope does, still crashed
 Signal once.
 
+### Applications start inside their own scope
+
+GNOME Shell, gnome-session and gnome-settings-daemon ask systemd to put each application they launch into a scope of
+its own, `app-gnome-<application>-<pid>.scope`. They asked only once GLib had started the application, and systemd
+moves only the process it is given, so whatever the application started in the meantime stayed in the cgroup of the
+service which launched it, and was stopped with that service, before the application. Signal's zygotes and GPU process
+stayed in gnome-session's cgroup, and Thunderbird's crash helper in GNOME Shell's. GLib is patched to ask systemd for
+the scope itself, and gio-launch-desktop, through which GLib starts every application, waits until it is in the scope
+before it executes the application, so that every process of the application starts there. GNOME Shell, gnome-session
+and gnome-settings-daemon are patched to leave the scope to GLib (`patches/glib2.0/`, `patches/gnome-shell/`,
+`patches/gnome-session/`, `patches/gnome-settings-daemon/`). Other processes which launch applications through GLib,
+such as xdg-desktop-portal for links opened in other applications, put them into a scope of their own too. An
+application starts about 25 ms later for it. A command run with Alt+F2 is still moved into its scope only after it
+started, as GNOME Shell spawns it without GLib's application launching.
+
+GLib's developers are preparing GLib to create these scopes itself, in
+[merge request 5350](https://gitlab.gnome.org/GNOME/glib/-/merge_requests/5350) and a follow-up announced there, and the
+patches can be dropped once a GLib which does is in Ubuntu.
+
 ### Claude Desktop and Slack show their tray icon after every login
 
 Claude Desktop and Slack often started at login without their icon in the top bar, while they kept running. The icon
