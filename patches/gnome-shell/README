@@ -57,3 +57,14 @@ spawn-commands-in-scope.patch
     Check by hand after a rebuild and a new login: run sh -c 'sleep 600 & exec sleep 601' with
     Alt+F2, and both sleeps should be in app-gnome-sh-<pid>.scope, while systemd-cgls --user-unit
     org.gnome.Shell@ubuntu.service should list no sleep.
+
+disconnect-app-signals-on-destroy.patch
+    Backport of GNOME Shell merge request 4491, which is not merged yet. The app grid, the search view
+    and the date menu's events and world clocks sections connect to the installed-changed signal of
+    Shell.AppSystem, and the search view to the app-filter-changed signal of the parental controls
+    manager, and never disconnect. At shutdown the layout manager destroys their actors, and the time
+    limits manager then runs a nested main loop, in which a late installed-changed reaches the
+    destroyed actors. GJS then logs "has been already disposed" criticals, which fail the build's
+    closeWithActiveWindows test now and then, and with it the build. The handlers are connected with
+    connectObject() now, so they are disconnected with their actors. Drop the patch once Ubuntu ships
+    a GNOME Shell with the merge request.
