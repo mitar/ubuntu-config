@@ -61,16 +61,37 @@ wayland-session-restore-on-gnome.patch
     protocol on GNOME, in widget/gtk/nsWindowWayland.cpp (MoveToWorkspace), widget/gtk/nsWindow.cpp
     (SessionRestoreFinished) and widget/gtk/nsAppShell.cpp (IsSessionRestoreSupported).
 
-session-restore-external-link-window.patch
-    Opens a link from another application in a window of its own when Firefox is not running yet, as it opens one
-    while Firefox runs, when external links open in new windows (browser.link.open_newwindow.override.external
-    set to 2). Without it, the session store restores the first window of the saved session into the window
-    Firefox opened for the link, so the link becomes a tab of that window, on whichever workspace it returns to.
-    With it, every saved window is restored into a window of its own, and the window with the link is shown last,
-    when session restore finishes (the second patch above), so that GNOME places it on the current workspace and
-    focuses it. Other values of the preference keep Firefox's behaviour, a tab in the first saved window (Mozilla
-    bug 1565050). tests/run-session.sh checks both with the startup-url and startup-url-tab scenarios. Not
-    reported to Mozilla yet.
+wayland-session-restore-uuid-ids.patch
+    Restores every window under its saved ID. Before restoring a window, Firefox replaces an ID saved on X11, the
+    workspace number, by a new one (Mozilla bug 2059617), and recognized such an ID by ToInteger() succeeding.
+    ToInteger() also succeeds on a UUID whose first group consists of decimal digits, as about one in 43 do, so
+    such a window was added to the session anew at every start and opened on the current workspace. The patch keeps
+    an ID which parses as a UUID. The same code is in Firefox's main branch. Not reported to Mozilla yet.
+
+wayland-launch-activation-token.patch
+session-restore-launch-window.patch
+    Make a start of Firefox behave like a launch while it runs: the saved windows return to their places, and what
+    the launch opens, a URL from another application or, without one, the start page, opens in a new window on the
+    current workspace, which has the focus.
+
+    The session store restores the first saved window into the window Firefox opens for the launch, so a URL
+    becomes a tab of that window, on whichever workspace it returns to, and a launch from the dock opens nothing
+    new. With session-restore-launch-window.patch, every saved window is restored into a window of its own and the
+    window opened for the launch keeps what it opened. With a URL this follows where external links open: in a new
+    window when browser.link.open_newwindow.override.external is 2, otherwise the URL still becomes a tab of the
+    first saved window (Mozilla bug 1565050). Without a URL it holds for a start whose settings restore the session
+    (browser.startup.page set to 3), not for a restart by Firefox itself, such as after an update, or a recovery
+    after a crash, which restore the windows as they were. The window opened for the launch is shown when session
+    restore finishes (the second patch above), after the restored ones, so GNOME places it on the current
+    workspace.
+
+    GTK 3 activates the first window it shows with the activation token of the launch, which during session restore
+    is a restored window, so with a valid token, as from the dock, GNOME switches to that window's workspace.
+    wayland-launch-activation-token.patch hands the token to Firefox's own widget code instead, keeps restored
+    windows from using it and drops it when every window was restored. Links opened from Ptyxis carry no token yet:
+    Ptyxis opens them through libportal, which sends none to the portal.
+
+    tests/run-session.sh checks both with every scenario, see tests/README. Neither is reported to Mozilla yet.
 
 wasm-sandboxed-libraries.patch (debian-series)
     Builds graphite, ogg, hunspell, expat, woff2 and soundtouch as wasm sandboxed libraries, as Mozilla's own

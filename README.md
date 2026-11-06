@@ -297,7 +297,7 @@ connected.
 
 Firefox restores its windows to the workspace, monitor, position and size they had when it quit. It names its
 windows to GNOME through the Wayland session management protocol, and GNOME remembers their places under those
-names. Three things stand in the way on Ubuntu 26.04, each patched until the fix ships:
+names. Four things stand in the way on Ubuntu 26.04, each patched until the fix ships:
 
 - Mutter 50 offers the protocol only under its draft name, behind a debug switch (`patches/mutter/`, a backport
   from mutter 51).
@@ -306,6 +306,9 @@ names. Three things stand in the way on Ubuntu 26.04, each patched until the fix
 - Firefox turns the protocol off on GNOME, because of a bug of its own which makes it crash when a session is
   restored from the History menu, and a second one which leaves windows hidden on the first start
   (`patches/firefox/`).
+- Firefox treats a saved name which begins with eight decimal digits, as about one in 43 do, as a workspace number
+  saved on X11 and gives that window a new name, so it opens on the current workspace
+  (`patches/firefox/wayland-session-restore-uuid-ids.patch`).
 
 Firefox therefore comes from the Mozilla Team PPA, which publishes the source to rebuild it with, unlike Mozilla's
 own repository (requested in [Mozilla bug 2087959](https://bugzilla.mozilla.org/show_bug.cgi?id=2087959)). Its build
@@ -322,11 +325,14 @@ with it. Mutter is therefore also patched to implement the request
 (`patches/mutter/xdg-toplevel-session-rename.patch`), reported as
 [mutter issue 5177](https://gitlab.gnome.org/GNOME/mutter/-/work_items/5177).
 
-A link opened from another application, like a terminal, while Firefox is not running opens in a window of its own on
-the current workspace, as it does while Firefox runs, when the profile opens external links in new windows
-(`browser.link.open_newwindow.override.external` set to 2 in `about:config`). Firefox itself restores the first
-window of the previous session into the window it opened for the link, so the link would become a tab of that window,
-on its workspace (`patches/firefox/session-restore-external-link-window.patch`).
+Starting Firefox behaves like a launch while it runs: its windows return to their places, and what the launch opens
+appears in a new window on the current workspace, which has the focus. That is the start page for a launch from the dock,
+and a link for a link opened from another application, like a terminal, when the profile opens external links in new
+windows (`browser.link.open_newwindow.override.external` set to 2 in `about:config`). Firefox itself restores the
+first window of the previous session into the window it opens for the launch, so a link would become a tab of that
+window, on its workspace, and GNOME would switch to the workspace of whichever restored window appeared first
+(`patches/firefox/session-restore-launch-window.patch` and `wayland-launch-activation-token.patch`). A restart by
+Firefox itself, such as after an update, restores the windows as they were, without a new one.
 
 ### Firefox's sandbox has its user namespaces
 

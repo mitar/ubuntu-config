@@ -1,4 +1,6 @@
 wayland-session-restore-new-ids.patch
 wayland-session-restore-show-waiting-windows.patch
 wayland-session-restore-on-gnome.patch
-session-restore-external-link-window.patch
+wayland-session-restore-uuid-ids.patch
+wayland-launch-activation-token.patch
+session-restore-launch-window.patch

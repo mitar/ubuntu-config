@@ -4,23 +4,27 @@ Usage: driver.py FIREFOX PROFILE_DIR LOG_DIR SCENARIO
 
 SCENARIO is one of:
 
-  menu-restore     quit with several windows, start again without restoring, then restore the previous
-                   session as the History menu does
-  startup-restore  quit with several windows, start again with automatic session restore
+  menu-restore     quit with several windows, start again without restoring and with an activation token,
+                   which the window it starts with has to receive, then restore the previous session as the
+                   History menu does
+  startup-restore  quit with several windows, start again with automatic session restore and an activation
+                   token, as when launched from the dock; the saved windows have to be restored into windows of
+                   their own, beside a new window with the start page, which has to receive the token and the
+                   focus
   startup-no-ids   like startup-restore, but the first run has session management disabled, so it saves its
                    windows without IDs, as every profile used on GNOME before the patches did
-  startup-url      like startup-restore, with a page of its own in each window, but the second run is started
-                   with a URL, as when a link is opened from another application, and external links open in a
-                   new window; the URL has to open in a fourth window of its own, which is not restored by the
-                   compositor and has the focus once the 3 others are restored
+  startup-url      like startup-restore, but the second run is started with a URL, as when a link is opened from
+                   another application, and external links open in a new window; the URL has to open in the new
+                   window
   startup-url-tab  like startup-url, with external links opening in a tab as by default; the URL has to open as
-                   a tab of the first restored window
+                   a tab of the first restored window, and no window may receive the token
 
-A third run then restores the session the second one saved. Each Firefox run writes its output to
-LOG_DIR/runN.log, and a summary of each run is printed. Every run has to have 3 windows (4 in the second and third
-run of startup-url), all of them shown, and exit with status 0, and the compositor has to restore all windows of
-the third run, which it does only when Firefox uses session management. The script then prints "RESULT: OK" and
-exits with 0. It exits with 1 when a check fails, or when Firefox exited on its own.
+Each window of the first run shows a page of its own. A third run then restores the session the second one saved.
+Each Firefox run writes its output to LOG_DIR/runN.log, and a summary of each run is printed. The first run has to
+have 3 windows, the second 3 or, when it opens a new window beside the restored ones, 4, and the third one more
+than the second saved, all of them shown. Every run has to exit with status 0, and the compositor has to restore in the
+third run all windows the second one saved, which it does only when Firefox uses session management. The script
+then prints "RESULT: OK" and exits with 0. It exits with 1 when a check fails, or when Firefox exited on its own.
 """
 
 import json
@@ -97,6 +101,11 @@ class Marionette:
 # default.
 EXTERNAL_LINKS = {"window": 2, "default": -1}
 
+# The activation token every second run is launched with, in both variables launchers set.
+# The compositor does not know it and ignores it, but the WAYLAND_DEBUG output shows the window Firefox passes it
+# with.
+ACTIVATION_TOKEN = "session-test-activation-token"
+
 
 def write_prefs(profile, startup_page, session_management=True, external_links="default"):
     with open(os.path.join(profile, "user.js"), "w") as f:
@@ -119,10 +128,12 @@ def write_prefs(profile, startup_page, session_management=True, external_links="
             f.write("user_pref(%s, %s);\n" % (json.dumps(key), json.dumps(value)))
 
 
-def start(firefox, profile, log_path, urls=()):
+def start(firefox, profile, log_path, urls=(), token=None):
     log = open(log_path, "w")
     # Marionette refuses the chrome context the tests run their scripts in without system access.
     env = dict(os.environ, MOZ_REMOTE_ALLOW_SYSTEM_ACCESS="1", MOZ_CRASHREPORTER_DISABLE="1")
+    if token:
+        env.update(XDG_ACTIVATION_TOKEN=token, DESKTOP_STARTUP_ID=token)
     proc = subprocess.Popen([firefox, "-marionette", "-no-remote", "-profile", profile, *urls],
                             stdout=log, stderr=subprocess.STDOUT, env=env)
     try:
@@ -216,6 +227,29 @@ def restored_toplevels(log_path):
         return sum(1 for line in f if "toplevel_session_v1#" in line and ".restored()" in line)
 
 
+def activated_toplevels(log_path, token):
+    """Returns for each activation request with token whether the window it names was added to the session under a
+    new ID ("add") or restored under its saved one ("restore"), or None when the window was not added to it."""
+    xdg_surfaces = {}
+    toplevels = {}
+    kinds = {}
+    activated = []
+    with open(log_path, errors="replace") as f:
+        for line in f:
+            if " -> " not in line:
+                continue
+            if match := re.search(r"\.get_xdg_surface\(new id xdg_surface#(\d+), wl_surface#(\d+)\)", line):
+                xdg_surfaces[match[1]] = match[2]
+            elif match := re.search(r"xdg_surface#(\d+)\.get_toplevel\(new id xdg_toplevel#(\d+)\)", line):
+                toplevels[xdg_surfaces.get(match[1])] = match[2]
+            elif match := re.search(r"\.(add|restore)_toplevel\(new id xdg_toplevel_session_v1#\d+, xdg_toplevel#(\d+),", line):
+                kinds[match[2]] = match[1]
+            elif match := re.search(r'xdg_activation_v1#\d+\.activate\("([^"]*)", wl_surface#(\d+)\)', line):
+                if match[1] == token:
+                    activated.append(toplevels.get(match[2]))
+    return [kinds.get(toplevel) for toplevel in activated]
+
+
 def alive_after(proc, seconds):
     try:
         proc.wait(timeout=seconds)
@@ -250,8 +284,10 @@ def main():
     os.makedirs(log_dir, exist_ok=True)
 
     with_url = scenario in ("startup-url", "startup-url-tab")
+    at_startup = scenario != "menu-restore"
     external_links = "window" if scenario == "startup-url" else "default"
-    windows_after_url = 4 if scenario == "startup-url" else 3
+    # A restore at startup opens a new window beside the restored ones, unless the URL opens in a tab of one of them.
+    run2_windows = 3 if scenario in ("menu-restore", "startup-url-tab") else 4
     pages = [write_page(log_dir, "page%d" % i) for i in range(1, 4)]
     link = write_page(log_dir, "link")
 
@@ -259,15 +295,14 @@ def main():
     proc, m = start(firefox, profile, os.path.join(log_dir, "run1.log"))
     open_windows(m, 2)
     report("run 1: %s windows", window_count(m), 3)
-    if with_url:
-        load_pages(m, pages)
+    load_pages(m, pages)
     # Session store collects window data, and so calls GetWorkspaceID(), every second.
     time.sleep(5)
     report("run 1: %s windows shown", mapped_toplevels(os.path.join(log_dir, "run1.log")), 3)
     report("run 1: exit status %s", quit(m, proc), 0)
 
     write_prefs(profile, 0 if scenario == "menu-restore" else 3, external_links=external_links)
-    proc, m = start(firefox, profile, os.path.join(log_dir, "run2.log"), [link] if with_url else [])
+    proc, m = start(firefox, profile, os.path.join(log_dir, "run2.log"), [link] if with_url else [], ACTIVATION_TOKEN)
     windows = None
     try:
         if scenario == "menu-restore":
@@ -285,16 +320,25 @@ def main():
     if proc.poll() is not None or not alive_after(proc, 0.1):
         print("run 2: FIREFOX EXITED with status %s" % proc.wait(), flush=True)
         return 1
-    run2_windows = windows_after_url if with_url else 3
+    run2_log = os.path.join(log_dir, "run2.log")
     report("run 2: %s windows, still running after the restore", windows, run2_windows)
-    report("run 2: %s windows shown", mapped_toplevels(os.path.join(log_dir, "run2.log")), run2_windows)
-    if scenario == "startup-url":
-        report("run 2: pages of the windows %s", window_pages(m), sorted([[link]] + [[page] for page in pages]))
-        report("run 2: %s windows restored by the compositor", restored_toplevels(os.path.join(log_dir, "run2.log")), 3)
-        report("run 2: pages of the focused window %s", focused_window_pages(m), [link])
+    report("run 2: %s windows shown", mapped_toplevels(run2_log), run2_windows)
+    if scenario == "menu-restore":
+        report("run 2: activation token passed with windows %s", activated_toplevels(run2_log, ACTIVATION_TOKEN), ["add"])
     elif scenario == "startup-url-tab":
-        # The URL opens in a tab of the first window of the saved session.
+        # The URL opens in a tab of the first window of the saved session, and the token is dropped.
         report("run 2: pages of the windows %s", window_pages(m), sorted([sorted([pages[0], link]), [pages[1]], [pages[2]]]))
+        report("run 2: activation token passed with windows %s", activated_toplevels(run2_log, ACTIVATION_TOKEN), [])
+    elif at_startup:
+        # The start page is about:blank, see write_prefs.
+        new_page = link if with_url else "about:blank"
+        report("run 2: pages of the windows %s", window_pages(m), sorted([[new_page]] + [[page] for page in pages]))
+        report("run 2: activation token passed with windows %s", activated_toplevels(run2_log, ACTIVATION_TOKEN), ["add"])
+        # Windows saved without IDs are shown at the same time as the new one, so which of them has the focus is
+        # left open.
+        if scenario != "startup-no-ids":
+            report("run 2: %s windows restored by the compositor", restored_toplevels(run2_log), 3)
+            report("run 2: pages of the focused window %s", focused_window_pages(m), [new_page])
     report("run 2: exit status %s", quit(m, proc), 0)
 
     # A third run restores the session saved by the second one, which shows that the IDs it saved are
@@ -305,9 +349,11 @@ def main():
     if not alive_after(proc, 5):
         print("run 3: FIREFOX EXITED with status %s" % proc.returncode, flush=True)
         return 1
-    report("run 3: %s windows", window_count(m), run2_windows)
-    report("run 3: %s windows shown", mapped_toplevels(os.path.join(log_dir, "run3.log")), run2_windows)
-    report("run 3: %s windows restored by the compositor", restored_toplevels(os.path.join(log_dir, "run3.log")), run2_windows)
+    # The session store does not save a window which shows only about:blank, the start page.
+    run2_saved = 3 if scenario in ("startup-restore", "startup-no-ids") else run2_windows
+    report("run 3: %s windows", window_count(m), run2_saved + 1)
+    report("run 3: %s windows shown", mapped_toplevels(os.path.join(log_dir, "run3.log")), run2_saved + 1)
+    report("run 3: %s windows restored by the compositor", restored_toplevels(os.path.join(log_dir, "run3.log")), run2_saved)
     report("run 3: exit status %s", quit(m, proc), 0)
 
     print("RESULT: %s" % ("OK" if not failures else "%d check(s) failed" % len(failures)), flush=True)

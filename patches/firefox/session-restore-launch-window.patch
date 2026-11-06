@@ -1,16 +1,22 @@
-Description: Open a URL from the command line in a window of its own when external links open in new windows.
- When Firefox starts with a URL, as when a link is opened from another application while Firefox is not running,
- and restores the previous session at startup, the session store restores the first window of the saved session
- into the window opened for the URL, so the URL becomes a tab of that window, on whichever workspace it returns to.
- This happens also when browser.link.open_newwindow.override.external (or browser.link.open_newwindow, which it
- falls back to) opens external links in a new window, as they do while Firefox runs. When the preference opens
- them in a new window, the window opened for the URL now keeps only it, every saved window is restored into a new
- window, and the window with the URL is the one focused afterwards.
+Description: Keep the window opened for a launch as it was opened and restore the saved windows into new ones.
+ When Firefox starts and restores the previous session, the session store restores the first window of the saved
+ session into the window opened for the launch. A URL from the command line, as when a link is opened from another
+ application while Firefox is not running, becomes a tab of that window, on whichever workspace it returns to,
+ also when browser.link.open_newwindow.override.external (or browser.link.open_newwindow, which it falls back to)
+ opens external links in a new window, as they do while Firefox runs. A launch without a URL opens no new window
+ either, unlike a launch while Firefox runs.
+ .
+ The window opened for the launch now keeps what it opened, the URL or the start page, every saved window is
+ restored into a new window, and the window opened for the launch is the one focused afterwards. With a URL this
+ follows where external links open. Without one it holds when the user's settings restore the session
+ (browser.startup.page set to 3), but not for a restart by Firefox itself (browser.sessionstore.resume_session_once)
+ or a recovery after a crash, which reopen the windows as they were.
  .
  On Wayland every window opened during startup session restore waits hidden until it is restored, and a window
  which is not restored is shown when session restore finishes (wayland-session-restore-show-waiting-windows.patch).
- The window with the URL is thus shown after the restored ones, so the compositor places it on the current
- workspace and focuses it after any restored window there.
+ The window opened for the launch is thus shown after the restored ones, so the compositor places it on the current
+ workspace and focuses it after any restored window there. wayland-launch-activation-token.patch passes it the
+ activation token of the launch.
  .
  Related to Mozilla bug 1565050: with external links opening in a tab, the URL opens in the first window of the
  saved session rather than in the last used one.
@@ -18,7 +24,7 @@ Author: Mitar
 Forwarded: no
 Last-Update: 2026-11-06
 diff --git a/browser/components/sessionstore/SessionStore.sys.mjs b/browser/components/sessionstore/SessionStore.sys.mjs
-index 9fa4c8e..cbd92a4 100644
+index 9fa4c8e..437a28c 100644
 --- a/browser/components/sessionstore/SessionStore.sys.mjs
 +++ b/browser/components/sessionstore/SessionStore.sys.mjs
 @@ -141,6 +141,9 @@
@@ -27,25 +33,29 @@ index 9fa4c8e..cbd92a4 100644
   *   `windowFeaturesMismatchIgnored` telemetry event.
 + * @property {boolean} [restoreIntoNewWindows]
 + *   Whether to restore every window into a new one and leave the window passed
-+ *   in with only the pages the command line opened in it.
++ *   in as it was opened, with the pages from the command line or the start page.
   * @property {string} [trigger]
   *   The reason recorded when the restore opens a Smart Window.
   */
-@@ -1857,6 +1860,13 @@ class _SessionStore {
+@@ -1857,6 +1860,17 @@ class _SessionStore {
              firstWindow: true,
              overwriteTabs: overwrite,
              restoreSource: "automatic_startup",
-+            // A page from the command line, like a link opened from another
-+            // application, opens where such a link opens while Firefox runs.
-+            // When that is a new window, the window opened for the page keeps
-+            // only it, and every saved window is restored into a new window.
-+            restoreIntoNewWindows:
-+              this.#externalLinksOpenInNewWindow() &&
-+              this.#cmdLineHasURL(aWindow),
++            // The window opened for the launch keeps what it opened, as a window
++            // opened while Firefox runs does, and every saved window is restored
++            // into a new one. With a page from the command line, like a link
++            // opened from another application, this follows where external
++            // links open. Without one, it holds for a launch by the user whose
++            // settings restore the session, but not for a restart by Firefox
++            // itself or a recovery after a crash, which reopen the windows as
++            // they were.
++            restoreIntoNewWindows: this.#cmdLineHasURL(aWindow)
++              ? this.#externalLinksOpenInNewWindow()
++              : this.#isUserConfiguredRestore,
            };
            this.#restoreWindows(aWindow, aInitialState, options);
          }
-@@ -6489,15 +6499,18 @@ class _SessionStore {
+@@ -6489,15 +6503,18 @@ class _SessionStore {
     *
     * @param {ChromeWindow[]} windows
     *        unordered array of windows to restore
@@ -66,7 +76,7 @@ index 9fa4c8e..cbd92a4 100644
      this.#restoreWindowsFeaturesAndTabs(windows);
    }
  
-@@ -6559,6 +6572,21 @@ class _SessionStore {
+@@ -6559,6 +6576,21 @@ class _SessionStore {
        return;
      }
  
@@ -88,7 +98,7 @@ index 9fa4c8e..cbd92a4 100644
      let firstWindowData = root.windows.splice(0, 1);
      let firstWindowState = firstWindowData[0];
      if (!this.#canRestoreIntoExistingWindow(aWindow, firstWindowState)) {
-@@ -7586,6 +7614,39 @@ class _SessionStore {
+@@ -7586,6 +7618,39 @@ class _SessionStore {
      return !hasFirstArgument;
    }
  

@@ -1,0 +1,213 @@
+Description: Activate the window opened for the launch, not a restored one, with the launch activation token on Wayland.
+ GTK 3 reads the activation token Firefox is launched with from DESKTOP_STARTUP_ID and activates the first toplevel
+ it maps with it. During startup session restore that is the first restored window shown, so with a valid token,
+ such as from a launch in GNOME Shell's dock, the compositor focuses that window and switches to its workspace,
+ away from where Firefox was launched, while the window opened for the launch, holding the URL or the start page,
+ stays without it.
+ .
+ The token is now removed from GTK at startup and given to nsGTKToolkit, whose token the first window shown uses,
+ as it already does for a launch passed to a running Firefox. While session restore runs, a window which the
+ compositor places from the session, restored under its saved ID, does not use it. A window opened for the launch
+ is shown when session restore finishes (wayland-session-restore-show-waiting-windows.patch) and uses it then. A
+ token which no window used, because every window was restored, is dropped at that point, so that a window opened
+ later transfers the focus to itself as usual.
+Author: Mitar
+Forwarded: no
+Last-Update: 2026-11-06
+diff --git a/toolkit/xre/nsAppRunner.cpp b/toolkit/xre/nsAppRunner.cpp
+index 003fc85..513d100 100644
+--- a/toolkit/xre/nsAppRunner.cpp
++++ b/toolkit/xre/nsAppRunner.cpp
+@@ -6378,6 +6378,9 @@ nsresult XREMain::XRE_mainRun() {
+ #endif
+ 
+ #if defined(MOZ_WIDGET_GTK)
++      nsAppShell::InitLaunchActivationToken(mXDGActivationToken.IsEmpty()
++                                                ? mDesktopStartupID
++                                                : mXDGActivationToken);
+       // Clear the environment variables so they won't be inherited by child
+       // processes and confuse things.
+       for (const auto& name : kStartupTokenNames) {
+diff --git a/widget/gtk/nsAppShell.cpp b/widget/gtk/nsAppShell.cpp
+index 5c4cfc2..789db98 100644
+--- a/widget/gtk/nsAppShell.cpp
++++ b/widget/gtk/nsAppShell.cpp
+@@ -40,6 +40,9 @@
+ #include "mozilla/widget/ScreenManager.h"
+ #include "nsAppRunner.h"
+ #ifdef MOZ_WAYLAND
++#  include <dlfcn.h>
++
++#  include "nsGTKToolkit.h"
+ #  include "nsWaylandDisplay.h"
+ #endif
+ 
+@@ -611,6 +614,29 @@ void nsAppShell::InitSessionRestore() {
+ #endif
+ }
+ 
++void nsAppShell::InitLaunchActivationToken(const nsACString& aToken) {
++#ifdef MOZ_WAYLAND
++  if (aToken.IsEmpty() || !WaylandDisplayGet()) {
++    return;
++  }
++  // GTK 3 reads the token from DESKTOP_STARTUP_ID and activates the first
++  // toplevel it maps with it. During startup session restore that is a restored
++  // window, which the compositor then focuses and switches to its workspace.
++  // The token is removed from GTK and given to nsGTKToolkit instead, whose
++  // token a window restored from the session does not use, see
++  // nsWindow::SetUserTimeAndStartupTokenForActivatedWindow().
++  static auto sSetStartupNotificationId =
++      (void (*)(GdkDisplay*, const char*))dlsym(
++          RTLD_DEFAULT, "gdk_wayland_display_set_startup_notification_id");
++  GdkDisplay* display = gdk_display_get_default();
++  if (!sSetStartupNotificationId || !display) {
++    return;
++  }
++  sSetStartupNotificationId(display, nullptr);
++  nsGTKToolkit::GetToolkit()->SetActivationToken(aToken);
++#endif
++}
++
+ // We can't query widget_wayland_session_management_enabled_AtStartup()
+ // from nsAppShell::Init() as it's too early and we don't have profile loaded.
+ bool nsAppShell::IsSessionRestoreSupported() {
+@@ -682,8 +708,9 @@ nsAppShell::Observe(nsISupports* aSubject, const char* aTopic,
+   } else if (!nsCRT::strcmp(aTopic, "sessionstore-windows-restored")) {
+     if (IsSessionRestoreSupported()) {
+       LOGW("  mSessionRestoreState = eSessionRestoreFinished");
++      bool restored = mSessionRestoreState == eSessionRestoring;
+       mSessionRestoreState = eSessionRestoreFinished;
+-      nsWindow::SessionRestoreFinished();
++      nsWindow::SessionRestoreFinished(restored);
+     }
+   } else {
+     return nsBaseAppShell::Observe(aSubject, aTopic, aData);
+diff --git a/widget/gtk/nsAppShell.h b/widget/gtk/nsAppShell.h
+index d920178..86d825e 100644
+--- a/widget/gtk/nsAppShell.h
++++ b/widget/gtk/nsAppShell.h
+@@ -14,6 +14,7 @@
+ #include <glib.h>
+ 
+ #include "nsBaseAppShell.h"
++#include "nsStringFwd.h"
+ 
+ typedef enum {
+   eSessionDefault = 0,
+@@ -34,6 +35,11 @@ class nsAppShell : public nsBaseAppShell {
+   static SessionRestoreState UpdateAndGetSessionState();
+   static bool IsSessionRestoreSupported();
+   static void InitSessionRestore();
++  // On Wayland, makes aToken, the activation token Firefox was launched with,
++  // the activation token of nsGTKToolkit, which a window opened for the launch
++  // uses when it is shown, and keeps GTK from using it. Does nothing for an
++  // empty token or on X11.
++  static void InitLaunchActivationToken(const nsACString& aToken);
+ 
+   void ScheduleNativeEventCallback() override;
+   bool ProcessNextNativeEvent(bool mayWait) override;
+diff --git a/widget/gtk/nsWindow.cpp b/widget/gtk/nsWindow.cpp
+index 635f376..5b3d0b7 100644
+--- a/widget/gtk/nsWindow.cpp
++++ b/widget/gtk/nsWindow.cpp
+@@ -84,6 +84,7 @@
+ #include "mozilla/XREAppData.h"
+ #include "nsAppDirectoryServiceDefs.h"
+ #include "nsAppRunner.h"
++#include "nsAppShell.h"
+ #include "nsDragService.h"
+ #include "nsDragServiceGtk.h"
+ #include "nsGTKToolkit.h"
+@@ -426,7 +427,8 @@ nsWindow::nsWindow()
+       mNeedsToRetryCapturingMouse(false),
+       mX11HiddenPopupPositioned(false),
+       mPopupTemporaryHidden(false),
+-      mWaitingToSessionRestore(false) {
++      mWaitingToSessionRestore(false),
++      mRestoredFromSession(false) {
+   SetSafeWindowSize(mSizeConstraints.mMaxSize);
+ 
+   if (!gGlobalsInitialized) {
+@@ -1210,6 +1212,15 @@ void nsWindow::SetUserTimeAndStartupTokenForActivatedWindow() {
+     return;
+   }
+ 
++  // While session restore runs at startup, the activation token is the one
++  // Firefox was launched with, meant for a window opened for the launch.
++  // Activated with it, a restored window would be focused and the compositor
++  // would switch to its workspace, so a restored window leaves it alone.
++  if (mRestoredFromSession &&
++      nsAppShell::UpdateAndGetSessionState() == eSessionRestoring) {
++    return;
++  }
++
+   mWindowActivationTokenFromEnv = toolkit->GetActivationToken();
+   if (!mWindowActivationTokenFromEnv.IsEmpty()) {
+     if (!GdkIsWaylandDisplay()) {
+@@ -7681,7 +7692,7 @@ uint32_t nsWindow::GetMaxTouchPoints() const {
+   return 0;
+ }
+ 
+-void nsWindow::SessionRestoreFinished() {
++void nsWindow::SessionRestoreFinished(bool aRestored) {
+   LOGW("nsWindow::SessionRestoreFinished() set focus to [%p]",
+        gFocusRequestWindow.get());
+ 
+@@ -7709,6 +7720,18 @@ void nsWindow::SessionRestoreFinished() {
+     }
+   }
+ 
++  // After a restore, the windows opened for the launch are shown by now, and
++  // the first of them used the activation token Firefox was launched with. When
++  // every window was restored, none used it, and it is dropped so that a window
++  // opened later does not present it instead of transferring the focus to
++  // itself. Without a restore, the window opened for the launch may not be
++  // shown yet and still needs the token.
++  if (aRestored) {
++    if (nsGTKToolkit* toolkit = nsGTKToolkit::GetToolkit()) {
++      toolkit->SetActivationToken(""_ns);
++    }
++  }
++
+   if (!gFocusRequestWindow) {
+     return;
+   }
+diff --git a/widget/gtk/nsWindow.h b/widget/gtk/nsWindow.h
+index 8613fdf..adadc56 100644
+--- a/widget/gtk/nsWindow.h
++++ b/widget/gtk/nsWindow.h
+@@ -536,7 +536,9 @@ class nsWindow : public nsIWidget {
+   void UnlockCursor() { mWidgetCursorLocked = false; };
+   void InsertEmoji(RefPtr<nsWindow> aToplevelWindow = nullptr);
+ 
+-  static void SessionRestoreFinished();
++  // aRestored tells whether session restore ran, rather than finishing at once
++  // because the session is not restored at startup.
++  static void SessionRestoreFinished(bool aRestored);
+ 
+  protected:
+   virtual ~nsWindow();
+@@ -774,6 +776,10 @@ class nsWindow : public nsIWidget {
+   // size/focus etc.
+   bool mWaitingToSessionRestore : 1;
+ 
++  // Whether the compositor places this window as it was in the session, which
++  // it does for a window restored at startup under its saved ID.
++  bool mRestoredFromSession : 1;
++
+   // all of our DND stuff
+   void InitDragEvent(mozilla::WidgetDragEvent& aEvent);
+ 
+diff --git a/widget/gtk/nsWindowWayland.cpp b/widget/gtk/nsWindowWayland.cpp
+index 9d5b722..30019be 100644
+--- a/widget/gtk/nsWindowWayland.cpp
++++ b/widget/gtk/nsWindowWayland.cpp
+@@ -114,6 +114,7 @@ bool nsWindowWayland::CreateRestoreSession(bool aRestoreWindow) {
+   if (aRestoreWindow) {
+     mSessionRestoreToken =
+         xdg_session_v1_restore_toplevel(session, toplevel, mWorkspaceID.get());
++    mRestoredFromSession = true;
+   } else {
+     mSessionRestoreToken =
+         xdg_session_v1_add_toplevel(session, toplevel, mWorkspaceID.get());

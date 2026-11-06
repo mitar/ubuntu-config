@@ -1,0 +1,32 @@
+Description: Restore a Wayland window whose saved ID begins with eight decimal digits.
+ Before restoring a window under its saved ID, CreateRestoreSession() replaces an ID saved on X11, the workspace
+ number, by a new UUID (Mozilla bug 2059617). It recognized such an ID by ToInteger() succeeding, but ToInteger()
+ skips the opening brace of a UUID, reads digits and stops without an error at the first hyphen. A UUID whose first
+ group consists of decimal digits only, as about one in 43 random UUIDs does ((10/16)^8), was thus replaced too, so
+ that window was added to the session under a new ID instead of being restored, and opened on the current
+ workspace. An ID is now kept when it parses as a UUID as a whole and replaced otherwise.
+Author: Mitar
+Forwarded: no
+Last-Update: 2026-11-06
+diff --git a/widget/gtk/nsWindowWayland.cpp b/widget/gtk/nsWindowWayland.cpp
+index db3e183..9d5b722 100644
+--- a/widget/gtk/nsWindowWayland.cpp
++++ b/widget/gtk/nsWindowWayland.cpp
+@@ -102,12 +102,11 @@ bool nsWindowWayland::CreateRestoreSession(bool aRestoreWindow) {
+   }
+ 
+   // If we have old profile / workspace ID or it's empty just replace it by
+-  // UUID to avoid protocol error crash (Bug 2059617).
+-  nsresult ret = NS_OK;
+-  if (!mWorkspaceID.IsEmpty()) {
+-    (void)mWorkspaceID.ToInteger(&ret);
+-  }
+-  if (NS_SUCCEEDED(ret)) {
++  // UUID to avoid protocol error crash (Bug 2059617). Every ID saved for a
++  // Wayland window is a UUID from GenerateWorkspaceID(), while one saved on
++  // X11 is the workspace number, so an ID which is not a UUID is replaced.
++  nsID id;
++  if (!id.Parse(mWorkspaceID)) {
+     mWorkspaceID = GenerateWorkspaceID();
+     aRestoreWindow = false;
+   }

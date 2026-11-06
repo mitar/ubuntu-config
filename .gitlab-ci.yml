@@ -298,6 +298,8 @@ test_firefox_session:
           - menu-restore
           - startup-restore
           - startup-no-ids
+          - startup-url
+          - startup-url-tab
 
   script:
     - mkdir /tmp/gtk-root
