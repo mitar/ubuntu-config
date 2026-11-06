@@ -68,3 +68,11 @@ disconnect-app-signals-on-destroy.patch
     closeWithActiveWindows test now and then, and with it the build. The handlers are connected with
     connectObject() now, so they are disconnected with their actors. Drop the patch once Ubuntu ships
     a GNOME Shell with the merge request.
+
+disable-shader-cache-in-close-test.patch
+    Backport of GNOME Shell commit f9435beb, which disables the Mesa shader cache for the
+    closeWithActiveWindows test (https://gitlab.gnome.org/GNOME/gnome-shell/-/issues/9423). The
+    clients of the test can still write to the shader cache in the test's home directory while
+    gnome-shell-test-tool removes it, which fails with "OSError: [Errno 39] Directory not empty" and
+    with it the build. Run 60 times, the test failed 4 times this way, and none with the cache
+    disabled. Drop the patch once Ubuntu ships GNOME Shell 51.1 or newer.

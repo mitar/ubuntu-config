@@ -1,0 +1,43 @@
+Description: Disable the Mesa shader cache for the closeWithActiveWindows test.
+ The clients of the test can still write to the shader cache in the test's home directory while gnome-shell-test-tool
+ removes it, which then fails with "OSError: [Errno 39] Directory not empty" and fails the test now and then.
+Author: Sebastian Keller <skeller@gnome.org>
+Origin: upstream, https://gitlab.gnome.org/GNOME/gnome-shell/-/commit/f9435bebb54613388b2e64934e3a98298f39cc3b
+Bug: https://gitlab.gnome.org/GNOME/gnome-shell/-/issues/9423
+Applied-Upstream: 51.1
+Last-Update: 2026-11-06
+
+--- a/tests/meson.build
++++ b/tests/meson.build
+@@ -84,6 +84,11 @@
+   },
+   {
+     'name': 'closeWithActiveWindows',
++    'env': {
++      # The shader cache used by the clients can cause writes to the test home
++      # directory during its removal by gnome-shell-test-tool
++      'MESA_SHADER_CACHE_DISABLE': '1',
++    },
+   },
+   {
+     'name': 'multiMonitor',
+@@ -115,6 +120,11 @@
+   test_name = shell_test['name']
+   options = shell_test.get('options', [])
+ 
++  local_test_env = shell_testenv
++  foreach var, value : shell_test.get('env', {})
++    local_test_env.set(var, value)
++  endforeach
++
+   test(test_name, dbus_runner,
+     suite: 'shell',
+     args: [
+@@ -128,6 +138,6 @@
+       gnome_shell_perf_helper,
+       tests_dependencies,
+     ],
+-    env: shell_testenv,
++    env: local_test_env,
+   )
+ endforeach
