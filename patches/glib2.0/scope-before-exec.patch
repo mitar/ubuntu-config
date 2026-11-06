@@ -2,43 +2,41 @@ Description: Put applications into their systemd scope before they start.
  GNOME Shell, gnome-session and gnome-settings-daemon ask systemd to move each application they launch with
  GDesktopAppInfo into a scope of its own, app-gnome-<application ID>-<pid>.scope, but only once GLib has started it.
  systemd moves only the process it is given, so every process the application started in the meantime stays in the
- cgroup of the service which launched it. Chromium and Electron applications start their zygotes and their GPU
- process at once, which then stay in GNOME Shell's or gnome-session's cgroup, are stopped with it before the
- application at logout, and the application crashes when they go.
+ cgroup of the service which launched it. Chromium and Electron applications start their zygotes and their GPU process
+ at once, which then stay in GNOME Shell's or gnome-session's cgroup, are stopped with it before the application at
+ logout, and the application crashes when they go.
  .
  GLib asks systemd for the scope itself instead, right after it spawned gio-launch-desktop, and gio-launch-desktop
  waits until systemd has moved it into the scope before it executes the application, which therefore starts every
- process of its own in the scope. The launching process sends the request before the launch call returns, and
- gio-launch-desktop does not depend on it afterwards, so this holds also when the launching process exits right
- after launching or never runs its main loop again. Over a pipe, the launching process tells gio-launch-desktop
- when systemd refused to create the scope, so that it does not wait in vain. gio-launch-desktop waits 5 seconds at
- most, so that an application starts even when the scope is never created and the launching process could not tell.
+ process of its own in the scope. The launching process sends the request before the launch call returns, and follows
+ it to its end: when systemd refused it, or the job starting the scope ended with another result than done, it writes
+ the reason to a pipe to gio-launch-desktop, which then runs the application at once. Otherwise gio-launch-desktop
+ waits as long as systemd needs, so that a busy systemd delays the application instead of splitting it. Only when
+ nothing can tell, as the launching process exited before systemd was done, or never runs its main loop again, does
+ gio-launch-desktop give up, after 60 seconds.
  .
  The scope is requested only by processes managed by the systemd user instance, outside of sandboxes, and only when
- systemd is on the session bus, which the bus answers itself, and the name is short enough for systemd. Those are
- the refusals which are certain, and which a launching process exiting right after launching, as on a session bus
- of a test, could otherwise not tell gio-launch-desktop about. The process is given to systemd as a pidfd, when the
- bus can pass one, as systemd would look up a process ID in its own PID namespace, which is not the one of a
- launching process in a sandbox of its own which uses the session bus. The process counts as in the scope also in a
- cgroup below the scope's.
+ systemd is on the session bus, which the bus answers itself, and the name is short enough for systemd, as those
+ refusals are certain. The process is given to systemd as a pidfd, when the bus can pass one, as systemd would look up
+ a process ID in its own PID namespace, which is not the one of a launching process in a sandbox of its own which uses
+ the session bus. The process counts as in the scope also in a cgroup below the scope's.
  .
- gio-launch-desktop logs at error priority when the application runs outside of its scope after all: when systemd
- refused it, with the reason the launching process passes on, and when the scope did not exist after 5 seconds.
- Neither is expected, so each is worth looking into. A refusal because systemd is stopping, at the
- end of a session, is logged at notice priority. When standard error is the journal, whose stream gives every line
- the same priority, the message is sent through syslog, so that it keeps its priority.
+ gio-launch-desktop logs at error priority when the application runs outside of its scope after all, with the reason
+ the launching process passed on, or after the 60 seconds. Neither is expected. A refusal because systemd is stopping,
+ at the end of a session, is logged at notice priority. When standard error is the journal, whose stream gives every
+ line the same priority, the message is sent through syslog, so that it keeps its priority.
  .
- The scope has the name gnome-desktop's gnome_start_systemd_scope() gives it, so that a launching process which
- still asks for it afterwards fails without moving any process, and gnome-session's drop-in for app-gnome-*.scope
- applies. The "launched" signal names the scope as "systemd-unit" in its platform data, so that launching processes
- can leave the scope to GLib.
+ The scope has the name gnome-desktop's gnome_start_systemd_scope() gives it, so that a launching process which still
+ asks for it afterwards fails without moving any process, and gnome-session's drop-in for app-gnome-*.scope applies.
+ The "launched" signal names the scope as "systemd-unit" in its platform data, so that launching processes can leave
+ the scope to GLib.
 Author: Mitar
 Bug: https://gitlab.gnome.org/GNOME/glib/-/merge_requests/1596
 Forwarded: no
 Last-Update: 2026-11-06
 
 diff --git a/gio/gdesktopappinfo.c b/gio/gdesktopappinfo.c
-index cfd76d9..5a46751 100644
+index cfd76d9..60c5c53 100644
 --- a/gio/gdesktopappinfo.c
 +++ b/gio/gdesktopappinfo.c
 @@ -33,6 +33,7 @@
@@ -62,24 +60,74 @@ index cfd76d9..5a46751 100644
  #endif
  #include "gfile.h"
  #include "gioerror.h"
-@@ -2930,6 +2937,327 @@ emit_launch_started (GAppLaunchContext *context,
+@@ -2930,6 +2937,420 @@ emit_launch_started (GAppLaunchContext *context,
    g_clear_pointer (&platform_data, g_variant_unref);
  }
  
 +#if defined(__linux__) && !defined(__ANDROID__)
 +
++/* A request for the scope of a launched application, which the reply to the
++ * request and the subscription to the job's end each hold a reference to. */
 +typedef struct
 +{
-+  int release_fd;  /* (owned) write end of the pipe gio-launch-desktop waits on */
++  GDBusConnection *connection;  /* (owned) */
++  guint subscription_id;  /* JobRemoved, 0 once unsubscribed */
++  int release_fd;  /* (owned) write end of the pipe gio-launch-desktop waits on, -1 once closed */
 +  gchar *unit;  /* (owned) */
 +} ScopeRequest;
 +
 +static void
-+scope_request_free (ScopeRequest *request)
++scope_request_clear (ScopeRequest *request)
 +{
-+  g_close (request->release_fd, NULL);
++  g_clear_object (&request->connection);
 +  g_free (request->unit);
-+  g_free (request);
++}
++
++static void
++scope_request_release (gpointer request)
++{
++  g_rc_box_release_full (request, (GDestroyNotify) scope_request_clear);
++}
++
++/* Ends the request, once its outcome is known, which only the first call
++ * does. When @reason is not %NULL, the scope will not be created, and
++ * gio-launch-desktop is told why, which it logs, and runs the application
++ * outside of it. Otherwise gio-launch-desktop goes on waiting until the
++ * process is in the scope. */
++static void
++scope_request_end (ScopeRequest *request,
++                   const gchar  *reason)
++{
++  if (request->release_fd < 0)
++    return;
++
++  if (reason != NULL)
++    {
++      const gchar *pos;
++      gsize left;
++      ssize_t r;
++
++      g_debug ("Unable to create systemd scope %s: %s", request->unit, reason);
++
++      for (pos = reason, left = strlen (reason); left > 0; pos += r, left -= (gsize) r)
++        {
++          do
++            r = write (request->release_fd, pos, left);
++          while (r < 0 && errno == EINTR);
++
++          if (r <= 0)
++            break;
++        }
++    }
++
++  g_close (request->release_fd, NULL);
++  request->release_fd = -1;
++
++  if (request->subscription_id != 0)
++    {
++      g_dbus_connection_signal_unsubscribe (request->connection, request->subscription_id);
++      request->subscription_id = 0;
++    }
 +}
 +
 +/* Whether this process is managed by the systemd user instance, which is the
@@ -241,6 +289,41 @@ index cfd76d9..5a46751 100644
 +}
 +
 +static void
++scope_job_removed_cb (GDBusConnection *connection,
++                      const gchar     *sender_name,
++                      const gchar     *object_path,
++                      const gchar     *interface_name,
++                      const gchar     *signal_name,
++                      GVariant        *parameters,
++                      gpointer         user_data)
++{
++  ScopeRequest *request = user_data;
++  const gchar *unit;
++  const gchar *result;
++  gchar *reason;
++
++  if (!g_variant_is_of_type (parameters, G_VARIANT_TYPE ("(uoss)")))
++    return;
++
++  g_variant_get (parameters, "(uo&s&s)", NULL, NULL, &unit, &result);
++  if (g_strcmp0 (unit, request->unit) != 0)
++    return;
++
++  /* systemd moves the process into the scope before the job to start it is
++   * done, so gio-launch-desktop finds it there. With any other result, the
++   * process is not moved. */
++  if (g_str_equal (result, "done"))
++    {
++      scope_request_end (request, NULL);
++      return;
++    }
++
++  reason = g_strdup_printf ("the job starting the scope ended with result %s", result);
++  scope_request_end (request, reason);
++  g_free (reason);
++}
++
++static void
 +start_scope_cb (GObject      *source,
 +                GAsyncResult *result,
 +                gpointer      user_data)
@@ -249,51 +332,42 @@ index cfd76d9..5a46751 100644
 +  GVariant *reply;
 +  GError *local_error = NULL;
 +  gchar *remote_error;
++  gchar *reason;
 +
 +  reply = g_dbus_connection_call_with_unix_fd_list_finish (G_DBUS_CONNECTION (source), NULL, result, &local_error);
 +  if (reply != NULL)
 +    {
++      /* systemd queued the job to start the scope, whose end follows as
++       * JobRemoved. */
 +      g_variant_unref (reply);
-+      scope_request_free (request);
++      scope_request_release (request);
 +      return;
 +    }
 +
-+  /* The scope exists already when another process asked for it first, and
-+   * systemd then still moves the application into it. In every other case,
-+   * gio-launch-desktop is told that it waits in vain, and why, which it logs. */
 +  remote_error = g_dbus_error_get_remote_error (local_error);
-+  if (g_strcmp0 (remote_error, "org.freedesktop.systemd1.UnitExists") != 0)
++  if (g_strcmp0 (remote_error, "org.freedesktop.systemd1.UnitExists") == 0)
 +    {
-+      gchar *reason;
-+      const gchar *pos;
-+      gsize left;
-+      ssize_t r;
-+
-+      g_debug ("Unable to create systemd scope %s: %s", request->unit, local_error->message);
-+
++      /* Another process asked for the scope first, and systemd moves the
++       * process into it for that request, whose job this process does not
++       * learn the end of. gio-launch-desktop waits for the process to be in
++       * the scope. */
++      scope_request_end (request, NULL);
++    }
++  else
++    {
 +      g_dbus_error_strip_remote_error (local_error);
 +      if (remote_error != NULL)
 +        reason = g_strdup_printf ("%s (%s)", local_error->message, remote_error);
 +      else
 +        reason = g_strdup_printf ("%s (%s error %d)", local_error->message,
 +                                  g_quark_to_string (local_error->domain), local_error->code);
-+
-+      for (pos = reason, left = strlen (reason); left > 0; pos += r, left -= (gsize) r)
-+        {
-+          do
-+            r = write (request->release_fd, pos, left);
-+          while (r < 0 && errno == EINTR);
-+
-+          if (r <= 0)
-+            break;
-+        }
-+
++      scope_request_end (request, reason);
 +      g_free (reason);
 +    }
 +
 +  g_free (remote_error);
 +  g_error_free (local_error);
-+  scope_request_free (request);
++  scope_request_release (request);
 +}
 +
 +/*
@@ -305,9 +379,11 @@ index cfd76d9..5a46751 100644
 + * @release_fd: (transfer full): write end of the pipe @pid waits on
 + *
 + * Asks systemd to create the scope @unit for @pid. The request has been sent
-+ * when this returns. Closing @release_fd once the reply arrives does not end
-+ * the wait of gio-launch-desktop, which ends when the process is in the scope,
-+ * only the reason for a refusal written to it does, when the request failed.
++ * when this returns. Once systemd refused it, or the job to start the scope
++ * ended with another result than done, the reason is written to @release_fd,
++ * which ends the wait of gio-launch-desktop. Otherwise @release_fd is closed
++ * without a reason, once the job is done or its end cannot be learnt, and
++ * gio-launch-desktop goes on waiting until the process is in the scope.
 + */
 +static void
 +start_scope (GDBusConnection *session_bus,
@@ -322,9 +398,24 @@ index cfd76d9..5a46751 100644
 +  GUnixFDList *fd_list = NULL;
 +  int pidfd = -1;
 +
-+  request = g_new0 (ScopeRequest, 1);
++  request = g_rc_box_new0 (ScopeRequest);
++  request->connection = g_object_ref (session_bus);
 +  request->release_fd = release_fd;
 +  request->unit = g_strdup (unit);
++
++  /* Subscribed before the request is sent, so that the job's end cannot be
++   * missed. systemd sends JobRemoved to the client which asked for the job
++   * without that client subscribing to systemd's signals. */
++  request->subscription_id = g_dbus_connection_signal_subscribe (session_bus,
++                                                                 "org.freedesktop.systemd1",
++                                                                 "org.freedesktop.systemd1.Manager",
++                                                                 "JobRemoved",
++                                                                 "/org/freedesktop/systemd1",
++                                                                 NULL,
++                                                                 G_DBUS_SIGNAL_FLAGS_NONE,
++                                                                 scope_job_removed_cb,
++                                                                 g_rc_box_acquire (request),
++                                                                 scope_request_release);
 +
 +  /* The name of an application created from a command line can be the file
 +   * name of its program, which need not be UTF-8. */
@@ -390,7 +481,7 @@ index cfd76d9..5a46751 100644
  #define _SPAWN_FLAGS_DEFAULT (G_SPAWN_SEARCH_PATH)
  
  static gboolean
-@@ -2952,6 +3280,7 @@ g_desktop_app_info_launch_uris_with_spawn (GDesktopAppInfo            *info,
+@@ -2952,6 +3373,7 @@ g_desktop_app_info_launch_uris_with_spawn (GDesktopAppInfo            *info,
    GList *old_uris;
    GList *dup_uris;
    GList *ruris = NULL;
@@ -398,7 +489,7 @@ index cfd76d9..5a46751 100644
  
    char **argv, **envp;
    int argc;
-@@ -2965,6 +3294,13 @@ g_desktop_app_info_launch_uris_with_spawn (GDesktopAppInfo            *info,
+@@ -2965,6 +3387,13 @@ g_desktop_app_info_launch_uris_with_spawn (GDesktopAppInfo            *info,
    else
      envp = g_get_environ ();
  
@@ -412,7 +503,7 @@ index cfd76d9..5a46751 100644
  #ifdef G_OS_UNIX
    if (uris && info->keyfile)
      {
-@@ -3002,6 +3338,8 @@ g_desktop_app_info_launch_uris_with_spawn (GDesktopAppInfo            *info,
+@@ -3002,6 +3431,8 @@ g_desktop_app_info_launch_uris_with_spawn (GDesktopAppInfo            *info,
        char *sn_id = NULL;
        char **wrapped_argv;
        size_t i;
@@ -421,7 +512,7 @@ index cfd76d9..5a46751 100644
  
        old_uris = dup_uris;
        if (!expand_application_parameters (info, exec_line, &dup_uris, &argc, &argv, error))
-@@ -3120,21 +3458,50 @@ g_desktop_app_info_launch_uris_with_spawn (GDesktopAppInfo            *info,
+@@ -3120,21 +3551,50 @@ g_desktop_app_info_launch_uris_with_spawn (GDesktopAppInfo            *info,
        g_free (argv);
        argv = NULL;
  
@@ -483,7 +574,7 @@ index cfd76d9..5a46751 100644
            g_free (sn_id);
            g_list_free (launched_uris);
            g_clear_pointer (&wrapped_argv, g_strfreev);
-@@ -3142,6 +3509,18 @@ g_desktop_app_info_launch_uris_with_spawn (GDesktopAppInfo            *info,
+@@ -3142,6 +3602,18 @@ g_desktop_app_info_launch_uris_with_spawn (GDesktopAppInfo            *info,
            goto out;
          }
  
@@ -502,7 +593,7 @@ index cfd76d9..5a46751 100644
        if (pid_callback != NULL)
          pid_callback (info, pid, pid_callback_data);
  
-@@ -3154,6 +3533,10 @@ g_desktop_app_info_launch_uris_with_spawn (GDesktopAppInfo            *info,
+@@ -3154,6 +3626,10 @@ g_desktop_app_info_launch_uris_with_spawn (GDesktopAppInfo            *info,
            g_variant_builder_add (&builder, "{sv}", "pid", g_variant_new_int32 (pid));
            if (sn_id)
              g_variant_builder_add (&builder, "{sv}", "startup-notification-id", g_variant_new_string (sn_id));
@@ -513,7 +604,7 @@ index cfd76d9..5a46751 100644
            platform_data = g_variant_ref_sink (g_variant_builder_end (&builder));
            g_signal_emit_by_name (launch_context, "launched", info, platform_data);
            g_variant_unref (platform_data);
-@@ -3167,6 +3550,7 @@ g_desktop_app_info_launch_uris_with_spawn (GDesktopAppInfo            *info,
+@@ -3167,6 +3643,7 @@ g_desktop_app_info_launch_uris_with_spawn (GDesktopAppInfo            *info,
                               launched_uris);
  
        g_free (sn_id);
@@ -521,7 +612,7 @@ index cfd76d9..5a46751 100644
        g_list_free (launched_uris);
  
        g_strfreev (wrapped_argv);
-@@ -3180,6 +3564,7 @@ g_desktop_app_info_launch_uris_with_spawn (GDesktopAppInfo            *info,
+@@ -3180,6 +3657,7 @@ g_desktop_app_info_launch_uris_with_spawn (GDesktopAppInfo            *info,
    g_strfreev (argv);
    g_strfreev (envp);
    g_list_free_full (ruris, g_free);
@@ -530,7 +621,7 @@ index cfd76d9..5a46751 100644
    return completed;
  }
 diff --git a/gio/gio-launch-desktop.c b/gio/gio-launch-desktop.c
-index 8b0d434..4f6c2d9 100644
+index 8b0d434..ac08968 100644
 --- a/gio/gio-launch-desktop.c
 +++ b/gio/gio-launch-desktop.c
 @@ -40,10 +40,14 @@
@@ -548,14 +639,19 @@ index 8b0d434..4f6c2d9 100644
  #include <sys/socket.h>
  #include <sys/un.h>
  
-@@ -241,6 +245,231 @@ set_up_journal (const char *argv1)
+@@ -241,6 +245,237 @@ set_up_journal (const char *argv1)
    close (fd);
  }
  
 +/* How long to wait for the scope at most, and how often to check whether this
-+ * process is in it already. Waiting ends as soon as it is, so the limit only
-+ * matters when the scope is never created. */
-+#define SCOPE_TIMEOUT_MS 5000
++ * process is in it already. Waiting ends as soon as it is, or as soon as the
++ * launching process learnt that it will not be, so the limit only matters when
++ * nothing can tell: when the launching process exited before systemd finished
++ * starting the scope, or never runs its main loop again. Running the
++ * application before systemd moved the process would leave every process the
++ * application started until then outside of the scope, so the limit is long,
++ * and is reached only when systemd did not process a request for a minute. */
++#define SCOPE_TIMEOUT_MS 60000
 +#define SCOPE_POLL_MS 1
 +
 +/*
@@ -674,10 +770,11 @@ index 8b0d434..4f6c2d9 100644
 + * the application is executed, makes the application and every process it
 + * starts belong to the scope from the beginning.
 + *
-+ * When systemd refused to create the scope, the launching process writes the
-+ * reason to the pipe, which ends the wait. The end of the pipe without a
-+ * reason means only that the launching process is done with the pipe, or has
-+ * exited after sending its request, so the wait continues.
++ * When systemd refused to create the scope, or the job to start it failed, the
++ * launching process writes the reason to the pipe, which ends the wait. The
++ * end of the pipe without a reason means only that the launching process is
++ * done with the pipe, as systemd is moving the process, or has exited after
++ * sending its request, so the wait continues.
 + *
 + * Either way the application runs. When it runs outside of its scope, which
 + * GLib asks for only where systemd is expected to create it, this is logged
@@ -761,7 +858,7 @@ index 8b0d434..4f6c2d9 100644
 +          /* systemd refuses to start any unit while it is stopping, at the end
 +           * of a session, which is expected then and no error. */
 +          log_message (strstr (reason, "(org.freedesktop.systemd1.TransactionIsDestructive)") != NULL ? LOG_NOTICE : LOG_ERR,
-+                       "systemd refused to create scope %s, running %s outside of it: %s",
++                       "systemd did not create scope %s, running %s outside of it: %s",
 +                       unit, application, reason);
 +          break;
 +        }
@@ -780,7 +877,7 @@ index 8b0d434..4f6c2d9 100644
  #endif
  
  int
-@@ -260,6 +489,7 @@ main (int argc, char *argv[])
+@@ -260,6 +495,7 @@ main (int argc, char *argv[])
    putenv (buf);
  
  #if defined(__linux__) && !defined(__ANDROID__)
@@ -789,7 +886,7 @@ index 8b0d434..4f6c2d9 100644
  #endif
  
 diff --git a/gio/tests/desktop-app-info.c b/gio/tests/desktop-app-info.c
-index e0f2fd2..21ee230 100644
+index e0f2fd2..0503d66 100644
 --- a/gio/tests/desktop-app-info.c
 +++ b/gio/tests/desktop-app-info.c
 @@ -27,11 +27,16 @@
@@ -931,7 +1028,7 @@ index e0f2fd2..21ee230 100644
 +
 +  len = read (error_fd, err, sizeof (err) - 1);
 +  g_assert_cmpint (len, >, 0);
-+  expected = g_strdup_printf ("gio-launch-desktop[%d]: systemd refused to create scope "
++  expected = g_strdup_printf ("gio-launch-desktop[%d]: systemd did not create scope "
 +                              "app-glib-test-never-created-%d.scope, running the "
 +                              "application outside of it: %s\n",
 +                              (int) pid, (int) pid, reason);

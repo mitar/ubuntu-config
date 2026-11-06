@@ -12,24 +12,27 @@ scope-before-exec.patch
 
     GLib sends the request right after it spawned gio-launch-desktop, before the launch call
     returns, and gio-launch-desktop, which executes the application, first waits until
-    /proc/self/cgroup names the scope. The wait does not depend on the launching process once the
-    request is sent, so it works for a process which exits right after launching too, such as
-    gio open. A pipe from the launching process tells gio-launch-desktop when systemd refused to
-    create the scope, and gio-launch-desktop waits 5 seconds at most, for when the scope is never
-    created and nothing could tell. GLib asks for no scope where systemd would refuse it for
-    certain: when systemd is not on the session bus, as on a test's dbus-run-session, which GLib
-    asks the bus before spawning, and when the name is longer than systemd accepts. The limit is
-    therefore reached only when systemd refuses a request it otherwise accepts and the launching
-    process exits before the refusal arrives, or when systemd is so busy that the scope does not
-    exist after 5 seconds. Starting an application waits about 25 ms longer for the scope, and the
-    launch call itself returns about 3 ms later, as it waits until the request is sent. A
-    launching process which never runs its main loop again keeps the write end of each pipe open,
-    as only the reply to the request closes it.
+    /proc/self/cgroup names the scope. Running the application before that would leave every process
+    it starts until systemd moves it outside of the scope, which is what the patch prevents, so
+    gio-launch-desktop waits as long as systemd is at it: the launching process follows the request
+    to its end, and writes the reason to a pipe to gio-launch-desktop when systemd refused it, or
+    when the job starting the scope ended with another result than done. When systemd is busy, an
+    application therefore starts late, but whole. Only when nothing can tell, as the launching
+    process exited before systemd finished, such as gio open, or never runs its main loop again,
+    does gio-launch-desktop give up, after 60 seconds, which systemd needs for a request only when
+    it is badly stuck.
 
-    An application which runs outside of its scope after all is logged at error priority, which
-    the daily journal digest reports: as "gio-launch-desktop: systemd refused to create scope ...",
-    with the reason the launching process passes on over the pipe, and as "gio-launch-desktop:
-    Scope ... did not exist after 5 seconds". Neither is expected. A refusal with
+    GLib asks for no scope where systemd would refuse it for certain: when systemd is not on the
+    session bus, as on a test's dbus-run-session, which GLib asks the bus before spawning, and when
+    the name is longer than systemd accepts. Starting an application waits about 25 ms longer for
+    the scope, and the launch call itself returns a few milliseconds later, as it waits until the
+    request is sent. A launching process which never runs its main loop again keeps the write end of
+    each pipe open.
+
+    An application which runs outside of its scope after all is logged at error priority, which the
+    daily journal digest reports: as "gio-launch-desktop: systemd did not create scope ...", with
+    the reason the launching process passes on over the pipe, and as "gio-launch-desktop: Scope ...
+    did not exist after 60 seconds". Neither is expected. A refusal with
     org.freedesktop.systemd1.TransactionIsDestructive, which systemd answers while it stops at the
     end of a session, is logged at notice priority. A journal stream gives every line the same
     priority, info for an application GNOME Shell launches, so when standard error is the journal,

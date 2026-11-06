@@ -89,9 +89,11 @@ run no-systemd "${AS_USER[@]}" "${IN_SERVICE[@]}" dbus-run-session -- "${TEST[@]
 run no-systemd-exit "${AS_USER[@]}" "${IN_SERVICE[@]}" dbus-run-session -- "${TEST[@]}" no-systemd-exit "$OUT"
 run check-no-systemd-exit "${AS_USER[@]}" "${TEST[@]}" check-no-systemd-exit "$OUT"
 FAKE=(python3 -I "$HERE/fake_systemd.py")
-run refused "${AS_USER[@]}" "${IN_SERVICE[@]}" dbus-run-session -- "${FAKE[@]}" "${TEST[@]}" refused "$OUT"
-run refused-exit "${AS_USER[@]}" "${IN_SERVICE[@]}" dbus-run-session -- "${FAKE[@]}" "${TEST[@]}" refused-exit "$OUT"
+run refused "${AS_USER[@]}" "${IN_SERVICE[@]}" dbus-run-session -- "${FAKE[@]}" refuse "${TEST[@]}" refused "$OUT"
+run refused-exit "${AS_USER[@]}" "${IN_SERVICE[@]}" dbus-run-session -- "${FAKE[@]}" refuse "${TEST[@]}" refused-exit "$OUT"
 run check-refused-exit "${AS_USER[@]}" "${TEST[@]}" check-refused-exit "$OUT"
+run job-failed "${AS_USER[@]}" "${IN_SERVICE[@]}" dbus-run-session -- "${FAKE[@]}" fail "${TEST[@]}" job-failed "$OUT"
+run slow "${AS_USER[@]}" "${IN_SERVICE[@]}" dbus-run-session -- "${FAKE[@]}" slow "${TEST[@]}" slow "$OUT"
 # A launching process with a PID namespace of its own, which still uses the session bus and the cgroups of the user
 # instance, as in a sandbox like Firejail's. It is put into a cgroup of the user instance first, as a process the user
 # instance started would be.

@@ -15,6 +15,8 @@
 #   refused           run on a session bus where fake_systemd.py refuses to create the scope
 #   refused-exit      the same, and the launching process exits right after launching, so that nothing tells
 #                     gio-launch-desktop about the refusal and it waits until its time limit
+#   job-failed        run on a session bus where fake_systemd.py accepts the request and then fails its job
+#   slow              run on a session bus where fake_systemd.py moves the process into the scope only after SLOW_S
 #   outside           run outside of the systemd user instance, where no scope is asked for
 #
 # The scenarios in which the launching process exits are checked by a second run, with SCENARIO prefixed by check-.
@@ -30,14 +32,17 @@ import socket
 import sys
 import time
 
-SCENARIOS = ("loop", "pid-namespace", "exit", "late-request", "no-systemd", "no-systemd-exit", "refused", "refused-exit", "outside")
+SCENARIOS = ("loop", "pid-namespace", "exit", "late-request", "no-systemd", "no-systemd-exit", "refused", "refused-exit",
+             "job-failed", "slow", "outside")
 EXITING = ("exit", "no-systemd-exit", "refused-exit")
 APP_ID = "glib-scope-test"
 # The application ID escaped as systemd and gnome-desktop escape it for a unit name.
 ESCAPED_APP_ID = "glib\\x2dscope\\x2dtest"
 # How long gio-launch-desktop waits for a scope at most. The application has to start well before that whenever
 # gio-launch-desktop is not supposed to wait for it.
-SCOPE_TIMEOUT_S = 5
+SCOPE_TIMEOUT_S = 60
+# How long fake_systemd.py takes for a slow request.
+SLOW_S = 7
 WAIT_S = 20
 JOURNAL_STREAM = "/run/systemd/journal/stdout"
 # syslog's priority of a message at error level, LOG_ERR, from a user process, LOG_USER.
@@ -75,9 +80,9 @@ def cgroup_of(pid):
     return next((line[3:] for line in lines if line.startswith("0::")), None)
 
 
-def wait_for_app():
+def wait_for_app(wait_s):
     path = out_dir / "app-pids"
-    deadline = time.monotonic() + WAIT_S
+    deadline = time.monotonic() + wait_s
     while not path.exists():
         if time.monotonic() > deadline:
             return None
@@ -131,9 +136,10 @@ def check_logged(checks, pid, expected):
         checks.check("logged at error priority", logged, f"{json.dumps(lines)}, expected {expected!r} at {SYSLOG_ERR}")
 
 
-def check_app(checks, launched, own_cgroup, expect_scope, waited=False, logged=None):
-    app = wait_for_app()
-    checks.check("application started", app is not None, f"within {WAIT_S} s")
+def check_app(checks, launched, own_cgroup, expect_scope, waited=False, logged=None, slow=False):
+    wait_s = SCOPE_TIMEOUT_S + WAIT_S if waited else WAIT_S
+    app = wait_for_app(wait_s)
+    checks.check("application started", app is not None, f"within {wait_s} s")
     if app is None:
         return {}
     pids, started = app
@@ -146,12 +152,14 @@ def check_app(checks, launched, own_cgroup, expect_scope, waited=False, logged=N
         checks.check("scope named in the launched signal", unit == expected, f"{unit!r}, expected {expected!r}")
         in_scope = all(cg is not None and cg.endswith("/" + expected) for cg in cgroups.values())
         checks.check("every process in the scope", in_scope, json.dumps(cgroups))
+        if slow:
+            checks.check("started once the slow request was done", delay > SLOW_S - 0.5, f"{delay * 1000:.0f} ms after launching")
         checks.check("started without the time limit", delay < SCOPE_TIMEOUT_S - 1, f"{delay * 1000:.0f} ms after launching")
     else:
         stayed = all(cg == own_cgroup for cg in cgroups.values())
         checks.check("every process in the launching process's cgroup", stayed, f"{json.dumps(cgroups)}, launcher in {own_cgroup}")
         if waited:
-            in_time = SCOPE_TIMEOUT_S - 0.5 < delay < SCOPE_TIMEOUT_S + 5
+            in_time = SCOPE_TIMEOUT_S - 0.5 < delay < SCOPE_TIMEOUT_S + 10
             checks.check("started at the time limit", in_time, f"{delay * 1000:.0f} ms after launching")
         else:
             checks.check("started without the time limit", delay < SCOPE_TIMEOUT_S - 1, f"{delay * 1000:.0f} ms after launching")
@@ -264,9 +272,13 @@ def main():
     elif scenario == "refused":
         unit = launched["platform_data"].get("systemd-unit")
         checks.check("scope asked for", unit is not None, json.dumps(launched["platform_data"]))
-        extra = check_app(checks, launched, own_cgroup, False, logged=f"systemd refused to create scope {unit}")
+        extra = check_app(checks, launched, own_cgroup, False, logged=f"systemd did not create scope {unit}")
+    elif scenario == "job-failed":
+        unit = launched["platform_data"].get("systemd-unit")
+        checks.check("scope asked for", unit is not None, json.dumps(launched["platform_data"]))
+        extra = check_app(checks, launched, own_cgroup, False, logged="the job starting the scope ended with result failed")
     else:
-        extra = check_app(checks, launched, own_cgroup, True)
+        extra = check_app(checks, launched, own_cgroup, True, slow=scenario == "slow")
         if scenario == "late-request":
             error = late_reply.get("error", "no reply")
             checks.check("late request refused", error == "org.freedesktop.systemd1.UnitExists", repr(error))

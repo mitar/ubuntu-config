@@ -21,8 +21,13 @@ Scope before exec: run-scope-test.sh, scope_test.py, fake_systemd.py and fake_jo
                         every scope: the scope is asked for, refused, and the application starts at once, in the
                         launching process's cgroup, and gio-launch-desktop logs the refusal at error priority
       refused-exit      the same, but the launching process exits right after launching, so that nothing tells
-                        gio-launch-desktop about the refusal: the application starts after the 5 seconds
+                        gio-launch-desktop about the refusal: the application starts after the 60 seconds
                         gio-launch-desktop waits at most, and it logs at error priority that the scope did not exist
+      job-failed        the same as refused, but fake_systemd.py accepts the request and then fails its job: the
+                        application starts at once, and gio-launch-desktop logs the job's result at error priority
+      slow              the same as refused, but fake_systemd.py moves the process into a cgroup named after the scope
+                        only after 7 seconds, as a busy systemd would: the application waits for it, and every
+                        process is in the scope
       outside           launched outside of the user instance: no scope is asked for, and the application starts at
                         once
 
