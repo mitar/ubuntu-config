@@ -50,8 +50,9 @@ XK_CONTROL_L = 0xffe3
 XK_ALT_L = 0xffe9
 
 # The size of the text slow-draft-save reads from standard input. Text Editor writes a draft at a few megabytes a
-# second, so writing this one lasts several seconds.
-SLOW_DRAFT_MEGABYTES = 24
+# second, and at more than ten on a fast machine, so writing this one lasts several seconds. Text Editor then uses
+# about 600 MB of memory.
+SLOW_DRAFT_MEGABYTES = 96
 
 failures = []
 

@@ -59,15 +59,16 @@ Text Editor auto-save: run-text-editor-autosave.sh and text_editor_autosave.py
     file is autosaved. A save sooner than the new delay after the change is the one scheduled before, which means
     Text Editor did not notice the change, and fails the check that the save followed the new delay.
 
-    slow-draft-save sets auto-save-delay to 1 second and passes 24 MB of text to Text Editor on standard input, with
+    slow-draft-save sets auto-save-delay to 1 second and passes 96 MB of text to Text Editor on standard input, with
     gnome-text-editor -, which opens it as an unsaved draft. Text Editor writes a draft at a few megabytes a second,
-    so the save which writes it lasts several seconds. A save captures the session state when it is requested and
-    writes it after its drafts, and writing a draft for the first time adds it to the session's list of drafts and
-    requests another save, so only the state of that later save lists the draft. When saves run at the same time, the
-    later one has no draft to write and writes its state first, and the first one then writes its older state over
-    it, so the session saved last does not list the draft. The scenario checks that the draft was still being
-    written when the later save was requested, and fails when the machine writes the draft faster than that, since
-    then it tests nothing. It ends Text Editor with SIGTERM, since quitting asks what to do with the unsaved draft.
+    and at more than ten on a fast machine, so the save which writes it lasts several seconds. A save captures the
+    session state when it is requested and writes it after its drafts, and writing a draft for the first time adds it
+    to the session's list of drafts and requests another save, so only the state of that later save lists the draft.
+    When saves run at the same time, the later one has no draft to write and writes its state first, and the first
+    one then writes its older state over it, so the session saved last does not list the draft. The scenario checks
+    that the draft was still being written when the later save was requested, and fails when the machine writes the
+    draft faster than that, since then it tests nothing. It ends Text Editor with SIGTERM, since quitting asks what to
+    do with the unsaved draft.
 
     cursor-moved opens a file of three lines, waits for the session saved with the cursor at its start, and presses
     Down twice through mutter's remote desktop API (org.gnome.Mutter.RemoteDesktop on the private bus), which sends
