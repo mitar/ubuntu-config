@@ -186,6 +186,62 @@ test_glib_scope:
       - out/
     expire_in: never
 
+# Each test runs in a GNOME session of its own, with a systemd user instance, journald and a system bus, for which it
+# creates cgroups and mounts over the GPU's devices, which needs a privileged container, as on GitLab's hosted runners.
+# The session has the packages patched here, Chromium from the xtradeb repository, and Ubuntu's other packages. It
+# needs nothing from mutter's extraction, so it does not extend .test.
+test_session:
+  stage: test
+
+  image: registry.gitlab.com/tozd/docker/base:ubuntu-resolute
+
+  needs:
+    - job: build
+      parallel:
+        matrix:
+          - PACKAGE:
+              - glib2.0
+              - gnome-session
+              - gnome-settings-daemon
+              - gnome-shell
+              - gnome-text-editor
+              - gtksourceview5
+              - ptyxis
+              - vte2.91
+    - job: build_large
+      parallel:
+        matrix:
+          - PACKAGE:
+              - firefox
+              - gtk+3.0
+              - gtk4
+              - mutter
+
+  parallel:
+    matrix:
+      - TEST:
+          - spawn-scopes
+          - text-editor
+          - ptyxis
+          - firefox
+          - chromium
+          - chromium-quit
+          - shutdown
+          - lock-screen
+
+  script:
+    - apt-get update -q
+    - apt-get install -y -q --no-install-recommends ca-certificates
+    - cp sources.list.d/xtradeb-ubuntu-apps-resolute.sources /etc/apt/sources.list.d/
+    - tests/session/prepare-container.sh build/*/
+    - tests/session/run-session-tests.sh out/session "$TEST"
+
+  artifacts:
+    when: always
+    paths:
+      - out/
+    expire_in: never
+
 # Chromium runs with its sandbox, which needs the namespaces a privileged container allows, as on GitLab's hosted
 # runners. chromium-sandbox is its setuid helper, for when unprivileged user namespaces are not allowed.
 test_mutter_chromium:

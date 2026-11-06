@@ -1,0 +1,97 @@
+These tests require a whole GNOME session. They run in a container, by hand and in GitLab CI, see .gitlab-ci.yml.
+
+The tests run the real session, as Ubuntu ships it, with the packages patched here. In place of GDM, they start
+gnome-session --session=ubuntu, which has the user's service manager start gnome-session's services and GNOME Shell,
+headless with one virtual monitor of 1920x1080, with the Ubuntu Dock and Ubuntu's other extensions. The tests log in
+and out of it, as many times as they need, and drive it through GNOME Shell: session_tests.py calls the methods of the
+extension session-test@mitar.tnode.com over GNOME Shell's Eval D-Bus method, which the extension allows by turning on
+GNOME Shell's unsafe mode, only ever in the test session. The extension clicks icons in the Ubuntu Dock, as the mouse
+does, runs commands as the Alt+F2 dialog does, types on a virtual keyboard, moves windows and switches workspaces, and
+reports the windows with their workspaces, positions, sizes and focus, the open dialogs and the clipboard.
+
+The session has the settings which configure-gnome-desktop.sh sets with set_key, as far as their schemas are
+installed: 12 static workspaces, and the Ubuntu Dock opening a new window of an application when clicked on a
+workspace without one. prepare-container.sh installs this repository's session units, scripts and Chromium
+configuration where configure-gnome-desktop.sh installs them. Each test runs as a new user with a service manager of
+its own, so everything else, such as Firefox's profile, starts empty.
+
+The container is to look like a machine booted with systemd as far as the session needs it: a cgroup delegated to
+each user's service manager, journald, which keeps the session's log, and a system bus. There is neither logind
+nor GDM, so gnome-session and GNOME Shell track the session themselves, as they do without logind, and GNOME Shell
+does not create its lock screen, which the test extension then creates from GNOME Shell's own code. fake_logind.py
+owns logind's name on the system bus, hands out inhibitors and announces a shutdown when a test asks it to, through an
+interface logind does not have.
+
+The tests:
+
+  spawn-scopes    An application started at login by gnome-session, one started from the dash and a command run with
+                  Alt+F2 are each in a scope of their own, together with the processes they start the moment they run,
+                  none in GNOME Shell's unit, and logging out ends them all (patches/glib2.0/,
+                  patches/gnome-shell/spawn-commands-in-scope.patch).
+  text-editor     Text Editor started from the dock, a file opened from a terminal and a launch from the dock on a
+                  workspace without its window each open a new window on the current workspace, focused. Logging out
+                  lists Text Editor in GNOME Shell's dialog, as having unsaved work. After logging in again, the
+                  windows return to their workspaces without being focused and without switching the workspace, the
+                  launch opens a new window where the user is, and the document never saved has the text typed into it.
+  ptyxis          The same for Ptyxis, whose windows return also to their positions and sizes, each with the screen it
+                  showed and a new shell in the directory of the old one, with Ubuntu's .bashrc. Logging out while a
+                  program runs in it lists it, as Terminal, in GNOME Shell's dialog.
+  firefox         The same for Firefox, with links opened from a terminal with xdg-open, each opening in a new window
+                  on the current workspace, and each window returning with its page. A Firefox built without
+                  session-restore-launch-window.patch, wayland-launch-activation-token.patch and
+                  wayland-session-restore-uuid-ids.patch fails three checks: the window opened for the launch after
+                  logging in replaces the first restored one, and a link opened later lands on the workspace
+                  of a restored window.
+  chromium        Chromium's helpers are in the scope its launch put it into, while the browser process moves into a
+                  scope of its own. Logging out ends it without a crash and with the exit type SessionEnded, and its
+                  windows return to their workspaces, positions and sizes.
+  chromium-quit   Ctrl+Q quits Chromium through this repository's extension and native messaging host as a logout does,
+                  and the next start restores its windows to their workspaces.
+  shutdown        stop-application-scopes-before-shutdown.service holds a delay inhibitor, and when logind announces
+                  a shutdown, Chromium's browser process exits before the inhibitor is released, without a crash.
+  lock-screen     Without reserve-space@mitar.tnode.com, locking the screen resizes a maximized window, as GNOME Shell
+                  disables the dock. With the extension enabled at login, as configure-gnome-desktop.sh enables it, the
+                  window keeps its size through locking and unlocking. The locked screen offers no screenshots
+                  (patches/gnome-shell/no-screenshots-while-locked.patch).
+
+After every test, the script checks that no unit of the user's service manager failed, as at-spi-dbus-bus.service
+does at a logout without systemd/user/at-spi-dbus-bus.service.d/.
+
+For the tests, prepare-container.sh also configures the browsers differently from a fresh profile: Firefox restores
+the last session at startup and opens links from other applications in a new window, as the user's profile does, and
+saves its session every second, through /etc/firefox/policies/policies.json. Chromium starts without the questions of a
+first start, and continues where it left off, which is not its default, through /etc/chromium.d/session-test and a
+policy. The tests serve their pages from a web server on localhost, and set Firefox as the default browser.
+
+prepare-container.sh installs the session and the patched packages, so it needs the .deb files built here, and
+Chromium from the xtradeb repository in sources.list.d/. run-session-tests.sh then runs the tests. Both run as root in
+a privileged container, and refuse to run anywhere else. With rootless Docker, from the root of the repository, and
+the packages of the local repository:
+
+  docker run --rm --privileged -v "$PWD:/repo:ro" -v /usr/local/lib/debs:/debs:ro -v /tmp/session-test:/out \
+    registry.gitlab.com/tozd/docker/base:ubuntu-resolute bash -c '
+      apt-get update -q && apt-get install -y -q ca-certificates &&
+      cp /repo/sources.list.d/xtradeb-ubuntu-apps-resolute.sources /etc/apt/sources.list.d/ &&
+      /repo/tests/session/prepare-container.sh /debs &&
+      /repo/tests/session/run-session-tests.sh /out/run spawn-scopes text-editor ptyxis firefox chromium \
+        chromium-quit shutdown lock-screen'
+
+A later DEBS_DIR replaces packages of the same name of an earlier one, so a build to test can follow the local
+repository. prepare-container.sh can run again on a prepared container, for example without DEBS_DIR to install a
+changed file of this repository. It then keeps every installed package as it is, as apt-get would otherwise replace
+a package built here with Ubuntu's package of the same version. The tests need a container prepared only once, so a
+container saved after prepare-container.sh can run them again and again.
+
+The driver runs outside of the user's service manager, as a login session does. From there, systemd-run --scope
+cannot move a process into a scope, because the user's service manager has no permission to move it. A test
+therefore runs a command which a terminal would run in a service of the user's service manager instead, with
+KillMode=process, so that the processes the command starts keep running when it exits, as in a terminal.
+
+Each check prints a line starting with PASS or FAIL, and the script exits with 0 only when all passed. OUT_DIR
+receives a directory for each test, with result.json, the journal written meanwhile, the output of gnome-session's
+leader at each login, and the settings of configure-gnome-desktop.sh which could not be set, and logind.json, with
+the inhibitors fake_logind.py handed out and the shutdowns it announced. A test given more than once reports each
+further run in a directory whose name ends with the run's number.
+
+The container differs from a desktop: the session renders in software without a GPU, input comes from a virtual
+keyboard and not from a person, and a lock screen without GDM unlocks without asking for the password.

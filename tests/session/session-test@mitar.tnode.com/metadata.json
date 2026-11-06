@@ -1,0 +1,13 @@
+{
+  "uuid": "session-test@mitar.tnode.com",
+  "name": "Session Test",
+  "description": "Lets the session tests of this repository query and drive GNOME Shell over its Eval D-Bus method. Only for the test session in a container, never for a real one, as it turns on GNOME Shell's unsafe mode, which lets any program of the user run code inside GNOME Shell.",
+  "shell-version": [
+    "50"
+  ],
+  "session-modes": [
+    "user",
+    "unlock-dialog"
+  ],
+  "url": "https://gitlab.com/ubuntu-config/ubuntu-config"
+}

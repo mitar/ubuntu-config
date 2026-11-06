@@ -28,6 +28,11 @@ APT repository. That repository is pinned above the Ubuntu archive, so unattende
 copies of the script and patches, installed with `install-rebuild-patched-packages.sh`. GitLab CI builds the patched
 packages too and runs the tests in `patches/*/tests` against them (`.gitlab-ci.yml`).
 
+Tests which require a whole desktop, such as windows returning to their workspaces after logging out and in, or the
+logout dialog, run in a GNOME session in a container (`tests/session/`): the real gnome-session and GNOME Shell,
+headless, with the patched packages, the settings of `configure-gnome-desktop.sh` and this repository's session units,
+driven through a test extension. GitLab CI runs these tests too.
+
 Packages whose vendors publish a `.deb` but no APT repository are published to the same local repository:
 `fetch-vendor-debs.py` downloads the newest version of each daily and verifies it, and unattended-upgrades or the next
 `apt upgrade` upgrades it where it is installed.
@@ -274,7 +279,11 @@ maximized would grow while the screen is locked and shrink back a moment after u
 contents with the window, which garbles the screen of programs like Claude Code running in it. The Reserve Space
 extension stays enabled on the lock screen and keeps an invisible copy of every part of the screen reserved by the
 dock, the top bar or another panel, so the space left for windows does not change. The copies follow the reserved
-space a few seconds after it changes, for example when the dock is moved to another side of the screen.
+space a few seconds after it changes, for example when the dock is moved to another side of the screen. The extension
+does so only from the next login after it is enabled. At login, GNOME Shell enables the extensions which stay enabled
+on the lock screen before the others, so the extension comes before the dock. One enabled later comes after the dock,
+and when the screen locks, GNOME Shell disables it together with the dock and enables it again without the dock, so it
+then finds no reserved space to copy.
 
 ### No screenshots on the lock screen
 
