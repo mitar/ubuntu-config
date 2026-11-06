@@ -476,11 +476,14 @@ at once, with exit status 1, and Claude Desktop was cut off in the middle of its
 to stop only after the service which lets the browser processes exit, too, so that the Shell is still there while
 they quit (`systemd/user/org.gnome.Shell@.service.d/`).
 
-The cause is reported to Chromium as [issue 580525223](https://issues.chromium.org/issues/580525223), and the
-drop-ins and the services can go once that is fixed. Separately, Chromium and Electron do not learn about a logout
-from the portal through which GNOME announces it, which would let them exit before anything is stopped:
-[Chromium issue 580443832](https://issues.chromium.org/issues/580443832) and
-[Electron issue 55551](https://github.com/electron/electron/issues/55551).
+The cause is [Chromium issue 580525223](https://issues.chromium.org/issues/580525223), fixed for Chromium 159,
+which moves all its processes into its own scope. Chromium 159 also learns about a logout from the portal through
+which GNOME announces it, and exits before anything is stopped
+([Chromium issue 580443832](https://issues.chromium.org/issues/580443832)). Electron does not
+([Electron issue 55551](https://github.com/electron/electron/issues/55551)). Whether the drop-ins and the services
+can go is to be tested once Chromium and the Electron applications in use are based on Chromium 159 or later:
+stopping all processes of an application at once, which is what stopping its single scope does, still crashed
+Signal once.
 
 ### Claude Desktop and Slack show their tray icon after every login
 
