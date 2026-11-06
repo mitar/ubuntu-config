@@ -1,0 +1,175 @@
+Description: Start commands run from the Shell in their systemd scope.
+ A command run with Alt+F2, or by Util.spawn() and the other spawn helpers of js/misc/util.js, was spawned with
+ Shell.util_spawn_async() and moved into a scope of its own, app-gnome-<program>-<pid>.scope, only once it ran, with
+ gnome_start_systemd_scope(). systemd moves only the process it is given, so every process the command started in the
+ meantime stayed in GNOME Shell's cgroup, and was stopped with GNOME Shell. The command is now launched like an
+ application, through GDesktopAppInfo, which with the GLib of patches/glib2.0 puts it into its scope before it runs,
+ and names the scope in the "launched" signal, for which leave-scope-to-glib.patch leaves it to GLib.
+ .
+ shell_util_spawn_command_async() builds the GAppInfo from the command line, quoting arguments where needed and
+ escaping %, which starts a field code in the Exec key. The rlimit nofile is reset in the child as before, and the
+ child stays a child of the Shell, which reaps it, as polkit relies on.
+Author: Mitar
+Forwarded: no
+Last-Update: 2026-11-06
+
+diff --git a/js/misc/util.js b/js/misc/util.js
+index 8fb35d0..458222a 100644
+--- a/js/misc/util.js
++++ b/js/misc/util.js
+@@ -3,7 +3,6 @@ import GLib from 'gi://GLib';
+ import Pango from 'gi://Pango';
+ import Shell from 'gi://Shell';
+ import St from 'gi://St';
+-import GnomeDesktop from 'gi://GnomeDesktop';
+ 
+ import {formatTime} from './dateUtils.js';
+ 
+@@ -117,7 +116,6 @@ export function spawnApp(argv) {
+  * this will throw an error.
+  */
+ export function trySpawn(argv) {
+-    let pid;
+     let path = argv[0];
+ 
+     if (!path?.includes('/')) {
+@@ -133,10 +131,11 @@ export function trySpawn(argv) {
+     }
+ 
+     try {
++        // Launched like an application, so that GLib puts the command into a
++        // systemd scope of its own before it runs, and it stays a child of
++        // the Shell, which reaps it.
+         const launchContext = global.create_app_launch_context(0, -1);
+-        pid = Shell.util_spawn_async(
+-            null, argv, launchContext.get_environment(),
+-            GLib.SpawnFlags.SEARCH_PATH | GLib.SpawnFlags.DO_NOT_REAP_CHILD);
++        Shell.util_spawn_command_async(argv, launchContext);
+     } catch (err) {
+         /* Rewrite the error in case of ENOENT */
+         if (err.matches(GLib.SpawnError, GLib.SpawnError.NOENT)) {
+@@ -156,16 +155,6 @@ export function trySpawn(argv) {
+             throw err;
+         }
+     }
+-
+-    if (!path?.includes('/snap/bin') && !argv?.join(' ').includes('snap run')) {
+-        // Async call, we don't need the reply though
+-        GnomeDesktop.start_systemd_scope(argv[0], pid, null, null, null, () => {});
+-    }
+-
+-    // Dummy child watch; we don't want to double-fork internally
+-    // because then we lose the parent-child relationship, which
+-    // can break polkit.  See https://bugzilla.redhat.com//show_bug.cgi?id=819275
+-    GLib.child_watch_add(GLib.PRIORITY_DEFAULT, pid, () => {});
+ }
+ 
+ /**
+diff --git a/src/shell-util.c b/src/shell-util.c
+index 17af147..8ba9106 100644
+--- a/src/shell-util.c
++++ b/src/shell-util.c
+@@ -1018,3 +1018,90 @@ shell_util_spawn_async (const char          *working_directory,
+   return shell_util_spawn_async_with_pipes (working_directory, argv, envp,
+                                             flags, NULL, NULL, NULL, error);
+ }
++
++/* An argument is left unquoted when it needs no quoting, so that the program,
++ * the first argument, is also the executable of the GAppInfo, which names its
++ * scope. */
++static void
++append_shell_word (GString    *command_line,
++                   const char *word)
++{
++  g_autofree char *quoted = NULL;
++  const char *c;
++
++  for (c = word; *c != '\0'; c++)
++    {
++      if (!g_ascii_isalnum (*c) && strchr ("/._-+=:,@", *c) == NULL)
++        break;
++    }
++
++  if (*word != '\0' && *c == '\0')
++    {
++      g_string_append (command_line, word);
++      return;
++    }
++
++  quoted = g_shell_quote (word);
++  g_string_append (command_line, quoted);
++}
++
++static void
++reap_child (GDesktopAppInfo *appinfo,
++            GPid             pid,
++            gpointer         user_data)
++{
++  g_child_watch_add (pid, (GChildWatchFunc) g_spawn_close_pid, NULL);
++}
++
++/**
++ * shell_util_spawn_command_async:
++ * @argv: (array zero-terminated=1): the program to run, and its arguments
++ * @context: (nullable): the launch context, from
++ *     shell_global_create_app_launch_context()
++ * @error: return location for error
++ *
++ * Runs @argv the way an application is launched, through #GDesktopAppInfo,
++ * so that GLib puts it into a systemd scope of its own before it runs, and
++ * every process it starts is in that scope too. Like
++ * shell_util_spawn_async(), it resets the rlimit nofile in the child. The
++ * child stays a child of this process, and is reaped once it exits.
++ *
++ * Returns: %TRUE when the program was started, %FALSE if error is set
++ **/
++gboolean
++shell_util_spawn_command_async (const char * const  *argv,
++                                GAppLaunchContext   *context,
++                                GError             **error)
++{
++  ShellGlobal *shell_global = shell_global_get ();
++  g_autoptr (GString) command_line = g_string_new (NULL);
++  g_autoptr (GAppInfo) info = NULL;
++  size_t i;
++
++  g_return_val_if_fail (argv != NULL && argv[0] != NULL, FALSE);
++
++  for (i = 0; argv[i] != NULL; i++)
++    {
++      if (i > 0)
++        g_string_append_c (command_line, ' ');
++      append_shell_word (command_line, argv[i]);
++    }
++
++  /* The command line becomes the Exec key, in which % starts a field code. */
++  g_string_replace (command_line, "%", "%%", 0);
++
++  info = g_app_info_create_from_commandline (command_line->str, NULL,
++                                             G_APP_INFO_CREATE_NONE, error);
++  if (info == NULL)
++    return FALSE;
++
++  /* The child is not left to GLib, which would spawn it through an
++   * intermediate child, so that it stays a child of this process: polkit
++   * relies on that, see https://bugzilla.redhat.com/show_bug.cgi?id=819275 */
++  return g_desktop_app_info_launch_uris_as_manager (G_DESKTOP_APP_INFO (info), NULL, context,
++                                                    G_SPAWN_SEARCH_PATH | G_SPAWN_DO_NOT_REAP_CHILD,
++                                                    spawn_child_setup,
++                                                    shell_global_get_context (shell_global),
++                                                    reap_child, NULL,
++                                                    error);
++}
+diff --git a/src/shell-util.h b/src/shell-util.h
+index 81dd6da..60467c9 100644
+--- a/src/shell-util.h
++++ b/src/shell-util.h
+@@ -118,4 +118,8 @@ GPid shell_util_spawn_async (const char          *working_directory,
+                              GSpawnFlags          flags,
+                              GError             **error);
+ 
++gboolean shell_util_spawn_command_async (const char * const  *argv,
++                                         GAppLaunchContext   *context,
++                                         GError             **error);
++
+ G_END_DECLS

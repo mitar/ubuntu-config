@@ -44,9 +44,12 @@ scope-before-exec.patch
     pass one. gio-launch-desktop counts a cgroup below the scope's as in the scope, as Fedora's
     uresourced moves each process of an application into one.
 
-    Processes started without GDesktopAppInfo are not covered. GNOME Shell spawns a command run
-    with Alt+F2 itself, in trySpawn in js/misc/util.js, and asks for its scope afterwards, and
-    gnome-settings-daemon does the same for the fallback Orca.
+    Processes started without GDesktopAppInfo are not covered by this patch. GNOME Shell's commands,
+    run with Alt+F2 or by its spawn helpers, and gnome-settings-daemon's fallback Orca are therefore
+    launched through GDesktopAppInfo as well, by patches/gnome-shell/spawn-commands-in-scope.patch
+    and patches/gnome-settings-daemon/orca-fallback-in-scope.patch. Helpers which GNOME Shell spawns
+    with pipes to talk to, like the authentication dialogs of VPN plugins, are not applications, and
+    stay where they are.
 
     The scope is requested only by a process managed by the systemd user instance, and not in a
     Flatpak or a snap. The name is the one gnome-desktop's gnome_start_systemd_scope() gives the

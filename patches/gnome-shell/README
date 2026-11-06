@@ -36,3 +36,24 @@ leave-scope-to-glib.patch
 
     The request is made in shell_global_app_launched_cb in src/shell-global.c. The patch adds no
     test.
+
+spawn-commands-in-scope.patch
+    Starts a command run with Alt+F2, or by Util.spawn() and the other spawn helpers of
+    js/misc/util.js, in its systemd scope, as the GLib of patches/glib2.0/ starts applications.
+    trySpawn spawned the command with Shell.util_spawn_async() and asked for its scope only once it
+    ran, so every process the command started in the meantime stayed in GNOME Shell's cgroup and was
+    stopped with it. The command is now launched like an application, by the new
+    shell_util_spawn_command_async() in src/shell-util.c, through a GAppInfo built from its command
+    line, with arguments quoted where needed and % escaped, as it starts a field code in the Exec
+    key. The rlimit nofile is reset in the child as before, and the child stays a child of the
+    Shell, which reaps it, as polkit relies on. Ubuntu's check for snaps moved with the scope
+    request into shell_global_app_launched_cb, which handles the request now when GLib did not
+    create a scope. Drop the patch together with patches/glib2.0/scope-before-exec.patch.
+
+    The patch adds no test to GNOME Shell's, which do not run commands, but patches/glib2.0/tests/
+    launches a command line the way shell_util_spawn_command_async() does, in its scenario
+    command-line.
+
+    Check by hand after a rebuild and a new login: run sh -c 'sleep 600 & exec sleep 601' with
+    Alt+F2, and both sleeps should be in app-gnome-sh-<pid>.scope, while systemd-cgls --user-unit
+    org.gnome.Shell@ubuntu.service should list no sleep.

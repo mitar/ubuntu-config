@@ -36,3 +36,16 @@ leave-scope-to-glib.patch
 
     The request is made in app_launched_cb in plugins/media-keys/gsd-media-keys-manager.c. The patch
     adds no test.
+
+orca-fallback-in-scope.patch
+    Starts the fallback Orca, which the accessibility plugin starts itself when the screen reader is
+    turned on and Orca's systemd unit fails, in its systemd scope, as the GLib of patches/glib2.0/
+    starts applications. The plugin spawned it with g_spawn_async() and asked for its scope only
+    once it ran. Orca is now launched like an application, through a GDesktopAppInfo built from a
+    key file, with the home directory as working directory as before, and the plugin keeps its
+    process ID to stop it later. Drop the patch together with
+    patches/glib2.0/scope-before-exec.patch.
+
+    The change is in spawn_fallback_orca in plugins/a11y-settings/gsd-a11y-settings-manager.c, and
+    the plugin now also depends on gio-unix-2.0. The patch adds no test, as the fallback is reached
+    only when Orca's unit fails.

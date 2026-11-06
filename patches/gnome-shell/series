@@ -1,2 +1,3 @@
 no-screenshots-while-locked.patch
 leave-scope-to-glib.patch
+spawn-commands-in-scope.patch

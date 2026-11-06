@@ -497,8 +497,8 @@ before it executes the application, so that every process of the application sta
 and gnome-settings-daemon are patched to leave the scope to GLib (`patches/glib2.0/`, `patches/gnome-shell/`,
 `patches/gnome-session/`, `patches/gnome-settings-daemon/`). Other processes which launch applications through GLib,
 such as xdg-desktop-portal for links opened in other applications, put them into a scope of their own too. An
-application starts about 25 ms later for it. A command run with Alt+F2 is still moved into its scope only after it
-started, as GNOME Shell spawns it without GLib's application launching.
+application starts about 25 ms later for it. GNOME Shell's commands, run with Alt+F2, and gnome-settings-daemon's
+fallback Orca are launched the same way.
 
 GLib's developers are preparing GLib to create these scopes itself, in
 [merge request 5350](https://gitlab.gnome.org/GNOME/glib/-/merge_requests/5350) and a follow-up announced there, and the

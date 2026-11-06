@@ -11,6 +11,9 @@ Scope before exec: run-scope-test.sh, scope_test.py, fake_systemd.py and fake_jo
                         process is in app-gnome-glib\x2dscope\x2dtest-<pid>.scope, which the "launched" signal names
       pid-namespace     the same, from a PID namespace of its own, which still uses the session bus and the cgroups
                         of the user instance, as in a sandbox like Firejail's: the same, as GLib gives systemd a pidfd
+      command-line      the same as loop, but the application is a command line, launched the way GNOME Shell runs a
+                        command with Alt+F2 in patches/gnome-shell/spawn-commands-in-scope.patch: every process is in
+                        app-gnome-sh-<pid>.scope, and the % in its command arrives intact
       exit              the same as loop, but the launching process exits right after launching: the same
       late-request      the launching process asks for the same scope after GLib, as gnome_start_systemd_scope()
                         does: its request fails with UnitExists, and every process is in the scope

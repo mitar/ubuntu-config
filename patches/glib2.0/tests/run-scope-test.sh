@@ -82,6 +82,7 @@ run() {
 
 TEST=(python3 -I "$HERE/scope_test.py")
 run loop "${AS_USER[@]}" "${IN_SERVICE[@]}" "${TEST[@]}" loop "$OUT"
+run command-line "${AS_USER[@]}" "${IN_SERVICE[@]}" "${TEST[@]}" command-line "$OUT"
 run exit "${AS_USER[@]}" "${IN_SERVICE[@]}" "${TEST[@]}" exit "$OUT"
 run check-exit "${AS_USER[@]}" "${TEST[@]}" check-exit "$OUT"
 run late-request "${AS_USER[@]}" "${IN_SERVICE[@]}" "${TEST[@]}" late-request "$OUT"

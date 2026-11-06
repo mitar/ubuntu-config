@@ -1,0 +1,89 @@
+Description: Start the fallback Orca in its systemd scope.
+ When the screen reader is turned on and Orca's systemd unit fails to start, the accessibility plugin starts Orca
+ itself. It spawned it with g_spawn_async() and moved it into a scope of its own, app-gnome-orca-<pid>.scope, only once
+ it ran, with gnome_start_systemd_scope(). systemd moves only the process it is given, so every process Orca started in
+ the meantime stayed in the plugin's cgroup. Orca is now launched like an application, through GDesktopAppInfo, which
+ with the GLib of patches/glib2.0 puts it into its scope before it runs, with the home directory as working directory as
+ before.
+Author: Mitar
+Forwarded: no
+Last-Update: 2026-11-06
+
+diff --git a/plugins/a11y-settings/gsd-a11y-settings-manager.c b/plugins/a11y-settings/gsd-a11y-settings-manager.c
+index 402bb4a..ef711f8 100644
+--- a/plugins/a11y-settings/gsd-a11y-settings-manager.c
++++ b/plugins/a11y-settings/gsd-a11y-settings-manager.c
+@@ -32,7 +32,7 @@
+ #include <glib.h>
+ #include <gio/gio.h>
+ #define GNOME_DESKTOP_USE_UNSTABLE_API
+-#include <libgnome-desktop/gnome-systemd.h>
++#include <gio/gdesktopappinfo.h>
+ 
+ #include "gnome-settings-profile.h"
+ #include "gnome-settings-systemd.h"
+@@ -74,28 +74,43 @@ kill_fallback_orca (GsdA11ySettingsManager *manager)
+         manager->fallback_orca = 0;
+ }
+ 
++static void
++store_pid (GDesktopAppInfo *appinfo,
++           GPid             pid,
++           gpointer         user_data)
++{
++        *(GPid *) user_data = pid;
++}
++
+ static void
+ spawn_fallback_orca (GsdA11ySettingsManager *manager)
+ {
+-        char *argv[] = { "orca", "--replace", NULL };
+-        GDBusConnection *connection = g_application_get_dbus_connection (G_APPLICATION (manager));
++        g_autoptr (GKeyFile) keyfile = g_key_file_new ();
++        g_autoptr (GDesktopAppInfo) info = NULL;
++        g_autoptr (GAppLaunchContext) context = NULL;
+         g_autoptr (GError) error = NULL;
+-        const gchar *workdir;
+-        GPid pid;
++        GPid pid = 0;
+         gboolean success;
+ 
+         g_warning ("Spawning fallback Orca");
+ 
+-        workdir = g_get_home_dir ();
+-        success = g_spawn_async (workdir, argv, NULL, G_SPAWN_SEARCH_PATH, NULL,
+-                                 NULL, &pid, &error);
++        /* Launched like an application, so that GLib puts Orca into a systemd
++         * scope of its own before it runs. */
++        g_key_file_set_string (keyfile, G_KEY_FILE_DESKTOP_GROUP, G_KEY_FILE_DESKTOP_KEY_TYPE,
++                               G_KEY_FILE_DESKTOP_TYPE_APPLICATION);
++        g_key_file_set_string (keyfile, G_KEY_FILE_DESKTOP_GROUP, G_KEY_FILE_DESKTOP_KEY_NAME, "Orca");
++        g_key_file_set_string (keyfile, G_KEY_FILE_DESKTOP_GROUP, G_KEY_FILE_DESKTOP_KEY_EXEC, "orca --replace");
++        g_key_file_set_string (keyfile, G_KEY_FILE_DESKTOP_GROUP, G_KEY_FILE_DESKTOP_KEY_PATH, g_get_home_dir ());
++        info = g_desktop_app_info_new_from_keyfile (keyfile);
++        context = g_app_launch_context_new ();
++
++        success = g_desktop_app_info_launch_uris_as_manager (info, NULL, context, G_SPAWN_SEARCH_PATH,
++                                                             NULL, NULL, store_pid, &pid, &error);
+         if (!success) {
+                 g_warning ("Failed to spawn fallback Orca: %s", error->message);
+                 return;
+         }
+ 
+-        gnome_start_systemd_scope ("orca", pid, NULL, connection, NULL, NULL, NULL);
+-
+         g_debug ("Spawned fallback Orca (pid=%d)", pid);
+         manager->fallback_orca = pid;
+ }
+diff --git a/plugins/a11y-settings/meson.build b/plugins/a11y-settings/meson.build
+index cf44dfd..593f2be 100644
+--- a/plugins/a11y-settings/meson.build
++++ b/plugins/a11y-settings/meson.build
+@@ -6,6 +6,7 @@ sources += main_helper_sources
+ 
+ deps = plugins_deps + [
+   gio_dep,
++  gio_unix_dep,
+   gnome_desktop_dep,
+   gsettings_desktop_dep
+ ]

@@ -1,2 +1,3 @@
 power-sounds-follow-system-sounds.patch
 leave-scope-to-glib.patch
+orca-fallback-in-scope.patch

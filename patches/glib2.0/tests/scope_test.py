@@ -8,6 +8,8 @@
 #
 #   loop              the launching process runs its main loop after launching, as GNOME Shell does
 #   pid-namespace     the same, from a PID namespace of its own
+#   command-line      the same, but the application is a command line, launched as GNOME Shell runs a command with
+#                     Alt+F2, see patches/gnome-shell/spawn-commands-in-scope.patch
 #   exit              the launching process exits right after launching, as gio open does
 #   late-request      the launching process asks for the scope after GLib, as gnome_start_systemd_scope() does
 #   no-systemd        run on a session bus without systemd, where no scope is asked for
@@ -28,11 +30,12 @@
 import json
 import os
 import pathlib
+import re
 import socket
 import sys
 import time
 
-SCENARIOS = ("loop", "pid-namespace", "exit", "late-request", "no-systemd", "no-systemd-exit", "refused", "refused-exit",
+SCENARIOS = ("loop", "pid-namespace", "command-line", "exit", "late-request", "no-systemd", "no-systemd-exit", "refused", "refused-exit",
              "job-failed", "slow", "outside")
 EXITING = ("exit", "no-systemd-exit", "refused-exit")
 APP_ID = "glib-scope-test"
@@ -53,23 +56,35 @@ checking = scenario.startswith("check-")
 out_dir = pathlib.Path(sys.argv[2]) / scenario.removeprefix("check-")
 
 
+def app_script():
+    # The application starts two processes the moment it runs, as Chromium starts its zygotes, and only then reports
+    # them and its environment.
+    return (
+        "sleep 600 & a=$!; sleep 600 & b=$!; "
+        f'env > {out_dir}/app-env; '
+        f'echo "$$ $a $b $(date +%s.%N)" > {out_dir}/app-pids.tmp; mv {out_dir}/app-pids.tmp {out_dir}/app-pids; '
+        "exec sleep 600"
+    )
+
+
 def write_desktop_file():
     applications = out_dir / "data" / "applications"
     applications.mkdir(parents=True, exist_ok=True)
-    # The application starts two processes the moment it runs, as Chromium starts its zygotes, and only then reports
-    # them and its environment.
-    command = (
-        "sleep 600 & a=$!; sleep 600 & b=$!; "
-        f'env > {out_dir}/app-env; '
-        f'echo "$$ $a $b $(date +%%s.%%N)" > {out_dir}/app-pids.tmp; mv {out_dir}/app-pids.tmp {out_dir}/app-pids; '
-        "exec sleep 600"
-    )
+    # % starts a field code in the Exec key.
+    command = app_script().replace("%", "%%")
     (applications / f"{APP_ID}.desktop").write_text(
         "[Desktop Entry]\n"
         "Type=Application\n"
         "Name=GLib scope test\n"
         f"Exec=sh -c '{command}'\n"
     )
+
+
+def command_line(argv, shell_quote):
+    """Returns argv as the command line of a GAppInfo, as shell_util_spawn_command_async() of
+    patches/gnome-shell/spawn-commands-in-scope.patch builds it."""
+    words = [arg if re.fullmatch(r"[A-Za-z0-9/._\-+=:,@]+", arg) else shell_quote(arg) for arg in argv]
+    return " ".join(words).replace("%", "%%")
 
 
 def cgroup_of(pid):
@@ -136,7 +151,7 @@ def check_logged(checks, pid, expected):
         checks.check("logged at error priority", logged, f"{json.dumps(lines)}, expected {expected!r} at {SYSLOG_ERR}")
 
 
-def check_app(checks, launched, own_cgroup, expect_scope, waited=False, logged=None, slow=False):
+def check_app(checks, launched, own_cgroup, expect_scope, waited=False, logged=None, slow=False, name=ESCAPED_APP_ID):
     wait_s = SCOPE_TIMEOUT_S + WAIT_S if waited else WAIT_S
     app = wait_for_app(wait_s)
     checks.check("application started", app is not None, f"within {wait_s} s")
@@ -148,7 +163,7 @@ def check_app(checks, launched, own_cgroup, expect_scope, waited=False, logged=N
     unit = launched["platform_data"].get("systemd-unit")
 
     if expect_scope:
-        expected = f"app-gnome-{ESCAPED_APP_ID}-{launched['platform_data']['pid']}.scope"
+        expected = f"app-gnome-{name}-{launched['platform_data']['pid']}.scope"
         checks.check("scope named in the launched signal", unit == expected, f"{unit!r}, expected {expected!r}")
         in_scope = all(cg is not None and cg.endswith("/" + expected) for cg in cgroups.values())
         checks.check("every process in the scope", in_scope, json.dumps(cgroups))
@@ -241,10 +256,17 @@ def main():
         launched["platform_data"] = data
 
     launched = {"time": time.time()}
-    info = Gio.DesktopAppInfo.new(f"{APP_ID}.desktop")
     context = Gio.AppLaunchContext()
     context.connect("launched", launched_cb)
-    info.launch([], context)
+    if scenario == "command-line":
+        # The child is not reaped by GLib, which the Shell does itself.
+        info = Gio.AppInfo.create_from_commandline(command_line(["/bin/sh", "-c", app_script()], GLib.shell_quote), None,
+                                                   Gio.AppInfoCreateFlags.NONE)
+        info.launch_uris_as_manager([], context, GLib.SpawnFlags.SEARCH_PATH | GLib.SpawnFlags.DO_NOT_REAP_CHILD,
+                                    None, None, None, None)
+    else:
+        info = Gio.DesktopAppInfo.new(f"{APP_ID}.desktop")
+        info.launch([], context)
     launched["cgroup"] = own_cgroup
     (out_dir / "launched.json").write_text(json.dumps(launched) + "\n")
 
@@ -278,7 +300,8 @@ def main():
         checks.check("scope asked for", unit is not None, json.dumps(launched["platform_data"]))
         extra = check_app(checks, launched, own_cgroup, False, logged="the job starting the scope ended with result failed")
     else:
-        extra = check_app(checks, launched, own_cgroup, True, slow=scenario == "slow")
+        extra = check_app(checks, launched, own_cgroup, True, slow=scenario == "slow",
+                          name="sh" if scenario == "command-line" else ESCAPED_APP_ID)
         if scenario == "late-request":
             error = late_reply.get("error", "no reply")
             checks.check("late request refused", error == "org.freedesktop.systemd1.UnitExists", repr(error))
