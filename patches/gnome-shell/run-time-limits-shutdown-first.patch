@@ -9,7 +9,7 @@ Description: Write the session history at shutdown before the shell's actors are
  the handler before the layout manager is created, and the handler returns when the time limits manager does not
  exist yet.
 Author: Mitar
-Forwarded: no
+Forwarded: https://gitlab.gnome.org/GNOME/gnome-shell/-/merge_requests/4491#note_2925719
 Last-Update: 2026-11-06
 
 --- a/js/ui/main.js

@@ -5,7 +5,7 @@ Description: Test that what the nested main loop at shutdown dispatches reaches 
  destroyed by then, and the first critical GJS logs fails the test. The test opens no window, so no client writes to
  the shader cache while the test's home directory is removed.
 Author: Mitar
-Forwarded: no
+Forwarded: https://gitlab.gnome.org/GNOME/gnome-shell/-/merge_requests/4491#note_2925719
 Last-Update: 2026-11-06
 
 --- a/tests/meson.build
