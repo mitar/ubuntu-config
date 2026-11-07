@@ -101,6 +101,7 @@ build:
           - ptyxis
           - tinysparql
           - vte2.91
+          - xdg-desktop-portal-gtk
 
 build_large:
   extends: .build
@@ -208,6 +209,7 @@ test_session:
               - gtksourceview5
               - ptyxis
               - vte2.91
+              - xdg-desktop-portal-gtk
     - job: build_large
       parallel:
         matrix:

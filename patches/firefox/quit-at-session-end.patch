@@ -1,0 +1,210 @@
+Description: Quit cleanly when the desktop session ends, as the Inhibit portal reports it.
+ A desktop session tells its applications through the session monitor of the Inhibit portal that it ends, while it
+ still runs. GTK 4 applications and Chromium quit then. Firefox did not create such a monitor, so it ran until systemd
+ stopped it with SIGTERM, at the same time as the compositor, and GTK ends a process whose Wayland connection breaks.
+ .
+ Firefox now creates a session monitor at startup, answers its query whether the session may end at once, as nothing
+ keeps it from ending, and when the session ends, quits with nsAppShell::ScheduleQuitEvent(), which the SIGTERM
+ handler calls too.
+Author: Mitar
+Forwarded: no
+Last-Update: 2026-11-07
+---
+diff --git a/toolkit/xre/nsAppRunner.cpp b/toolkit/xre/nsAppRunner.cpp
+index e9a9cde..9ea42d2 100644
+--- a/toolkit/xre/nsAppRunner.cpp
++++ b/toolkit/xre/nsAppRunner.cpp
+@@ -6391,6 +6391,9 @@ nsresult XREMain::XRE_mainRun() {
+         // The app shell handles the signal, and XPCOM creates it only after
+         // XRE_mainStartup().
+         nsAppShell::InstallTermSignalHandler();
++#  ifdef MOZ_ENABLE_DBUS
++        nsAppShell::StartSessionEndMonitor();
++#  endif
+       }
+ #endif
+ 
+diff --git a/widget/gtk/nsAppShell.cpp b/widget/gtk/nsAppShell.cpp
+index 789db98..143e7f1 100644
+--- a/widget/gtk/nsAppShell.cpp
++++ b/widget/gtk/nsAppShell.cpp
+@@ -427,6 +427,131 @@ void nsAppShell::StopDBusListening() {
+   }
+   mDBusConnectionSession = nullptr;
+   mDBusConnectionSystem = nullptr;
++
++  if (mSessionMonitorProxy) {
++    g_signal_handlers_disconnect_matched(mSessionMonitorProxy,
++                                         G_SIGNAL_MATCH_DATA, 0, 0, nullptr,
++                                         nullptr, this);
++  }
++  if (mSessionMonitorCancellable) {
++    g_cancellable_cancel(mSessionMonitorCancellable);
++    mSessionMonitorCancellable = nullptr;
++  }
++  mSessionMonitorProxy = nullptr;
++}
++
++// The states of the session the Inhibit portal reports to a monitor, see
++// https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.Inhibit.html
++enum class PortalSessionState : uint32_t {
++  Running = 1,
++  QueryEnd = 2,
++  Ending = 3,
++};
++
++void nsAppShell::StartSessionEndMonitor() {
++  if (!XRE_IsParentProcess() || !sAppShell ||
++      sAppShell->mSessionMonitorCancellable) {
++    return;
++  }
++  sAppShell->mSessionMonitorCancellable = dont_AddRef(g_cancellable_new());
++  g_dbus_proxy_new_for_bus(
++      G_BUS_TYPE_SESSION, G_DBUS_PROXY_FLAGS_DO_NOT_LOAD_PROPERTIES, nullptr,
++      "org.freedesktop.portal.Desktop", "/org/freedesktop/portal/desktop",
++      "org.freedesktop.portal.Inhibit", sAppShell->mSessionMonitorCancellable,
++      reinterpret_cast<GAsyncReadyCallback>(SessionMonitorProxyCreated),
++      sAppShell);
++}
++
++void nsAppShell::SessionMonitorProxyCreated(GObject* aObject,
++                                            GAsyncResult* aResult,
++                                            gpointer aUserData) {
++  GUniquePtr<GError> error;
++  RefPtr<GDBusProxy> proxy = dont_AddRef(
++      g_dbus_proxy_new_for_bus_finish(aResult, getter_Transfers(error)));
++  if (!proxy) {
++    if (!IsCancelledGError(error.get())) {
++      NS_WARNING(nsPrintfCString("Failed to connect to the Inhibit portal: %s",
++                                 error->message)
++                     .get());
++    }
++    return;
++  }
++
++  RefPtr self = static_cast<nsAppShell*>(aUserData);
++  // The portal names the session of the monitor after the unique name of its
++  // creator and the token it passes, so the signals for it are recognized
++  // also when they arrive before CreateMonitor() returns.
++  const char* uniqueName =
++      g_dbus_connection_get_unique_name(g_dbus_proxy_get_connection(proxy));
++  if (!uniqueName || uniqueName[0] != ':') {
++    return;
++  }
++  nsAutoCString sender(uniqueName + 1);
++  sender.ReplaceChar('.', '_');
++  nsPrintfCString token("mozilla_session_monitor_%d", getpid());
++  self->mSessionMonitorHandle =
++      nsPrintfCString("/org/freedesktop/portal/desktop/session/%s/%s",
++                      sender.get(), token.get());
++  self->mSessionMonitorProxy = std::move(proxy);
++  g_signal_connect(self->mSessionMonitorProxy, "g-signal",
++                   G_CALLBACK(SessionMonitorSignal), self);
++
++  GVariantBuilder options;
++  g_variant_builder_init(&options, G_VARIANT_TYPE_VARDICT);
++  g_variant_builder_add(&options, "{sv}", "session_handle_token",
++                        g_variant_new_string(token.get()));
++  g_dbus_proxy_call(
++      self->mSessionMonitorProxy, "CreateMonitor",
++      g_variant_new("(sa{sv})", "", &options), G_DBUS_CALL_FLAGS_NONE, -1,
++      self->mSessionMonitorCancellable,
++      [](GObject* aObject, GAsyncResult* aResult, gpointer aUserData) {
++        GUniquePtr<GError> error;
++        RefPtr<GVariant> result = dont_AddRef(g_dbus_proxy_call_finish(
++            G_DBUS_PROXY(aObject), aResult, getter_Transfers(error)));
++        if (!result && !IsCancelledGError(error.get())) {
++          NS_WARNING(nsPrintfCString("Failed to monitor the session: %s",
++                                     error->message)
++                         .get());
++        }
++      },
++      nullptr);
++}
++
++void nsAppShell::SessionMonitorSignal(GDBusProxy* aProxy, gchar* aSenderName,
++                                      gchar* aSignalName,
++                                      GVariant* aParameters,
++                                      gpointer aUserData) {
++  if (g_strcmp0(aSignalName, "StateChanged") ||
++      !g_variant_is_of_type(aParameters, G_VARIANT_TYPE("(oa{sv})"))) {
++    return;
++  }
++  auto* self = static_cast<nsAppShell*>(aUserData);
++  const char* handle = nullptr;
++  GVariant* rawState = nullptr;
++  g_variant_get(aParameters, "(&o@a{sv})", &handle, &rawState);
++  RefPtr<GVariant> state = dont_AddRef(rawState);
++  if (!self->mSessionMonitorHandle.Equals(handle)) {
++    return;
++  }
++  uint32_t sessionState = 0;
++  if (!g_variant_lookup(state, "session-state", "u", &sessionState)) {
++    return;
++  }
++  switch (PortalSessionState(sessionState)) {
++    case PortalSessionState::QueryEnd:
++      // Nothing here keeps the session from ending, so the query is answered
++      // at once, and the session manager does not wait for its timeout.
++      g_dbus_proxy_call(aProxy, "QueryEndResponse",
++                        g_variant_new("(o)", handle), G_DBUS_CALL_FLAGS_NONE,
++                        -1, self->mSessionMonitorCancellable, nullptr, nullptr);
++      break;
++    case PortalSessionState::Ending:
++      LOGW("nsAppShell: the session ends, quit");
++      self->ScheduleQuitEvent();
++      break;
++    default:
++      break;
++  }
+ }
+ #endif
+ 
+diff --git a/widget/gtk/nsAppShell.h b/widget/gtk/nsAppShell.h
+index 86d825e..052704f 100644
+--- a/widget/gtk/nsAppShell.h
++++ b/widget/gtk/nsAppShell.h
+@@ -10,6 +10,7 @@
+ 
+ #  include "mozilla/GRefPtr.h"
+ #  include "mozilla/RefPtr.h"
++#  include "nsString.h"
+ #endif
+ #include <glib.h>
+ 
+@@ -63,6 +64,10 @@ class nsAppShell : public nsBaseAppShell {
+   static void DBusConnectionCheck();
+   static void SetSessionDBus(GDBusConnection* aDBusConnectionSession);
+   static void SetSystemDBus(GDBusConnection* aDBusConnectionSystem);
++
++  // Asks the Inhibit portal to report when the desktop session ends, and then
++  // calls ScheduleQuitEvent(), which TermSignalHandler() calls on SIGTERM.
++  static void StartSessionEndMonitor();
+ #endif
+ 
+   static void InstallTermSignalHandler();
+@@ -75,6 +80,14 @@ class nsAppShell : public nsBaseAppShell {
+   static gboolean EventProcessorCallback(GIOChannel* source,
+                                          GIOCondition condition, gpointer data);
+   static void TermSignalHandler(int signo);
++#ifdef MOZ_ENABLE_DBUS
++  static void SessionMonitorProxyCreated(GObject* aObject,
++                                         GAsyncResult* aResult,
++                                         gpointer aUserData);
++  static void SessionMonitorSignal(GDBusProxy* aProxy, gchar* aSenderName,
++                                   gchar* aSignalName, GVariant* aParameters,
++                                   gpointer aUserData);
++#endif
+ 
+   void ScheduleQuitEvent();
+ 
+@@ -93,6 +106,9 @@ class nsAppShell : public nsBaseAppShell {
+   RefPtr<GDBusConnection> mDBusConnectionSystem;
+   RefPtr<GCancellable> mDBusGetCancellableSession;
+   RefPtr<GCancellable> mDBusGetCancellableSystem;
++  RefPtr<GDBusProxy> mSessionMonitorProxy;
++  RefPtr<GCancellable> mSessionMonitorCancellable;
++  nsCString mSessionMonitorHandle;
+ #endif
+ };
+ 

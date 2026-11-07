@@ -94,6 +94,33 @@ session-restore-launch-window.patch
 
     tests/run-session.sh checks both with every scenario, see tests/README. Neither is reported to Mozilla yet.
 
+sigterm-handler-after-app-shell.patch
+quit-at-session-end.patch
+    Make Firefox quit cleanly when the desktop session ends, at logout, shutdown and reboot, so that it saves its
+    session and the next start is no recovery from a crash. Such a recovery restores the windows as they were,
+    without the new window session-restore-launch-window.patch opens for the launch, and loses the changes since
+    Firefox last saved its session.
+
+    Before the session ends, GNOME tells applications through the session monitor of the Inhibit portal that it
+    ends, and GTK 4 applications and Chromium quit then. With the second patch Firefox creates such a monitor at
+    startup, answers at once when the session asks whether it may end, and quits when it ends. A monitor does not
+    keep the session from ending: patches/xdg-desktop-portal-gtk/ makes the session wait until Firefox has quit, so
+    that GNOME Shell and the processes of Firefox are still there while it quits.
+
+    Firefox 122 added a handler which quits Firefox cleanly on SIGTERM (Mozilla bug 1837907). Firefox tries to
+    install it before XPCOM creates the app shell, which the handler requires, so the handler is never installed
+    and SIGTERM kills Firefox at once (Mozilla bug 2086801). The first patch installs the handler once the app shell
+    exists. Firefox then also quits cleanly when something else stops it: systemd at the end of a session which did
+    not tell Firefox through the portal, or in which xdg-desktop-portal-gtk stopped waiting after 8 seconds, and
+    systemctl or kill. The second patch quits Firefox with nsAppShell::ScheduleQuitEvent(), which the handler calls
+    too. Neither patch is proposed to Mozilla yet.
+
+    The session test in tests/session/ checks that logging out leaves sessionstore.jsonlz4 in the profile, which
+    Firefox writes only when it quits cleanly, and that Firefox has quit before GNOME Shell shuts down. Drop the
+    first patch once bug 2086801 is fixed, and the second once Firefox follows the session monitor itself. After a
+    version bump, check that XREMain::XRE_mainRun in toolkit/xre/nsAppRunner.cpp still runs after XPCOM is
+    initialized.
+
 wasm-sandboxed-libraries.patch (debian-series)
     Builds graphite, ogg, hunspell, expat, woff2 and soundtouch as wasm sandboxed libraries, as Mozilla's own
     builds do, where the packaging disables them. Ubuntu 26.04's wasm32 toolchain has two bugs which block that,

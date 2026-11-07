@@ -1,0 +1,44 @@
+Description: Install the SIGTERM handler once the app shell exists, so that SIGTERM quits Firefox cleanly.
+ Bug 1837907 added a handler which quits Firefox cleanly on SIGTERM, saving its session, and calls
+ nsAppShell::InstallTermSignalHandler() at the end of XREMain::XRE_mainStartup(). XPCOM, which creates the app shell,
+ starts only after that function, so the handler finds no app shell and returns without installing anything. SIGTERM
+ therefore kills Firefox at once, without saving its session, and the next start recovers from a crash. At the end of
+ a desktop session systemd stops the applications still running with SIGTERM, so every logout and shutdown in which
+ Firefox was still running counted as a crash.
+ .
+ The handler is now installed in XREMain::XRE_mainRun(), once XPCOM created the app shell, and still not in background
+ task mode.
+Bug: https://bugzilla.mozilla.org/show_bug.cgi?id=2086801
+Author: Mitar
+Forwarded: no
+Last-Update: 2026-11-07
+---
+diff --git a/toolkit/xre/nsAppRunner.cpp b/toolkit/xre/nsAppRunner.cpp
+index 513d100..e9a9cde 100644
+--- a/toolkit/xre/nsAppRunner.cpp
++++ b/toolkit/xre/nsAppRunner.cpp
+@@ -5966,9 +5966,6 @@ int XREMain::XRE_mainStartup(bool* aExitFlag) {
+     if (IsWaylandEnabled()) {
+       (void)WaylandDisplayGet();
+     }
+-#endif
+-#ifdef MOZ_WIDGET_GTK
+-    nsAppShell::InstallTermSignalHandler();
+ #endif
+   }
+ 
+@@ -6387,6 +6384,14 @@ nsresult XREMain::XRE_mainRun() {
+         g_unsetenv(name.get());
+       }
+       nsAppShell::InitSessionRestore();
++#  ifdef MOZ_BACKGROUNDTASKS
++      if (!BackgroundTasks::IsBackgroundTaskMode())
++#  endif
++      {
++        // The app shell handles the signal, and XPCOM creates it only after
++        // XRE_mainStartup().
++        nsAppShell::InstallTermSignalHandler();
++      }
+ #endif
+ 
+ #ifdef XP_MACOSX

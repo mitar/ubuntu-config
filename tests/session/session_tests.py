@@ -302,6 +302,24 @@ def serve(directory):
                              str(WEB_PORT)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
+def firefox_session_saved():
+    """Whether a Firefox profile of the user has the session file Firefox writes only when it quits cleanly, and
+    moves away when it starts."""
+    home = pathlib.Path.home()
+    return any(home.glob(".config/mozilla/firefox/*/sessionstore.jsonlz4")) or \
+        any(home.glob(".mozilla/firefox/*/sessionstore.jsonlz4"))
+
+
+def ended_before_shell(session, since, pid):
+    """Returns whether the scope of the application launched as process pid ended before GNOME Shell began to shut
+    down, according to the journal since a time in seconds since the epoch, and the two lines which tell."""
+    lines = session.journal(since)
+    ended = next((line for line in lines if f"-{pid}.scope" in line and
+                  any(word in line for word in ("Deactivated", "Consumed", "Stopped "))), None)
+    shell = next((line for line in lines if "Shutting down GNOME Shell" in line), None)
+    return ended is not None and shell is not None and lines.index(ended) < lines.index(shell), [ended, shell]
+
+
 def titled(name):
     return lambda w: (w["title"] or "").startswith(name)
 
@@ -366,8 +384,15 @@ def firefox(session, checks, out_dir):
         # Firefox saves its session every second.
         time.sleep(4)
         before = session.windows(FIREFOX)
+        logout_started = time.time()
         dialogs = session.logout()
         checks.check("logging out asks nothing", not dialogs, str(dialogs))
+        # Without a clean quit, the next start is a recovery from a crash, which restores the windows as they were.
+        checks.check("logging out ends Firefox cleanly, with its session saved", firefox_session_saved())
+        # Firefox quits when the session ends, and GNOME Shell and the processes of Firefox have to be there until it
+        # has quit.
+        ended, lines = ended_before_shell(session, logout_started, before[0]["pid"])
+        checks.check("logging out lets Firefox quit before GNOME Shell shuts down", ended, str(lines))
 
         session.login()
         session.call("activateWorkspace", 10)
@@ -394,7 +419,12 @@ def firefox(session, checks, out_dir):
         fourth = shown_window(session, FIREFOX, titled("page-four"), 30)
         checks.check("a link opened from a terminal after restoring opens in a new window on the current workspace, focused",
                      fourth and fourth["workspace"] == 11 and fourth["focused"], str(window_summary(fourth)))
+        pid = session.windows(FIREFOX)[0]["pid"]
+        logout_started = time.time()
         session.logout()
+        checks.check("logging out again ends Firefox cleanly, with its session saved", firefox_session_saved())
+        ended, lines = ended_before_shell(session, logout_started, pid)
+        checks.check("logging out again lets Firefox quit before GNOME Shell shuts down", ended, str(lines))
         return {"before": before, "after": after, "dialogs": dialogs}
     finally:
         server.terminate()

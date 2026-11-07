@@ -1,0 +1,116 @@
+Description: Let the session end only once the applications monitoring it closed their inhibit sessions.
+ The session monitor of the Inhibit portal tells applications that the session ends, and GTK 4 applications and
+ Chromium quit then. The answer to gnome-session's EndSession followed at once, though, so gnome-session ended the
+ session about 30 ms later, and systemd stopped the applications' scopes and GNOME Shell while the applications were
+ still quitting: an application lost its child processes, or GTK ended it when its Wayland connection broke.
+ .
+ The answer to EndSession now waits until every inhibit session is closed, which happens when its application
+ closes it or disconnects from the bus, so also when it exits, or for 8 seconds at most, which is less than the 10
+ seconds gnome-session waits for it. An inhibit session still open then is logged.
+Author: Mitar
+Forwarded: no
+Last-Update: 2026-11-07
+---
+--- a/src/inhibit.c
++++ b/src/inhibit.c
+@@ -36,6 +36,11 @@
+ static SessionState session_state = RUNNING;
+ static gboolean screensaver_active = FALSE;
+ static guint query_end_timeout;
++static guint end_session_timeout;
++
++/* gnome-session ends the session without the answer to EndSession after 10
++ * seconds, and warns that the client failed to reply. */
++#define END_SESSION_TIMEOUT_S 8
+ 
+ static void
+ uninhibit_done_gnome (GObject *source,
+@@ -166,6 +171,7 @@
+ 
+ static void global_set_pending_query_end_response (gboolean pending);
+ static gboolean global_get_pending_query_end_response (void);
++static void wait_for_monitors_to_close (void);
+ 
+ static void
+ stop_waiting_for_query_end_response (gboolean send_response)
+@@ -249,7 +255,7 @@
+       g_debug ("Received EndSession");
+       stop_waiting_for_query_end_response (FALSE);
+       set_session_state (ENDING);
+-      send_quit_response (client, TRUE, NULL);
++      wait_for_monitors_to_close ();
+     }
+   else if (g_str_equal (signal_name, "Stop"))
+     {
+@@ -441,6 +447,58 @@
+ }
+ 
+ static void
++stop_waiting_for_monitors_to_close (void)
++{
++  g_clear_handle_id (&end_session_timeout, g_source_remove);
++
++  if (client)
++    send_quit_response (client, TRUE, NULL);
++}
++
++static gboolean
++monitors_to_close_timeout (gpointer data)
++{
++  GList *l;
++
++  end_session_timeout = 0;
++
++  for (l = active_sessions; l; l = l->next)
++    g_message ("The session ends with inhibit session %s still open",
++               ((Session *)l->data)->id);
++
++  if (client)
++    send_quit_response (client, TRUE, NULL);
++
++  return G_SOURCE_REMOVE;
++}
++
++/* Lets the session end once every application which monitors it closed its
++ * inhibit session, so that applications which quit when the session ends,
++ * like GTK 4 applications, finish quitting while the session still runs. An
++ * application closes its inhibit session when it quits, also when it
++ * disconnects from the bus without closing it. */
++static void
++wait_for_monitors_to_close (void)
++{
++  if (active_sessions == NULL)
++    {
++      if (client)
++        send_quit_response (client, TRUE, NULL);
++      return;
++    }
++
++  if (end_session_timeout != 0)
++    return;
++
++  g_debug ("Waiting up to %d seconds for inhibit sessions to close",
++           END_SESSION_TIMEOUT_S);
++
++  end_session_timeout = g_timeout_add_seconds (END_SESSION_TIMEOUT_S,
++                                               monitors_to_close_timeout,
++                                               NULL);
++}
++
++static void
+ inhibit_session_close (Session *session)
+ {
+   InhibitSession *inhibit_session = (InhibitSession *)session;
+@@ -448,6 +506,12 @@
+   g_debug ("Closing inhibit session %s", ((Session *)inhibit_session)->id);
+ 
+   active_sessions = g_list_remove (active_sessions, session);
++
++  if (end_session_timeout != 0 && active_sessions == NULL)
++    {
++      g_debug ("No more inhibit sessions");
++      stop_waiting_for_monitors_to_close ();
++    }
+ }
+ 
+ static void
