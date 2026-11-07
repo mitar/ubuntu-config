@@ -117,7 +117,7 @@ quit-at-session-end.patch
 
     The session test in tests/session/ checks that logging out leaves sessionstore.jsonlz4 in the profile, which
     Firefox writes only when it quits cleanly, and that Firefox has quit before GNOME Shell shuts down. Drop the
-    first patch once bug 2086801 is fixed, and the second once Firefox follows the session monitor itself. After a
+    first patch once bug 2086801 is fixed, and the second once Firefox creates a session monitor itself. After a
     version bump, check that XREMain::XRE_mainRun in toolkit/xre/nsAppRunner.cpp still runs after XPCOM is
     initialized.
 

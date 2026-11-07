@@ -1,12 +1,13 @@
 Description: Let the session end only once the applications monitoring it closed their inhibit sessions.
  The session monitor of the Inhibit portal tells applications that the session ends, and GTK 4 applications and
- Chromium quit then. The answer to gnome-session's EndSession followed at once, though, so gnome-session ended the
- session about 30 ms later, and systemd stopped the applications' scopes and GNOME Shell while the applications were
- still quitting: an application lost its child processes, or GTK ended it when its Wayland connection broke.
+ Chromium quit then. xdg-desktop-portal-gtk answered gnome-session's EndSession at once, though, so gnome-session
+ ended the session about 30 ms later, and systemd stopped the applications' scopes and GNOME Shell while the
+ applications were still quitting: an application lost its child processes, or GTK ended it when its Wayland
+ connection broke.
  .
- The answer to EndSession now waits until every inhibit session is closed, which happens when its application
- closes it or disconnects from the bus, so also when it exits, or for 8 seconds at most, which is less than the 10
- seconds gnome-session waits for it. An inhibit session still open then is logged.
+ xdg-desktop-portal-gtk now answers EndSession only once every inhibit session is closed, which happens when its
+ application closes it or disconnects from the bus, so also when it exits, or after 8 seconds at most, less than the
+ 10 seconds gnome-session waits for the answer. It logs every inhibit session still open then.
 Author: Mitar
 Forwarded: no
 Last-Update: 2026-11-07

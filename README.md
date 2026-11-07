@@ -508,14 +508,15 @@ all processes of an application at once, as stopping its single scope does, stil
 Before a session ends, GNOME tells applications through the Inhibit portal that it ends, and GTK 4 applications and
 Chromium quit then. The portal answered GNOME at once, though, so the session ended about 30 ms later, and systemd
 stopped the applications and GNOME Shell while they were still quitting. The portal is patched to let the session end
-only once every application which follows it has quit, or after 8 seconds (`patches/xdg-desktop-portal-gtk/`).
+only once every application which monitors the session through it has quit, or after 8 seconds
+(`patches/xdg-desktop-portal-gtk/`).
 
-Firefox did not follow the portal, and was killed by the SIGTERM systemd sends at the end of a session: Firefox 122
-added a handler which quits cleanly on SIGTERM, but installs it too early for it to work
+Firefox did not monitor the session through the portal, and was killed by the SIGTERM systemd sends at the end of a
+session: Firefox 122 added a handler which quits cleanly on SIGTERM, but installs it too early for it to work
 ([Mozilla bug 2086801](https://bugzilla.mozilla.org/show_bug.cgi?id=2086801)). Every logout and shutdown therefore
 counted as a crash, after which Firefox restores its windows as they were, without the new window for the launch, and
-loses the changes since it last saved its session. Firefox is patched to install the handler, and to quit through the
-same code when the portal tells it that the session ends (`patches/firefox/sigterm-handler-after-app-shell.patch` and
+loses the changes since it last saved its session. Firefox is patched to install the handler, and to monitor the
+session through the portal and quit cleanly when it ends (`patches/firefox/sigterm-handler-after-app-shell.patch` and
 `quit-at-session-end.patch`).
 
 ### Applications start inside their own scope

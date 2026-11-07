@@ -11,12 +11,12 @@ end-session-after-monitors-close.patch
     application then lost its child processes in the middle of quitting, or GTK ended it when its
     Wayland connection broke.
 
-    The answer now waits until every application which monitors the session has closed its inhibit
-    session. The portal closes it also when the application disconnects from the bus, so also when
-    it exits. After 8 seconds at most the answer goes out anyway, as gnome-session waits 10 seconds for
-    it, and every inhibit session still open is logged as "The session ends with inhibit session ...
-    still open". An application which monitors the session without quitting when it ends delays the
-    end of the session by these 8 seconds.
+    xdg-desktop-portal-gtk now answers EndSession only once every application which monitors the
+    session has closed its inhibit session. The portal closes it also when the application
+    disconnects from the bus, so also when it exits. xdg-desktop-portal-gtk answers after 8 seconds
+    at most, as gnome-session waits 10 seconds for the answer, and logs every inhibit session still
+    open as "The session ends with inhibit session ... still open". An application which monitors
+    the session without quitting when it ends delays the end of the session by these 8 seconds.
 
     The wait is in wait_for_monitors_to_close in src/inhibit.c, which client_proxy_signal calls on
     EndSession, and inhibit_session_close ends it. After a version bump, check that EndSession is still
