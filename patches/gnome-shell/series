@@ -1,8 +1,6 @@
 no-screenshots-while-locked.patch
 leave-scope-to-glib.patch
 spawn-commands-in-scope.patch
-disconnect-app-signals-on-destroy.patch
 disable-shader-cache-in-close-test.patch
-disconnect-app-signals-on-destroy-tests.patch
-disconnect-weather-client-on-destroy.patch
-disconnect-weather-client-on-destroy-tests.patch
+run-time-limits-shutdown-first.patch
+run-time-limits-shutdown-first-tests.patch

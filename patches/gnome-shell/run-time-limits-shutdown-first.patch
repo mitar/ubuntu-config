@@ -1,0 +1,64 @@
+Description: Write the session history at shutdown before the shell's actors are destroyed.
+ The time limits manager blocks shutdown until its session history file has been written, in a nested main loop which
+ dispatches whatever arrives meanwhile. GNOME Shell connects its shutdown handler after the one of the layout manager,
+ which destroys uiGroup, so signal handlers which outlive their actors run on destroyed ones: installed-changed of
+ Shell.AppSystem reaches the app grid, the search view and the date menu's sections, the date menu's weather client,
+ calendar event source, world clocks settings and wall clocks reach the date menu, and updated of Main.sessionMode
+ reaches popup menus, quick settings toggles, the screenshot UI, the message tray and the calendar. GJS then logs
+ "has been already disposed" criticals, which fail the closeWithActiveWindows test now and then. The patch connects
+ the handler before the layout manager is created, and the handler returns when the time limits manager does not
+ exist yet.
+Author: Mitar
+Forwarded: no
+Last-Update: 2026-11-06
+
+--- a/js/ui/main.js
++++ b/js/ui/main.js
+@@ -230,6 +230,26 @@
+ 
+     new AnimationsSettings();
+ 
++    // Block shutdown until the session history file has been written. The
++    // nested main loop for that dispatches whatever arrives meanwhile, so this
++    // is connected before the layout manager connects its shutdown handler,
++    // which destroys uiGroup, to run while the actors still exist.
++    global.connect('shutdown', () => {
++        if (!timeLimitsManager)
++            return;
++
++        const loop = new GLib.MainLoop(null, false);
++        const source = GLib.idle_source_new();
++        source.set_callback(() => {
++            timeLimitsManager.shutdown()
++                .catch(e => console.warn(`Failed to stop time limits manager: ${e.message}`))
++                .finally(() => loop.quit());
++            return GLib.SOURCE_REMOVE;
++        });
++        source.attach(loop.get_context());
++        loop.run();
++    });
++
+     // Setup the stage hierarchy early
+     layoutManager = new Layout.LayoutManager();
+ 
+@@ -278,20 +298,6 @@
+     brightnessManager = new BrightnessManager.BrightnessManager();
+     brightnessDBus = new ShellDBus.BrightnessDBus(brightnessManager);
+ 
+-    global.connect('shutdown', () => {
+-        // Block shutdown until the session history file has been written
+-        const loop = new GLib.MainLoop(null, false);
+-        const source = GLib.idle_source_new();
+-        source.set_callback(() => {
+-            timeLimitsManager.shutdown()
+-                .catch(e => console.warn(`Failed to stop time limits manager: ${e.message}`))
+-                .finally(() => loop.quit());
+-            return GLib.SOURCE_REMOVE;
+-        });
+-        source.attach(loop.get_context());
+-        loop.run();
+-    });
+-
+     layoutManager.init();
+     overview.init();
+ 

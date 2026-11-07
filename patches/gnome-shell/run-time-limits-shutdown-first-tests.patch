@@ -1,0 +1,68 @@
+Description: Test that what the nested main loop at shutdown dispatches reaches no destroyed actor.
+ Adds the shell test signalsDuringShutdown, which emits, from within the time limits manager's shutdown, and so from
+ within its nested main loop, the signals of objects which outlive the shell's actors and which the app system, the
+ date menu and Main.sessionMode deliver to actors. Without run-time-limits-shutdown-first.patch the actors are
+ destroyed by then, and the first critical GJS logs fails the test. The test opens no window, so no client writes to
+ the shader cache while the test's home directory is removed.
+Author: Mitar
+Forwarded: no
+Last-Update: 2026-11-06
+
+--- a/tests/meson.build
++++ b/tests/meson.build
+@@ -94,6 +94,9 @@
+     'name': 'multiMonitor',
+   },
+   {
++    'name': 'signalsDuringShutdown',
++  },
++  {
+     'name': 'headlessStart',
+     'options': ['--hotplug'],
+   },
+--- /dev/null
++++ b/tests/shell/signalsDuringShutdown.js
+@@ -0,0 +1,43 @@
++import GLib from 'gi://GLib';
++import GWeather from 'gi://GWeather';
++import Shell from 'gi://Shell';
++
++import * as Main from 'resource:///org/gnome/shell/ui/main.js';
++import * as Scripting from 'resource:///org/gnome/shell/ui/scripting.js';
++
++// At shutdown, the time limits manager writes its session history in a nested
++// main loop, which dispatches whatever arrives meanwhile. This emits, from
++// within that loop, signals of objects which outlive the shell's actors and
++// which actors listen to. A handler which then runs on a destroyed actor logs
++// a critical, which fails the test.
++
++/** Run test. */
++export async function run() {
++    Main.overview.hide();
++    await Scripting.waitLeisure();
++
++    const dateMenu = Main.panel.statusArea.dateMenu;
++    const clocksSection = dateMenu._clocksItem;
++
++    // A world clock, so that the world clocks section listens to its wall
++    // clock, which ticks every minute.
++    const location = GWeather.Location.get_world().find_by_station_code('LJLJ');
++    clocksSection._settings.set_value('locations',
++        new GLib.Variant('av', [location.serialize()]));
++    await Scripting.sleep(500);
++    await Scripting.waitLeisure();
++
++    const {timeLimitsManager} = Main;
++    const shutdown = timeLimitsManager.shutdown.bind(timeLimitsManager);
++    timeLimitsManager.shutdown = () => {
++        Shell.AppSystem.get_default().emit('installed-changed');
++        dateMenu._weatherItem._weatherClient.emit('changed');
++        dateMenu._eventSource.emit('changed');
++        dateMenu._eventSource.notify('has-calendars');
++        clocksSection._settings.emit('changed::locations', 'locations');
++        clocksSection._clock.notify('clock');
++        dateMenu._clock.notify('timezone');
++        Main.sessionMode.emit('updated');
++        return shutdown();
++    };
++}
