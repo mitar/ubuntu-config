@@ -1,0 +1,22 @@
+Source package: gnome-shell-ubuntu-extensions
+
+The source package is native, 3.0 (native), so rebuild-patched-packages.sh applies its patches directly, and the
+rebuilt source package contains them.
+
+ding-skip-windows-of-other-workspaces.patch
+    Keeps Desktop Icons NG from moving to another workspace when a window there demands attention. After a
+    workspace switch, a closed window or leaving the overview, Desktop Icons NG activates the topmost window of the
+    active workspace, the first window meta_display_get_tab_list() returns for it. mutter puts the windows of other
+    workspaces which demand attention at the start of that list, so every workspace switch moved to such a window,
+    for example a window of a chat application with a new message, or a window Chromium restores at startup. Windows
+    which are not on the active workspace are now skipped.
+
+    The patch is commit 38636eb8 of Ubuntu's Desktop Icons NG (salsa.debian.org/ubuntu-dev-team/desktop-icons-ng),
+    for Launchpad bug 2169475, which the ubuntu/resolute branch of github.com/ubuntu/gnome-shell-ubuntu-extensions
+    uses since its commit 8240b9cf. Upstream Desktop Icons NG removed the activation with its port to GTK 4 (commit
+    aa27c4a5), which Ubuntu 26.10 ships. Drop the patch once Ubuntu 26.04 ships a gnome-shell-ubuntu-extensions newer
+    than 50.26.04.8ubuntu which contains the change.
+
+    The patch adds no test, as the package has no tests of Desktop Icons NG. The session test workspace-attention
+    in tests/session/ marks a window on another workspace as demanding attention, and switches to a workspace
+    without windows and to one with a window, each of which has to stay active.

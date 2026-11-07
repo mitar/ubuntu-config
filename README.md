@@ -428,6 +428,20 @@ crash or a reset of the machine windows would return to where they were when the
 [mutter issue 5181](https://gitlab.gnome.org/GNOME/mutter/-/work_items/5181) and proposed upstream as
 [mutter merge request 5455](https://gitlab.gnome.org/GNOME/mutter/-/merge_requests/5455)).
 
+### Switching workspaces stays on the chosen workspace
+
+Ubuntu's Desktop Icons extension moved to the workspace of a window which demands attention whenever the workspace
+changed: it activates the first window of mutter's list for the new workspace, and that list starts with the windows
+of other workspaces which demand attention. It is patched with Ubuntu's own fix, which Ubuntu has not released for
+26.04 yet (`patches/gnome-shell-ubuntu-extensions/`,
+[Launchpad bug 2169475](https://bugs.launchpad.net/ubuntu/+source/gnome-shell-ubuntu-extensions/+bug/2169475)).
+
+Firefox also asked mutter to activate every window it restores at startup, without an event of the user behind the
+request, so mutter marked these windows as demanding attention, and they came first when switching windows. Firefox
+is patched to ask for no activation of a restored window while it restores its session
+(`patches/firefox/wayland-session-restore-no-activation.patch`). Chromium still asks to activate the windows it
+restores, so mutter marks them as demanding attention.
+
 ### Chromium quits with Ctrl+Q
 
 Chromium binds no key to Exit on Linux. A small extension binds Ctrl+Q, which the thumb key sends where macOS has

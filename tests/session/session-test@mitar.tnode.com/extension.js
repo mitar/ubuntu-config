@@ -73,6 +73,7 @@ class SessionTest {
                 width: rect.width,
                 height: rect.height,
                 focused: w.has_focus(),
+                demandsAttention: w.demands_attention,
                 minimized: w.minimized,
                 maximized: w.get_maximize_flags() === Meta.MaximizeFlags.BOTH,
                 fullscreen: w.is_fullscreen(),
@@ -127,6 +128,15 @@ class SessionTest {
      */
     activateWindow(id) {
         Main.activateWindow(windowById(id));
+    }
+
+    /**
+     * Marks a window as demanding attention, the mark mutter sets on a window whose activation it refuses.
+     *
+     * @param {number} id - the window's ID
+     */
+    setDemandsAttention(id) {
+        windowById(id).set_demands_attention();
     }
 
     /**

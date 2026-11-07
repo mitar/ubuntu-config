@@ -92,7 +92,9 @@
 # A quilt patch which changes debian/ is refused here, because dpkg-source treats it as already applied when it
 # builds the source package and fails with a misleading message. Changes to the packaging itself go into
 # patches listed in a "debian-series" file instead. Those are applied directly to the unpacked source, before the
-# quilt patches and without fuzz, and may change nothing outside debian/.
+# quilt patches and without fuzz, and may change nothing outside debian/. A native source package, 3.0 (native), has
+# no patch system, so its patches in series are applied directly too, without fuzz, and the source package built from
+# the tree contains them.
 #
 # A few more optional files cover packages which do not come from the Ubuntu archive or which build differently:
 #
@@ -543,8 +545,14 @@ stage_patches() {
     }
   done < <(package_setting "$src" debian-series)
 
-  mkdir -p "$tree/debian/patches"
-  touch "$tree/debian/patches/series"
+  # dpkg-source applies no patches to a native source package, so its patches are applied here, without fuzz.
+  local native=false
+  if [ "$(cat "$tree/debian/source/format" 2>/dev/null)" = "3.0 (native)" ]; then
+    native=true
+  else
+    mkdir -p "$tree/debian/patches"
+    touch "$tree/debian/patches/series"
+  fi
 
   while read -r p; do
     [ -n "$p" ] || continue
@@ -555,8 +563,15 @@ stage_patches() {
         debian/*) fail "$src: $p in series changes $path, so it belongs in debian-series" ;;
       esac
     done < <(patch_paths "$PATCH_DIR/$src/$p")
-    cp "$PATCH_DIR/$src/$p" "$tree/debian/patches/$p"
-    echo "$p" >> "$tree/debian/patches/series"
+    if $native; then
+      out=$(patch --batch --forward -p1 -F 0 --no-backup-if-mismatch -d "$tree" -i "$PATCH_DIR/$src/$p" 2>&1) || {
+        printf '%s\n' "$out" >&2
+        fail "$src: $p does not apply, rebuild skipped and the installed version left alone"
+      }
+    else
+      cp "$PATCH_DIR/$src/$p" "$tree/debian/patches/$p"
+      echo "$p" >> "$tree/debian/patches/series"
+    fi
   done < "$PATCH_DIR/$src/series"
 
   out=$( cd "$tree" && dpkg-source --before-build . 2>&1 ) || {

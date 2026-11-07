@@ -121,6 +121,21 @@ quit-at-session-end.patch
     version bump, check that XREMain::XRE_mainRun in toolkit/xre/nsAppRunner.cpp still runs after XPCOM is
     initialized.
 
+wayland-session-restore-no-activation.patch
+    Keeps the windows restored from the session from demanding attention. On Wayland, Firefox asks the compositor
+    to activate every window it shows, and session restore also focuses each window it restores, to stack the
+    windows as they were. While session restore runs at startup, no event of the user is behind these requests, so
+    mutter cannot activate the window and marks it as demanding attention instead. GNOME Shell then lists these
+    windows first when switching windows, and Desktop Icons NG moved to the workspace of one of them at the next
+    workspace switch (see patches/gnome-shell-ubuntu-extensions/). A window restored from the session now asks for
+    no activation while session restore runs at startup. The window opened for the launch still receives the
+    activation token of the launch.
+
+    The requests are in nsWindowWayland::NativeShow in widget/gtk/nsWindowWayland.cpp and nsWindow::SetFocus in
+    widget/gtk/nsWindow.cpp, and the patch builds on wayland-launch-activation-token.patch, which records which
+    windows are restored from the session. The session test in tests/session/ checks that no restored window
+    demands attention. Not proposed to Mozilla yet.
+
 wasm-sandboxed-libraries.patch (debian-series)
     Builds graphite, ogg, hunspell, expat, woff2 and soundtouch as wasm sandboxed libraries, as Mozilla's own
     builds do, where the packaging disables them. Ubuntu 26.04's wasm32 toolchain has two bugs which block that,

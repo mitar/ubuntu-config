@@ -95,6 +95,7 @@ build:
           - gnome-session
           - gnome-settings-daemon
           - gnome-shell
+          - gnome-shell-ubuntu-extensions
           - gnome-text-editor
           - gtksourceview5
           - localsearch
@@ -205,6 +206,7 @@ test_session:
               - gnome-session
               - gnome-settings-daemon
               - gnome-shell
+              - gnome-shell-ubuntu-extensions
               - gnome-text-editor
               - gtksourceview5
               - ptyxis
@@ -230,6 +232,7 @@ test_session:
           - chromium-quit
           - shutdown
           - lock-screen
+          - workspace-attention
 
   script:
     - apt-get update -q

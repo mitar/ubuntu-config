@@ -6,3 +6,4 @@ wayland-launch-activation-token.patch
 session-restore-launch-window.patch
 sigterm-handler-after-app-shell.patch
 quit-at-session-end.patch
+wayland-session-restore-no-activation.patch

@@ -1,0 +1,31 @@
+Description: Desktop Icons NG: Do not move to another workspace when a window demands attention.
+ After a workspace switch, a closed window or leaving the overview, Desktop Icons NG activates the topmost window of
+ the active workspace, the first one meta_display_get_tab_list() returns for it. That list starts with the windows of
+ other workspaces which demand attention, so activating one moved the user to its workspace. Windows which are not on
+ the active workspace are now skipped.
+ .
+ The change is commit 38636eb8 of Ubuntu's Desktop Icons NG, by Asif Mohtesham, which the ubuntu/resolute branch of
+ gnome-shell-ubuntu-extensions uses since its commit 8240b9cf, not released yet.
+Origin: other, https://salsa.debian.org/ubuntu-dev-team/desktop-icons-ng/-/commit/38636eb8ccdfe200ae2b8756017ed252957509c5
+Bug-Ubuntu: https://bugs.launchpad.net/ubuntu/+source/gnome-shell-ubuntu-extensions/+bug/2169475
+Forwarded: not-needed
+Last-Update: 2026-11-07
+---
+--- a/subprojects/desktop-icons-ng/emulateX11WindowType.js
++++ b/subprojects/desktop-icons-ng/emulateX11WindowType.js
+@@ -405,9 +405,14 @@ export class EmulateX11WindowType {
+                     }
+                     if (checkWorkspace) {
+                         // activate the top-most window
+-                        let windows = global.display.get_tab_list(Meta.TabList.NORMAL_ALL, global.workspace_manager.get_active_workspace());
++                        let activeWorkspace = global.workspace_manager.get_active_workspace();
++                        let windows = global.display.get_tab_list(Meta.TabList.NORMAL_ALL, activeWorkspace);
+                         let anyActive = false;
+                         for (let window of windows) {
++                            // get_tab_list() also returns windows on *other* workspaces that
++                            // demand attention; activating one of those drags the user off this workspace.
++                            if (!window.located_on_workspace(activeWorkspace))
++                                continue;
+                             if ((!window.customJS_ding || !window.customJS_ding._keepAtBottom) && !window.minimized) {
+                                 Main.activateWindow(window);
+                                 anyActive = true;

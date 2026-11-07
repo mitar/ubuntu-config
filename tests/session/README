@@ -41,10 +41,8 @@ The tests:
                   cleanly, with its session saved, before GNOME Shell shuts down, which needs the patches of
                   patches/xdg-desktop-portal-gtk/ and quit-at-session-end.patch of patches/firefox/. Otherwise the
                   next start recovers from a crash, and the window opened for the launch after logging in replaces
-                  the first restored one. A link opened after the restore still opens on the workspace of a restored
-                  window: Firefox asks to activate every window it restores with a token which cannot activate it, so
-                  mutter marks the window as demanding attention, and Desktop Icons NG activates such a window when
-                  the workspace changes to one without windows.
+                  the first restored one. No restored window may demand attention, which needs
+                  wayland-session-restore-no-activation.patch of patches/firefox/.
   chromium        Chromium's helpers are in the scope its launch put it into, while the browser process moves into a
                   scope of its own. Logging out ends it without a crash and with the exit type SessionEnded, and its
                   windows return to their workspaces, positions and sizes.
@@ -56,6 +54,16 @@ The tests:
                   disables the dock. With the extension enabled at login, as configure-gnome-desktop.sh enables it, the
                   window keeps its size through locking and unlocking. The locked screen offers no screenshots
                   (patches/gnome-shell/no-screenshots-while-locked.patch).
+  workspace-attention
+                  A Text Editor window on another workspace which demands attention does not move the user to its
+                  workspace when switching to a workspace with windows or without, which needs
+                  patches/gnome-shell-ubuntu-extensions/. The test sets the mark through GNOME Shell; mutter sets it
+                  on a window whose activation it refuses.
+
+The tests text-editor, ptyxis and firefox also check that no restored window demands attention. The test chromium
+only records such windows in its result.json: Chromium asks mutter to activate every window it restores, without an
+event of the user behind the request, so mutter marks each of them as demanding attention, and no patch here changes
+that.
 
 After every test, the script checks that no unit of the user's service manager failed, as at-spi-dbus-bus.service
 does at a logout without systemd/user/at-spi-dbus-bus.service.d/.

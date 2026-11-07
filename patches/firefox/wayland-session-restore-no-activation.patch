@@ -1,0 +1,53 @@
+Description: Do not ask to activate the windows restored from the session while session restore runs at startup.
+ On Wayland, Firefox asks the compositor to activate every window it shows, and session restore also focuses the
+ windows it restores, to stack them as they were. While session restore runs at startup, no event of the user is
+ behind these requests, so the token Firefox asks for cannot activate a window, and mutter marks every restored
+ window as demanding attention instead. GNOME Shell then lists these windows first when switching windows, and
+ Desktop Icons NG moved to the workspace of one of them at the next workspace switch.
+ .
+ A window restored from the session, which the compositor places from the session, no longer asks to be activated
+ while session restore runs at startup, neither when it is shown nor when session restore focuses it. The window
+ opened for the launch still receives the activation token of the launch.
+Author: Mitar
+Forwarded: no
+Last-Update: 2026-11-07
+---
+diff --git a/widget/gtk/nsWindow.cpp b/widget/gtk/nsWindow.cpp
+index 5b3d0b7..30bd810 100644
+--- a/widget/gtk/nsWindow.cpp
++++ b/widget/gtk/nsWindow.cpp
+@@ -1321,6 +1321,16 @@ void nsWindow::SetFocus(Raise aRaise, mozilla::dom::CallerType aCallerType) {
+     if (StaticPrefs::mozilla_widget_raise_on_setfocus_AtStartup() &&
+         toplevelWindow->mIsShown && toplevelWindow->mShell &&
+         !gtk_window_is_active(GTK_WINDOW(toplevelWindow->mShell))) {
++      // Session restore focuses the windows it restores to stack them as they
++      // were. No event of the user is behind that while it runs at startup, so
++      // a request to activate a window restored from the session would only
++      // make the compositor mark it as demanding attention.
++      if (toplevelWindow->mRestoredFromSession &&
++          nsAppShell::UpdateAndGetSessionState() == eSessionRestoring) {
++        LOG("  toplevel is restored from the session, not activated [%p]",
++            toplevelWindow.get());
++        return;
++      }
+       LOG("  toplevel is visible but not active, requesting activation [%p]",
+           toplevelWindow.get());
+ 
+diff --git a/widget/gtk/nsWindowWayland.cpp b/widget/gtk/nsWindowWayland.cpp
+index 30019be..0437fe2 100644
+--- a/widget/gtk/nsWindowWayland.cpp
++++ b/widget/gtk/nsWindowWayland.cpp
+@@ -2249,6 +2249,13 @@ void nsWindowWayland::NativeShow(bool aAction) {
+     auto token = std::move(mWindowActivationTokenFromEnv);
+     if (!token.IsEmpty()) {
+       FocusWaylandWindow(token.get());
++    } else if (mRestoredFromSession &&
++               nsAppShell::UpdateAndGetSessionState() == eSessionRestoring) {
++      // The compositor places a window restored from the session. No event of
++      // the user is behind showing it while session restore runs at startup,
++      // so a request to activate it would only make the compositor mark it as
++      // demanding attention.
++      LOG("  restored from the session, not activated");
+     } else if (!IsPopup()) {
+       TransferFocusTo();
+     }

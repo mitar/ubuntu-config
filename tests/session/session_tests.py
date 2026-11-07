@@ -179,6 +179,10 @@ def text_editor(session, checks, out_dir):
     checks.check("the launch after logging in opens a new window on the current workspace, focused",
                  new and new["focused"], str(window_summary(new)))
     checks.check("restoring switched no workspace", session.call("workspaces")["active"] == 10, str(session.call("workspaces")))
+    # Restoring a session can ask mutter to activate a window without an event of the user behind the request,
+    # which makes mutter mark the window as demanding attention.
+    attention = [window_summary(w) for w in session.windows(TEXT_EDITOR) if w["demandsAttention"]]
+    checks.check("no restored window demands attention", not attention, str(attention))
 
     # The draft has the text typed before logging out.
     if restored_draft:
@@ -190,6 +194,52 @@ def text_editor(session, checks, out_dir):
         checks.check("the draft has the text typed before logging out", text and DRAFT_TEXT in text, repr(text))
     session.logout()
     return {"before": first, "after": second, "dialogs": dialogs}
+
+
+@test
+def workspace_attention(session, checks, out_dir):
+    """A window which demands attention on another workspace does not move the user to it: when a window demands
+    attention and after a workspace switch, Desktop Icons NG activates the topmost window of the active workspace,
+    and mutter lists the windows of other workspaces which demand attention first."""
+    session.gsettings("org.gnome.shell", "favorite-apps", f"['{TEXT_EDITOR}']")
+    session.login()
+
+    # A window on workspace 2, and another one on workspace 5, where it is the topmost window.
+    session.call("activateWorkspace", 1)
+    session.call("clickDockIcon", TEXT_EDITOR)
+    first = shown_window(session, TEXT_EDITOR, lambda w: True)
+    session.call("activateWorkspace", 4)
+    # The dock lists the windows of the active workspace a moment after a switch, and a click before that activates
+    # the window of the previous workspace.
+    time.sleep(1)
+    session.call("clickDockIcon", TEXT_EDITOR)
+    second = shown_window(session, TEXT_EDITOR, lambda w: not first or w["id"] != first["id"])
+    checks.check("Text Editor has a window on workspace 2 and one on workspace 5",
+                 first and second and first["workspace"] == 1 and second["workspace"] == 4,
+                 str([window_summary(first), window_summary(second)]))
+    if not first or not second:
+        return {}
+
+    session.call("activateWorkspace", 2)
+    time.sleep(1)
+    session.call("setDemandsAttention", first["id"])
+    time.sleep(1)
+    workspaces = session.call("workspaces")
+    marked = find(session.windows(TEXT_EDITOR), lambda w: w["id"] == first["id"])
+    checks.check("a window on another workspace demanding attention leaves the workspace as it is",
+                 workspaces["active"] == 2 and marked and marked["demandsAttention"],
+                 f"{workspaces} {window_summary(marked)} demands attention {marked and marked['demandsAttention']}")
+
+    for target, what in ((3, "a workspace without windows"), (4, "a workspace with a window")):
+        session.call("activateWorkspace", target)
+        time.sleep(1)
+        workspaces = session.call("workspaces")
+        checks.check(f"switching to {what} stays there", workspaces["active"] == target, str(workspaces))
+    focused = find(session.windows(TEXT_EDITOR), lambda w: w["focused"])
+    checks.check("the topmost window of the workspace has the focus", focused and focused["id"] == second["id"],
+                 str(window_summary(focused)))
+    session.logout()
+    return {}
 
 
 PTYXIS = "org.gnome.Ptyxis.desktop"
@@ -268,6 +318,10 @@ def ptyxis(session, checks, out_dir):
     checks.check("the launch after logging in opens a new window on the current workspace, focused",
                  new and new["workspace"] == 10 and new["focused"], str(window_summary(new)))
     checks.check("restoring switched no workspace", session.call("workspaces")["active"] == 10, str(session.call("workspaces")))
+    # Restoring a session can ask mutter to activate a window without an event of the user behind the request,
+    # which makes mutter mark the window as demanding attention.
+    attention = [window_summary(w) for w in session.windows(PTYXIS) if w["demandsAttention"]]
+    checks.check("no restored window demands attention", not attention, str(attention))
 
     texts = {}
     for name, window, directory in (("first", restored_first, "one"), ("second", restored_second, "two")):
@@ -412,6 +466,10 @@ def firefox(session, checks, out_dir):
         checks.check("the launch after logging in opens a new window on the current workspace, focused",
                      new and new["focused"], str(window_summary(new)))
         checks.check("restoring switched no workspace", session.call("workspaces")["active"] == 10, str(session.call("workspaces")))
+        # Restoring a session can ask mutter to activate a window without an event of the user behind the request,
+        # which makes mutter mark the window as demanding attention.
+        attention = [window_summary(w) for w in session.windows(FIREFOX) if w["demandsAttention"]]
+        checks.check("no restored window demands attention", not attention, str(attention))
 
         # A link opened from a terminal while it runs opens in a new window on the current workspace too.
         session.call("activateWorkspace", 11)
@@ -517,8 +575,13 @@ def chromium(session, checks, out_dir):
             placed = (restored_second["x"], restored_second["y"], restored_second["width"], restored_second["height"])
             checks.check("the window with page-two returns to its position and size", placed == geometry, f"{placed}, was {geometry}")
         checks.check("restoring switched no workspace", session.call("workspaces")["active"] == 10, str(session.call("workspaces")))
+        # TODO: Check that no restored window demands attention once Chromium no longer asks to activate them.
+        #       Chromium asks mutter to activate every window it restores, without an event of the user behind the
+        #       request, so mutter marks each of them as demanding attention. Until a fix in Chromium, the test only
+        #       records these windows in result.json.
+        attention = [window_summary(w) for w in session.windows(CHROMIUM) if w["demandsAttention"]]
         session.logout()
-        return {"before": before, "after": after, "units": units, "dialogs": dialogs}
+        return {"before": before, "after": after, "units": units, "dialogs": dialogs, "demanding_attention": attention}
     finally:
         server.terminate()
 
